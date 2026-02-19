@@ -1,6 +1,13 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, String, DateTime, Integer, ForeignKey, UniqueConstraint
+from sqlalchemy import (
+    BigInteger,
+    String,
+    DateTime,
+    Integer,
+    ForeignKey,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -38,10 +45,7 @@ class Prediction(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
 
-    # Связь с матчем
     match_id: Mapped[int] = mapped_column(ForeignKey("matches.id"), index=True, nullable=False)
-
-    # Telegram user id (храним прямо его, так проще для бота)
     tg_user_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
 
     pred_home: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -49,7 +53,24 @@ class Prediction(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
-    # Один пользователь может сделать только один прогноз на один матч
     __table_args__ = (
         UniqueConstraint("match_id", "tg_user_id", name="uq_prediction_match_user"),
+    )
+
+
+class Point(Base):
+    __tablename__ = "points"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+
+    match_id: Mapped[int] = mapped_column(ForeignKey("matches.id"), index=True, nullable=False)
+    tg_user_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
+
+    points: Mapped[int] = mapped_column(Integer, nullable=False)
+    category: Mapped[str] = mapped_column(String(16), nullable=False)  # exact/diff/outcome/none
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("match_id", "tg_user_id", name="uq_points_match_user"),
     )
