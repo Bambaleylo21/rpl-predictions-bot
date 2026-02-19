@@ -27,7 +27,12 @@ def register_user_handlers(dp: Dispatcher) -> None:
 
             if user is None:
                 session.add(User(tg_user_id=tg_user_id, username=username))
-                await session.commit()
+            else:
+                # обновляем username, если он появился или изменился
+                user.username = username
+
+            await session.commit()
+
 
         await message.answer(
             "Привет! Я живой 🙂\n\n"
