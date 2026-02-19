@@ -36,22 +36,23 @@ class ApiFootballClient:
     def _headers(self) -> dict[str, str]:
         return {"x-apisports-key": self.api_key}
 
-    async def _get(self, session: aiohttp.ClientSession, path: str, params: dict[str, Any]) -> dict[str, Any]:
+    async def _get(self, session: aiohttp.ClientSession, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         url = f"{self.base_url}{path}"
         async with session.get(
             url,
             headers=self._headers(),
-            params=params,
+            params=params or {},
             timeout=aiohttp.ClientTimeout(total=30),
         ) as r:
-            # Важно: API иногда отдаёт 200, но с errors внутри.
             data = await r.json()
             errors = data.get("errors")
             if errors:
-                # errors может быть dict с ключами requests/plan/...
                 raise RuntimeError(f"API-Football errors: {errors}")
             r.raise_for_status()
             return data
+
+    async def get_status(self, session: aiohttp.ClientSession) -> dict[str, Any]:
+        return await self._get(session, "/status")
 
     @staticmethod
     def _is_russia_country(item: dict[str, Any]) -> bool:
@@ -65,42 +66,25 @@ class ApiFootballClient:
         league = item.get("league") or {}
         lname = (league.get("name") or "").lower()
         ltype = (league.get("type") or "").lower()
-        # В API встречаются разные формулировки, но "premier" почти всегда есть
         return ("premier" in lname) and (ltype in ("league", "", None))
 
     async def resolve_rpl_league_and_season(self, session: aiohttp.ClientSession) -> tuple[int, int]:
-        """
-        Resolve Russian Premier League league_id + current season year.
-        Устойчивый поиск: пробуем несколько запросов и фильтруем ответ.
-        """
         candidates: list[dict[str, Any]] = []
 
-        # 1) самый прямой
-        try:
-            d1 = await self._get(session, "/leagues", params={"country": "Russia"})
-            candidates += list(d1.get("response") or [])
-        except Exception:
-            pass
+        for params in (
+            {"country": "Russia"},
+            {"search": "Russia"},
+            {"search": "Premier"},
+        ):
+            try:
+                d = await self._get(session, "/leagues", params=params)
+                candidates += list(d.get("response") or [])
+            except Exception:
+                pass
 
-        # 2) через search (иногда лучше работает)
-        try:
-            d2 = await self._get(session, "/leagues", params={"search": "Russia"})
-            candidates += list(d2.get("response") or [])
-        except Exception:
-            pass
-
-        # 3) поиск по "Premier"
-        try:
-            d3 = await self._get(session, "/leagues", params={"search": "Premier"})
-            candidates += list(d3.get("response") or [])
-        except Exception:
-            pass
-
-        # Фильтруем “похоже на РПЛ”
         filtered = [it for it in candidates if self._is_russia_country(it) and self._looks_like_rpl(it)]
 
         if not filtered:
-            # Для диагностики: покажем какие вообще лиги РФ пришли
             rf_leagues = []
             for it in candidates:
                 if self._is_russia_country(it):
@@ -111,7 +95,6 @@ class ApiFootballClient:
         item = filtered[0]
         league_id = int((item.get("league") or {}).get("id"))
 
-        # текущий сезон
         data2 = await self._get(session, "/leagues", params={"id": league_id, "current": "true"})
         resp2 = data2.get("response") or []
         seasons = (resp2[0].get("seasons") if resp2 else item.get("seasons")) or []
@@ -222,9 +205,7 @@ class ApiFootballClient:
             "rounds_tail": rounds[-5:] if len(rounds) > 5 else rounds,
         }
 
-        # Если rounds есть — используем их
         if rounds:
-            # простой поиск строки тура
             target = None
             for r in rounds:
                 if self._match_round_number(r, round_number):
@@ -244,7 +225,6 @@ class ApiFootballClient:
                 out.sort(key=lambda x: x.start_time_utc)
                 return out, debug_info
 
-        # Фолбэк: rounds пустые → собираем rounds из fixtures (last/next)
         items, discovered_rounds = await self._fixtures_fallback_collect(session, league_id, season_year)
         debug_info["fallback_discovered_rounds_count"] = len(discovered_rounds)
         debug_info["fallback_discovered_rounds_head"] = discovered_rounds[:10]
@@ -273,3 +253,18 @@ async def fetch_rpl_round(round_number: int) -> tuple[list[RplFixture], dict[str
     async with aiohttp.ClientSession() as session:
         league_id, season_year = await client.resolve_rpl_league_and_season(session)
         return await client.get_fixtures_by_round(session, league_id, season_year, round_number)
+
+
+async def fetch_api_status() -> dict[str, Any]:
+    """
+    /status — проверить, что ключ рабочий, какой план/лимиты/использование.
+    """
+    api_key = os.getenv("FOOTBALL_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("FOOTBALL_API_KEY не задан в env")
+
+    base_url = os.getenv("FOOTBALL_API_BASE_URL", "https://v3.football.api-sports.io").strip()
+    client = ApiFootballClient(api_key=api_key, base_url=base_url)
+
+    async with aiohttp.ClientSession() as session:
+        return await client.get_status(session)
