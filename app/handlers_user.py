@@ -20,7 +20,6 @@ def register_user_handlers(dp: Dispatcher) -> None:
     async def cmd_start(message: types.Message):
         tg_user_id = message.from_user.id
         username = message.from_user.username  # без "@", может быть None
-        full_name = message.from_user.full_name
 
         async with SessionLocal() as session:
             result = await session.execute(select(User).where(User.tg_user_id == tg_user_id))
@@ -34,11 +33,7 @@ def register_user_handlers(dp: Dispatcher) -> None:
             await session.commit()
 
         await message.answer(
-            "Привет! Я живой 🙂\n\n"
-            f"🔎 Диагностика:\n"
-            f"tg_user_id: {tg_user_id}\n"
-            f"from_user.username: {username}\n"
-            f"from_user.full_name: {full_name}\n\n"
+            "Привет! Я бот турнира прогнозов РПЛ ⚽️\n\n"
             "Команды:\n"
             "/round 1 — матчи тура\n"
             "/predict 1 2:0 — прогноз на матч\n"
@@ -46,8 +41,6 @@ def register_user_handlers(dp: Dispatcher) -> None:
             "/my 1 — мои прогнозы на тур\n"
             "/table — таблица лидеров\n"
             "/stats — подробная статистика\n"
-            "/whoami — что бот видит\n"
-            "/fix_username — записать username в БД (если таблица показывает ID)\n"
             "/help — помощь"
         )
 
@@ -73,24 +66,6 @@ def register_user_handlers(dp: Dispatcher) -> None:
             f"DB users.username: {db_username}\n"
         )
 
-    @dp.message(Command("fix_username"))
-    async def cmd_fix_username(message: types.Message):
-        tg_user_id = message.from_user.id
-        username = message.from_user.username
-
-        async with SessionLocal() as session:
-            result = await session.execute(select(User).where(User.tg_user_id == tg_user_id))
-            user = result.scalar_one_or_none()
-
-            if user is None:
-                session.add(User(tg_user_id=tg_user_id, username=username))
-            else:
-                user.username = username
-
-            await session.commit()
-
-        await message.answer(f"✅ Записал в БД username={username} для tg_user_id={tg_user_id}")
-
     @dp.message(Command("help"))
     async def cmd_help(message: types.Message):
         text = (
@@ -103,9 +78,7 @@ def register_user_handlers(dp: Dispatcher) -> None:
             "/predict_round N — прогнозы на тур одним сообщением (пример: /predict_round 1)\n"
             "/my N — мои прогнозы на тур (пример: /my 1)\n"
             "/table — таблица лидеров\n"
-            "/stats — подробная статистика\n"
-            "/whoami — что бот видит\n"
-            "/fix_username — записать username в БД\n\n"
+            "/stats — подробная статистика\n\n"
             "Админ:\n"
             "/admin_add_match — добавить матч\n"
             "/admin_set_result — поставить результат\n"
