@@ -1,8 +1,9 @@
 import os
+import ssl
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.models import Base  # Base и модели уже у тебя в app/models.py
+from app.models import Base
 
 
 def _make_async_db_url(raw_url: str) -> str:
@@ -29,17 +30,20 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if DATABASE_URL:
     ASYNC_DB_URL = _make_async_db_url(DATABASE_URL)
 
-    # Для Render по External URL обычно нужен SSL.
-    # asyncpg принимает ssl=True (использует безопасное соединение).
+    # Render external postgres часто требует SSL и может иметь self-signed цепочку.
+    # Делаем SSL-контекст БЕЗ проверки сертификата, чтобы подключение не падало.
+    ssl_ctx = ssl.create_default_context()
+    ssl_ctx.check_hostname = False
+    ssl_ctx.verify_mode = ssl.CERT_NONE
+
     engine = create_async_engine(
         ASYNC_DB_URL,
         echo=False,
         pool_pre_ping=True,
-        connect_args={"ssl": True},
+        connect_args={"ssl": ssl_ctx},
     )
 else:
-    # fallback на локальный sqlite (на всякий случай)
-    # В Render использовать не надо — там и была проблема "пропадают матчи".
+    # fallback на локальный sqlite (локально удобно)
     engine = create_async_engine(
         "sqlite+aiosqlite:///./bot.db",
         echo=False,
@@ -53,9 +57,5 @@ SessionLocal: async_sessionmaker[AsyncSession] = async_sessionmaker(
 
 
 async def init_db() -> None:
-    """
-    Создаёт таблицы в базе, если их ещё нет.
-    ВАЖНО: после перехода на Postgres это нужно выполнить хотя бы 1 раз.
-    """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
