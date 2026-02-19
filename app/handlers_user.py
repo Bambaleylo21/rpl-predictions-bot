@@ -5,6 +5,8 @@ from aiogram.fsm.state import State, StatesGroup
 
 from sqlalchemy import select
 
+from datetime import datetime, timezone
+
 from app.db import SessionLocal
 from app.models import User, Match, Prediction, Point
 from app.stats import build_stats_text
@@ -18,8 +20,6 @@ class PredictRoundStates(StatesGroup):
 async def ensure_user(session, message: types.Message) -> None:
     """
     Гарантирует, что пользователь есть в БД, и что username актуален.
-    Вызываем в командах, чтобы /table всегда показывала ник,
-    даже если человек не нажимал /start.
     """
     if not message.from_user:
         return
@@ -36,6 +36,14 @@ async def ensure_user(session, message: types.Message) -> None:
         user.username = username
 
     await session.commit()
+
+
+def _now_utc_naive() -> datetime:
+    """
+    Возвращает текущее время как naive datetime в UTC.
+    Это удобно, если kickoff_time в БД хранится как naive (без timezone).
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def register_user_handlers(dp: Dispatcher) -> None:
@@ -69,6 +77,8 @@ def register_user_handlers(dp: Dispatcher) -> None:
             "/my N — мои прогнозы на тур (пример: /my 1)\n"
             "/table — таблица лидеров\n"
             "/stats — подробная статистика\n\n"
+            "Правило:\n"
+            "⛔️ Нельзя менять/ставить прогноз после начала матча.\n\n"
             "Админ:\n"
             "/admin_add_match — добавить матч\n"
             "/admin_set_result — поставить результат\n"
@@ -155,6 +165,12 @@ def register_user_handlers(dp: Dispatcher) -> None:
                 await message.answer(f"Матч с id={match_id} не найден. Посмотри /round 1")
                 return
 
+            # запрет после начала матча
+            now = _now_utc_naive()
+            if match.kickoff_time <= now:
+                await message.answer("⛔️ Матч уже начался. Ставить/менять прогноз нельзя.")
+                return
+
             # upsert прогноз
             result = await session.execute(
                 select(Prediction).where(
@@ -209,10 +225,13 @@ def register_user_handlers(dp: Dispatcher) -> None:
             await message.answer(f"В туре {round_number} пока нет матчей.")
             return
 
+        # Примечание про правило блокировки
         await state.update_data(round_number=round_number)
         await state.set_state(PredictRoundStates.waiting_for_predictions_block)
 
         lines = [f"📝 Ввод прогнозов на тур {round_number} одним сообщением."]
+        lines.append("⛔️ После начала матча прогноз поставить/изменить нельзя.")
+        lines.append("")
         lines.append("Отправь следующим сообщением строки в формате:")
         lines.append("match_id счет")
         lines.append("Пример:")
@@ -235,18 +254,23 @@ def register_user_handlers(dp: Dispatcher) -> None:
             await state.clear()
             return
 
+        now = _now_utc_naive()
+
         async with SessionLocal() as session:
             # гарантируем, что юзер есть в БД и ник актуален
             await ensure_user(session, message)
 
             res = await session.execute(select(Match).where(Match.round_number == round_number))
             matches = res.scalars().all()
-            allowed_match_ids = {m.id for m in matches}
+
+            match_by_id = {m.id: m for m in matches}
+            allowed_match_ids = set(match_by_id.keys())
 
             lines = [ln.strip() for ln in message.text.splitlines() if ln.strip()]
 
             saved = 0
             errors = 0
+            skipped = 0
             error_lines: list[str] = []
 
             tg_user_id = message.from_user.id
@@ -285,6 +309,17 @@ def register_user_handlers(dp: Dispatcher) -> None:
                     error_lines.append(f"❌ '{ln}' (счёт должен быть числом, пример 2:0)")
                     continue
 
+                m = match_by_id.get(match_id)
+                if m is None:
+                    errors += 1
+                    error_lines.append(f"❌ '{ln}' (матч не найден)")
+                    continue
+
+                # пропускаем матчи, которые уже начались
+                if m.kickoff_time <= now:
+                    skipped += 1
+                    continue
+
                 res_pred = await session.execute(
                     select(Prediction).where(
                         Prediction.match_id == match_id,
@@ -313,6 +348,8 @@ def register_user_handlers(dp: Dispatcher) -> None:
         await state.clear()
 
         reply = [f"✅ Сохранено прогнозов: {saved}"]
+        if skipped:
+            reply.append(f"⛔️ Пропущено (матч уже начался): {skipped}")
         if errors:
             reply.append(f"⚠️ Ошибок: {errors}")
             reply.append("Проблемные строки:")
