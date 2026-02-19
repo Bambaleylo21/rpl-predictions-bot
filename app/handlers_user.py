@@ -51,6 +51,24 @@ def register_user_handlers(dp: Dispatcher) -> None:
             "/whoami — что бот видит\n"
             "/help — помощь"
         )
+    @dp.message(Command("fix_username"))
+    async def cmd_fix_username(message: types.Message):
+        tg_user_id = message.from_user.id
+        username = message.from_user.username
+
+        async with SessionLocal() as session:
+            result = await session.execute(select(User).where(User.tg_user_id == tg_user_id))
+            user = result.scalar_one_or_none()
+
+            if user is None:
+                session.add(User(tg_user_id=tg_user_id, username=username))
+            else:
+                user.username = username
+
+            await session.commit()
+
+        await message.answer(f"✅ Записал в БД username={username} для tg_user_id={tg_user_id}")
+
 
     @dp.message(Command("whoami"))
     async def cmd_whoami(message: types.Message):
