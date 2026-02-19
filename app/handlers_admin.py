@@ -12,7 +12,8 @@ from app.config import load_admin_ids
 from app.db import SessionLocal
 from app.models import Match, Prediction, Point, User
 from app.scoring import calculate_points
-from app.rpl_api import fetch_rpl_round  # (fixtures, debug_info)
+
+from app.rpl_api import fetch_rpl_round, fetch_api_status  # <-- NEW
 
 ADMIN_IDS = load_admin_ids()
 
@@ -67,9 +68,6 @@ def _db_mode_text() -> str:
 
 
 def _short_err(e: Exception, limit: int = 600) -> str:
-    """
-    Коротко показываем ошибку в чат (админу), чтобы не лезть в логи.
-    """
     msg = str(e) if str(e) else repr(e)
     if len(msg) > limit:
         msg = msg[:limit] + "…"
@@ -260,6 +258,26 @@ def register_admin_handlers(dp: Dispatcher) -> None:
             f"points: {points_cnt}"
         )
         await message.answer(text)
+
+    @dp.message(Command("admin_api_status"))
+    async def cmd_admin_api_status(message: types.Message):
+        """
+        Показывает статус API-Football (план/лимиты/запросы).
+        """
+        if message.from_user.id not in ADMIN_IDS:
+            await message.answer("⛔️ У вас нет прав на эту команду.")
+            return
+
+        try:
+            data = await fetch_api_status()
+        except Exception as e:
+            print("API STATUS ERROR:", repr(e))
+            await message.answer(f"⚠️ Ошибка API: {type(e).__name__}: {_short_err(e)}")
+            return
+
+        resp = data.get("response") or {}
+        # resp обычно содержит account/subscription/requests
+        await message.answer(f"📡 API status\n{resp}")
 
     @dp.message(Command("admin_api_debug"))
     async def cmd_admin_api_debug(message: types.Message):
