@@ -13,6 +13,53 @@ from app.scoring import calculate_points
 ADMIN_IDS = load_admin_ids()
 
 
+async def recalc_points_for_match(match_id: int) -> int:
+    """
+    Пересчитывает очки ТОЛЬКО для одного матча.
+    Возвращает количество обработанных прогнозов.
+    """
+    updates = 0
+
+    async with SessionLocal() as session:
+        res_match = await session.execute(select(Match).where(Match.id == match_id))
+        match = res_match.scalar_one_or_none()
+        if match is None:
+            return 0
+
+        if match.home_score is None or match.away_score is None:
+            return 0
+
+        res_preds = await session.execute(select(Prediction).where(Prediction.match_id == match_id))
+        preds = res_preds.scalars().all()
+
+        for p in preds:
+            calc = calculate_points(p.pred_home, p.pred_away, match.home_score, match.away_score)
+
+            res_point = await session.execute(
+                select(Point).where(Point.match_id == match_id, Point.tg_user_id == p.tg_user_id)
+            )
+            point = res_point.scalar_one_or_none()
+
+            if point is None:
+                session.add(
+                    Point(
+                        match_id=match_id,
+                        tg_user_id=p.tg_user_id,
+                        points=calc.points,
+                        category=calc.category,
+                    )
+                )
+            else:
+                point.points = calc.points
+                point.category = calc.category
+
+            updates += 1
+
+        await session.commit()
+
+    return updates
+
+
 def register_admin_handlers(dp: Dispatcher) -> None:
     @dp.message(Command("admin_add_match"))
     async def cmd_admin_add_match(message: types.Message):
@@ -112,7 +159,13 @@ def register_admin_handlers(dp: Dispatcher) -> None:
             match.away_score = away_score
             await session.commit()
 
-        await message.answer(f"✅ Результат сохранён для матча #{match_id}: {home_score}:{away_score}")
+        # ✅ автоматически пересчитываем очки для этого матча
+        updates = await recalc_points_for_match(match_id)
+
+        await message.answer(
+            f"✅ Результат сохранён для матча #{match_id}: {home_score}:{away_score}\n"
+            f"🧮 Начислений пересчитано: {updates}"
+        )
 
     @dp.message(Command("admin_recalc"))
     async def cmd_admin_recalc(message: types.Message):
