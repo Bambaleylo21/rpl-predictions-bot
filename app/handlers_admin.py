@@ -1,13 +1,14 @@
 from datetime import datetime
+import os
 
 from aiogram import Dispatcher, types
 from aiogram.filters import Command
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from app.config import load_admin_ids
 from app.db import SessionLocal
-from app.models import Match, Prediction, Point
+from app.models import Match, Prediction, Point, User
 from app.scoring import calculate_points
 
 ADMIN_IDS = load_admin_ids()
@@ -58,6 +59,15 @@ async def recalc_points_for_match(match_id: int) -> int:
         await session.commit()
 
     return updates
+
+
+def _db_mode_text() -> str:
+    """
+    Для админ-диагностики: понятно написать, что сейчас используется.
+    """
+    if os.getenv("DATABASE_URL"):
+        return "Postgres (DATABASE_URL)"
+    return "SQLite fallback (⚠️ так быть не должно на Render)"
 
 
 def register_admin_handlers(dp: Dispatcher) -> None:
@@ -159,7 +169,6 @@ def register_admin_handlers(dp: Dispatcher) -> None:
             match.away_score = away_score
             await session.commit()
 
-        # ✅ автоматически пересчитываем очки для этого матча
         updates = await recalc_points_for_match(match_id)
 
         await message.answer(
@@ -211,3 +220,32 @@ def register_admin_handlers(dp: Dispatcher) -> None:
             await session.commit()
 
         await message.answer(f"✅ Пересчитано начислений: {updates}")
+
+    @dp.message(Command("admin_health"))
+    async def cmd_admin_health(message: types.Message):
+        if message.from_user.id not in ADMIN_IDS:
+            await message.answer("⛔️ У вас нет прав на эту команду.")
+            return
+
+        async with SessionLocal() as session:
+            users_cnt = int((await session.execute(select(func.count(User.id)))).scalar_one() or 0)
+            matches_cnt = int((await session.execute(select(func.count(Match.id)))).scalar_one() or 0)
+            preds_cnt = int((await session.execute(select(func.count(Prediction.id)))).scalar_one() or 0)
+            points_cnt = int((await session.execute(select(func.count(Point.id)))).scalar_one() or 0)
+
+            played_cnt = int(
+                (await session.execute(
+                    select(func.count(Match.id)).where(Match.home_score.is_not(None), Match.away_score.is_not(None))
+                )).scalar_one() or 0
+            )
+
+        text = (
+            "🩺 admin_health\n"
+            f"DB: {_db_mode_text()}\n"
+            f"users: {users_cnt}\n"
+            f"matches: {matches_cnt}\n"
+            f"played matches: {played_cnt}\n"
+            f"predictions: {preds_cnt}\n"
+            f"points: {points_cnt}"
+        )
+        await message.answer(text)
