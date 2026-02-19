@@ -2,6 +2,8 @@ from datetime import datetime
 
 from aiogram import Dispatcher, types
 from aiogram.filters import CommandStart, Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 
 from sqlalchemy import select
 
@@ -11,8 +13,11 @@ from app.models import User, Match, Prediction, Point
 from app.scoring import calculate_points
 from app.stats import build_stats_text
 
-# ✅ теперь админы читаются из .env
 ADMIN_IDS = load_admin_ids()
+
+
+class PredictRoundStates(StatesGroup):
+    waiting_for_predictions_block = State()
 
 
 def register_handlers(dp: Dispatcher) -> None:
@@ -33,7 +38,8 @@ def register_handlers(dp: Dispatcher) -> None:
             "Привет! Я живой 🙂\n\n"
             "Команды:\n"
             "/round 1 — матчи тура\n"
-            "/predict 1 2:0 — сделать прогноз\n"
+            "/predict 1 2:0 — прогноз на матч\n"
+            "/predict_round 1 — прогнозы на весь тур одним сообщением\n"
             "/table — таблица лидеров\n"
             "/stats — подробная статистика\n"
             "/help — помощь"
@@ -48,6 +54,7 @@ def register_handlers(dp: Dispatcher) -> None:
             "/ping — проверка\n"
             "/round N — матчи тура (пример: /round 1)\n"
             "/predict <match_id> <счет> — прогноз (пример: /predict 1 2:0)\n"
+            "/predict_round N — прогнозы на тур одним сообщением (пример: /predict_round 1)\n"
             "/table — таблица лидеров\n"
             "/stats — подробная статистика\n\n"
             "Админ:\n"
@@ -302,6 +309,149 @@ def register_handlers(dp: Dispatcher) -> None:
 
         await message.answer(f"✅ Прогноз сохранён для матча #{match_id}: {pred_home}:{pred_away}")
 
+    @dp.message(Command("predict_round"))
+    async def cmd_predict_round(message: types.Message, state: FSMContext):
+        parts = message.text.strip().split()
+        if len(parts) != 2:
+            await message.answer("Неверный формат. Пример: /predict_round 1")
+            return
+
+        try:
+            round_number = int(parts[1])
+        except ValueError:
+            await message.answer("Номер тура должен быть числом. Пример: /predict_round 1")
+            return
+
+        async with SessionLocal() as session:
+            result = await session.execute(
+                select(Match)
+                .where(Match.round_number == round_number)
+                .order_by(Match.kickoff_time.asc())
+            )
+            matches = result.scalars().all()
+
+        if not matches:
+            await message.answer(f"В туре {round_number} пока нет матчей.")
+            return
+
+        await state.update_data(round_number=round_number)
+        await state.set_state(PredictRoundStates.waiting_for_predictions_block)
+
+        lines = [f"📝 Ввод прогнозов на тур {round_number} одним сообщением."]
+        lines.append("Отправь следующим сообщением строки в формате:")
+        lines.append("match_id счет")
+        lines.append("Пример:")
+        lines.append("1 2:0")
+        lines.append("2 1:1")
+        lines.append("")
+        lines.append("Матчи тура:")
+
+        for m in matches:
+            lines.append(f"#{m.id} {m.home_team} — {m.away_team} ({m.kickoff_time.strftime('%Y-%m-%d %H:%M')})")
+
+        await message.answer("\n".join(lines))
+
+    # ✅ вот он: обработчик "следующего сообщения" в режиме ожидания блока
+    @dp.message(PredictRoundStates.waiting_for_predictions_block)
+    async def handle_predictions_block(message: types.Message, state: FSMContext):
+        data = await state.get_data()
+        round_number = data.get("round_number")
+
+        if round_number is None:
+            await message.answer("Что-то пошло не так. Повтори /predict_round 1")
+            await state.clear()
+            return
+
+        # Берём все матчи тура и делаем множество допустимых id
+        async with SessionLocal() as session:
+            res = await session.execute(select(Match).where(Match.round_number == round_number))
+            matches = res.scalars().all()
+
+        allowed_match_ids = {m.id for m in matches}
+
+        lines = [ln.strip() for ln in message.text.splitlines() if ln.strip()]
+
+        saved = 0
+        errors = 0
+        error_lines: list[str] = []
+
+        tg_user_id = message.from_user.id
+
+        async with SessionLocal() as session:
+            for ln in lines:
+                # ожидаем: "1 2:0"
+                parts = ln.split()
+                if len(parts) != 2:
+                    errors += 1
+                    error_lines.append(f"❌ '{ln}' (нужно: match_id счет)")
+                    continue
+
+                match_id_str, score_str = parts
+                try:
+                    match_id = int(match_id_str)
+                except ValueError:
+                    errors += 1
+                    error_lines.append(f"❌ '{ln}' (match_id должен быть числом)")
+                    continue
+
+                if match_id not in allowed_match_ids:
+                    errors += 1
+                    error_lines.append(f"❌ '{ln}' (match_id не из тура {round_number})")
+                    continue
+
+                if ":" not in score_str:
+                    errors += 1
+                    error_lines.append(f"❌ '{ln}' (счёт должен быть 2:0)")
+                    continue
+
+                try:
+                    h, a = score_str.split(":")
+                    pred_home = int(h)
+                    pred_away = int(a)
+                except ValueError:
+                    errors += 1
+                    error_lines.append(f"❌ '{ln}' (счёт должен быть числом, пример 2:0)")
+                    continue
+
+                # upsert прогноз
+                res_pred = await session.execute(
+                    select(Prediction).where(
+                        Prediction.match_id == match_id,
+                        Prediction.tg_user_id == tg_user_id,
+                    )
+                )
+                pred = res_pred.scalar_one_or_none()
+
+                if pred is None:
+                    session.add(
+                        Prediction(
+                            match_id=match_id,
+                            tg_user_id=tg_user_id,
+                            pred_home=pred_home,
+                            pred_away=pred_away,
+                        )
+                    )
+                else:
+                    pred.pred_home = pred_home
+                    pred.pred_away = pred_away
+
+                saved += 1
+
+            await session.commit()
+
+        # выходим из режима
+        await state.clear()
+
+        reply = [f"✅ Сохранено прогнозов: {saved}"]
+        if errors:
+            reply.append(f"⚠️ Ошибок: {errors}")
+            reply.append("Проблемные строки:")
+            reply.extend(error_lines[:10])
+            if len(error_lines) > 10:
+                reply.append("…(ещё есть ошибки, показываю первые 10)")
+
+        await message.answer("\n".join(reply))
+
     @dp.message(Command("table"))
     async def cmd_table(message: types.Message):
         async with SessionLocal() as session:
@@ -318,13 +468,7 @@ def register_handlers(dp: Dispatcher) -> None:
 
         for r in points_rows:
             if r.tg_user_id not in stats:
-                stats[r.tg_user_id] = {
-                    "name": str(r.tg_user_id),
-                    "total": 0,
-                    "exact": 0,
-                    "diff": 0,
-                    "outcome": 0,
-                }
+                stats[r.tg_user_id] = {"name": str(r.tg_user_id), "total": 0, "exact": 0, "diff": 0, "outcome": 0}
 
             stats[r.tg_user_id]["total"] += int(r.points)
             if r.category == "exact":
@@ -343,9 +487,7 @@ def register_handlers(dp: Dispatcher) -> None:
 
         lines = ["🏆 Таблица лидеров:"]
         for i, r in enumerate(rows[:20], start=1):
-            lines.append(
-                f"{i}. {r['name']} — {r['total']} очк. | 🎯{r['exact']} | 📏{r['diff']} | ✅{r['outcome']}"
-            )
+            lines.append(f"{i}. {r['name']} — {r['total']} очк. | 🎯{r['exact']} | 📏{r['diff']} | ✅{r['outcome']}")
 
         await message.answer("\n".join(lines))
 
