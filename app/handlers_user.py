@@ -5,8 +5,7 @@ from aiogram.fsm.state import State, StatesGroup
 
 from sqlalchemy import select, func
 
-from datetime import datetime
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta
 
 from app.db import SessionLocal
 from app.models import User, Match, Prediction, Point
@@ -18,7 +17,9 @@ class PredictRoundStates(StatesGroup):
     waiting_for_predictions_block = State()
 
 
-MSK_TZ = ZoneInfo("Europe/Moscow")
+# Надёжно для любого сервера: МСК = UTC+3 (без tzdata)
+def now_msk_naive() -> datetime:
+    return (datetime.utcnow() + timedelta(hours=3)).replace(tzinfo=None)
 
 
 def format_user_name(username: str | None, full_name: str | None, tg_user_id: int) -> str:
@@ -30,9 +31,6 @@ def format_user_name(username: str | None, full_name: str | None, tg_user_id: in
 
 
 async def upsert_user_from_message(session, message: types.Message) -> tuple[bool, str]:
-    """
-    Возвращает (created, display_name).
-    """
     if not message.from_user:
         return False, "unknown"
 
@@ -53,10 +51,6 @@ async def upsert_user_from_message(session, message: types.Message) -> tuple[boo
 
     await session.commit()
     return created, format_user_name(username, full_name, tg_user_id)
-
-
-def now_msk_naive() -> datetime:
-    return datetime.now(MSK_TZ).replace(tzinfo=None)
 
 
 def normalize_score(score_str: str) -> str:
@@ -86,10 +80,6 @@ def match_status_icon(match: Match, now: datetime) -> str:
 
 
 async def _get_user_name_map(user_ids: set[int]) -> dict[int, str]:
-    """
-    Возвращает map tg_user_id -> отображаемое имя.
-    Даже если user не зарегистрирован в users (маловероятно) — будет fallback на id.
-    """
     if not user_ids:
         return {}
 
@@ -109,7 +99,6 @@ async def build_leaderboard_for_round(round_number: int) -> tuple[list[dict], in
     Возвращает (rows, participants_count)
     """
     async with SessionLocal() as session:
-        # матчи тура
         res_matches = await session.execute(select(Match).where(Match.round_number == round_number))
         matches = res_matches.scalars().all()
 
@@ -117,7 +106,6 @@ async def build_leaderboard_for_round(round_number: int) -> tuple[list[dict], in
         if not match_ids:
             return [], 0
 
-        # участники тура = те, кто сделал прогноз хотя бы на 1 матч тура
         res_part = await session.execute(
             select(Prediction.tg_user_id).where(Prediction.match_id.in_(match_ids)).distinct()
         )
@@ -126,10 +114,51 @@ async def build_leaderboard_for_round(round_number: int) -> tuple[list[dict], in
         if not participant_ids:
             return [], 0
 
-        # очки по матчам тура
         res_points = await session.execute(
             select(Point).where(Point.match_id.in_(match_ids), Point.tg_user_id.in_(participant_ids))
         )
+        points_rows = res_points.scalars().all()
+
+    name_map = await _get_user_name_map(participant_ids)
+
+    stats: dict[int, dict] = {}
+    for uid in participant_ids:
+        stats[uid] = {
+            "tg_user_id": uid,
+            "name": name_map.get(uid, str(uid)),
+            "total": 0,
+            "exact": 0,
+            "diff": 0,
+            "outcome": 0,
+        }
+
+    for r in points_rows:
+        stats[r.tg_user_id]["total"] += int(r.points)
+        if r.category == "exact":
+            stats[r.tg_user_id]["exact"] += 1
+        elif r.category == "diff":
+            stats[r.tg_user_id]["diff"] += 1
+        elif r.category == "outcome":
+            stats[r.tg_user_id]["outcome"] += 1
+
+    rows = list(stats.values())
+    rows.sort(key=lambda x: (x["total"], x["exact"], x["diff"], x["outcome"]), reverse=True)
+    return rows, len(participant_ids)
+
+
+async def build_overall_leaderboard() -> tuple[list[dict], int]:
+    """
+    Общая таблица: показываем только пользователей, у которых есть хотя бы 1 prediction.
+    Возвращает (rows, participants_count)
+    """
+    async with SessionLocal() as session:
+        res_part = await session.execute(select(Prediction.tg_user_id).distinct())
+        participant_ids = {int(x[0]) for x in res_part.all()}
+
+        if not participant_ids:
+            return [], 0
+
+        res_points = await session.execute(select(Point).where(Point.tg_user_id.in_(participant_ids)))
         points_rows = res_points.scalars().all()
 
     name_map = await _get_user_name_map(participant_ids)
@@ -223,48 +252,6 @@ async def round_has_matches(round_number: int) -> bool:
         res = await session.execute(select(func.count(Match.id)).where(Match.round_number == round_number))
         cnt = int(res.scalar_one() or 0)
     return cnt > 0
-
-
-async def build_overall_leaderboard() -> tuple[list[dict], int]:
-    """
-    Общая таблица: показываем только пользователей, у которых есть хотя бы 1 prediction.
-    Возвращает (rows, participants_count)
-    """
-    async with SessionLocal() as session:
-        res_part = await session.execute(select(Prediction.tg_user_id).distinct())
-        participant_ids = {int(x[0]) for x in res_part.all()}
-
-        if not participant_ids:
-            return [], 0
-
-        res_points = await session.execute(select(Point).where(Point.tg_user_id.in_(participant_ids)))
-        points_rows = res_points.scalars().all()
-
-    name_map = await _get_user_name_map(participant_ids)
-
-    stats: dict[int, dict] = {}
-    for uid in participant_ids:
-        stats[uid] = {
-            "tg_user_id": uid,
-            "name": name_map.get(uid, str(uid)),
-            "total": 0,
-            "exact": 0,
-            "diff": 0,
-            "outcome": 0,
-        }
-
-    for r in points_rows:
-        stats[r.tg_user_id]["total"] += int(r.points)
-        if r.category == "exact":
-            stats[r.tg_user_id]["exact"] += 1
-        elif r.category == "diff":
-            stats[r.tg_user_id]["diff"] += 1
-        elif r.category == "outcome":
-            stats[r.tg_user_id]["outcome"] += 1
-
-    rows = list(stats.values())
-    rows.sort(key=lambda x: (x["total"], x["exact"], x["diff"], x["outcome"]), reverse=True)
-    return rows, len(participant_ids)
 
 
 def register_user_handlers(dp: Dispatcher) -> None:
