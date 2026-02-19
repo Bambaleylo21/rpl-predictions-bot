@@ -204,18 +204,18 @@ async def round_has_matches(round_number: int) -> bool:
 
 
 def register_user_handlers(dp: Dispatcher) -> None:
-    # ✅ Глобальный перехват ошибок: вместо “молчания” будет сообщение + лог в Render
+    # ✅ Глобальный перехват ошибок: пользователю коротко, детали — в логах Render
     @dp.error()
     async def on_error(event: types.ErrorEvent):
         try:
-            print("ERROR EVENT:", repr(event.exception))
+            print("UNHANDLED ERROR:", repr(event.exception))
         except Exception:
             pass
 
         upd = event.update
         if upd and upd.message:
             try:
-                await upd.message.answer(f"⚠️ Ошибка в обработке команды: {type(event.exception).__name__}: {event.exception}")
+                await upd.message.answer("⚠️ Команда временно недоступна. Попробуйте позже.")
             except Exception:
                 pass
         return True
@@ -331,66 +331,59 @@ def register_user_handlers(dp: Dispatcher) -> None:
 
     @dp.message(Command("predict"))
     async def cmd_predict(message: types.Message):
-        # ✅ Доп. защита: если тут ошибка — мы её увидим в Telegram
+        parts = message.text.strip().split()
+        if len(parts) != 3:
+            await message.answer("Неверный формат. Пример: /predict 1 2:0")
+            return
+
         try:
-            parts = message.text.strip().split()
-            if len(parts) != 3:
-                await message.answer("Неверный формат. Пример: /predict 1 2:0")
+            match_id = int(parts[1])
+        except ValueError:
+            await message.answer("match_id должен быть числом. Пример: /predict 1 2:0")
+            return
+
+        score_str = normalize_score(parts[2])
+        parsed = parse_score(score_str)
+        if parsed is None:
+            await message.answer("Счёт должен быть в формате 2:0 (или 2-0)")
+            return
+
+        pred_home, pred_away = parsed
+        tg_user_id = message.from_user.id
+        now = now_msk_naive()
+
+        async with SessionLocal() as session:
+            await upsert_user_from_message(session, message)
+
+            result = await session.execute(select(Match).where(Match.id == match_id))
+            match = result.scalar_one_or_none()
+            if match is None:
+                await message.answer(f"Матч с id={match_id} не найден. Посмотри /round 1")
                 return
 
-            try:
-                match_id = int(parts[1])
-            except ValueError:
-                await message.answer("match_id должен быть числом. Пример: /predict 1 2:0")
-                return
-
-            score_str = normalize_score(parts[2])
-            parsed = parse_score(score_str)
-            if parsed is None:
-                await message.answer("Счёт должен быть в формате 2:0 (или 2-0)")
-                return
-
-            pred_home, pred_away = parsed
-            tg_user_id = message.from_user.id
-            now = now_msk_naive()
-
-            async with SessionLocal() as session:
-                await upsert_user_from_message(session, message)
-
-                result = await session.execute(select(Match).where(Match.id == match_id))
-                match = result.scalar_one_or_none()
-                if match is None:
-                    await message.answer(f"Матч с id={match_id} не найден. Посмотри /round 1")
-                    return
-
-                if match.kickoff_time <= now:
-                    await message.answer(
-                        "⛔️ Матч уже начался. Ставить/менять прогноз нельзя.\n"
-                        f"Начало: {match.kickoff_time.strftime('%Y-%m-%d %H:%M')} МСК"
-                    )
-                    return
-
-                result = await session.execute(
-                    select(Prediction).where(Prediction.match_id == match_id, Prediction.tg_user_id == tg_user_id)
+            if match.kickoff_time <= now:
+                await message.answer(
+                    "⛔️ Матч уже начался. Ставить/менять прогноз нельзя.\n"
+                    f"Начало: {match.kickoff_time.strftime('%Y-%m-%d %H:%M')} МСК"
                 )
-                pred = result.scalar_one_or_none()
+                return
 
-                if pred is None:
-                    session.add(
-                        Prediction(match_id=match_id, tg_user_id=tg_user_id, pred_home=pred_home, pred_away=pred_away)
-                    )
-                else:
-                    pred.pred_home = pred_home
-                    pred.pred_away = pred_away
+            result = await session.execute(
+                select(Prediction).where(Prediction.match_id == match_id, Prediction.tg_user_id == tg_user_id)
+            )
+            pred = result.scalar_one_or_none()
 
-                await session.commit()
+            if pred is None:
+                session.add(
+                    Prediction(match_id=match_id, tg_user_id=tg_user_id, pred_home=pred_home, pred_away=pred_away)
+                )
+            else:
+                pred.pred_home = pred_home
+                pred.pred_away = pred_away
 
-            await message.answer(f"✅ Прогноз сохранён для матча #{match_id}: {pred_home}:{pred_away}")
+            await session.commit()
 
-        except Exception as e:
-            # лог в Render
-            print("PREDICT ERROR:", repr(e))
-            await message.answer(f"⚠️ Ошибка в /predict: {type(e).__name__}: {e}")
+        await message.answer(f"✅ Прогноз сохранён для матча #{match_id}: {pred_home}:{pred_away}")
 
     @dp.message(Command("predict_round"))
     async def cmd_predict_round(message: types.Message, state: FSMContext):
