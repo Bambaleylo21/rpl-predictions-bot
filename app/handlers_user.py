@@ -29,12 +29,10 @@ def register_user_handlers(dp: Dispatcher) -> None:
             if user is None:
                 session.add(User(tg_user_id=tg_user_id, username=username))
             else:
-                # обновляем username, если он появился или изменился
-                user.username = username
+                user.username = username  # обновляем ник, если изменился/появился
 
             await session.commit()
 
-        # Диагностика: что Telegram реально прислал (потом уберём)
         await message.answer(
             "Привет! Я живой 🙂\n\n"
             f"🔎 Диагностика:\n"
@@ -49,26 +47,9 @@ def register_user_handlers(dp: Dispatcher) -> None:
             "/table — таблица лидеров\n"
             "/stats — подробная статистика\n"
             "/whoami — что бот видит\n"
+            "/fix_username — записать username в БД (если таблица показывает ID)\n"
             "/help — помощь"
         )
-    @dp.message(Command("fix_username"))
-    async def cmd_fix_username(message: types.Message):
-        tg_user_id = message.from_user.id
-        username = message.from_user.username
-
-        async with SessionLocal() as session:
-            result = await session.execute(select(User).where(User.tg_user_id == tg_user_id))
-            user = result.scalar_one_or_none()
-
-            if user is None:
-                session.add(User(tg_user_id=tg_user_id, username=username))
-            else:
-                user.username = username
-
-            await session.commit()
-
-        await message.answer(f"✅ Записал в БД username={username} для tg_user_id={tg_user_id}")
-
 
     @dp.message(Command("whoami"))
     async def cmd_whoami(message: types.Message):
@@ -92,6 +73,24 @@ def register_user_handlers(dp: Dispatcher) -> None:
             f"DB users.username: {db_username}\n"
         )
 
+    @dp.message(Command("fix_username"))
+    async def cmd_fix_username(message: types.Message):
+        tg_user_id = message.from_user.id
+        username = message.from_user.username
+
+        async with SessionLocal() as session:
+            result = await session.execute(select(User).where(User.tg_user_id == tg_user_id))
+            user = result.scalar_one_or_none()
+
+            if user is None:
+                session.add(User(tg_user_id=tg_user_id, username=username))
+            else:
+                user.username = username
+
+            await session.commit()
+
+        await message.answer(f"✅ Записал в БД username={username} для tg_user_id={tg_user_id}")
+
     @dp.message(Command("help"))
     async def cmd_help(message: types.Message):
         text = (
@@ -105,7 +104,8 @@ def register_user_handlers(dp: Dispatcher) -> None:
             "/my N — мои прогнозы на тур (пример: /my 1)\n"
             "/table — таблица лидеров\n"
             "/stats — подробная статистика\n"
-            "/whoami — что бот видит\n\n"
+            "/whoami — что бот видит\n"
+            "/fix_username — записать username в БД\n\n"
             "Админ:\n"
             "/admin_add_match — добавить матч\n"
             "/admin_set_result — поставить результат\n"
@@ -182,14 +182,12 @@ def register_user_handlers(dp: Dispatcher) -> None:
         tg_user_id = message.from_user.id
 
         async with SessionLocal() as session:
-            # матч существует?
             result = await session.execute(select(Match).where(Match.id == match_id))
             match = result.scalar_one_or_none()
             if match is None:
                 await message.answer(f"Матч с id={match_id} не найден. Посмотри /round 1")
                 return
 
-            # upsert прогноз
             result = await session.execute(
                 select(Prediction).where(
                     Prediction.match_id == match_id,
