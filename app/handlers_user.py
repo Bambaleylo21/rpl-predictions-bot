@@ -3,7 +3,7 @@ from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -88,6 +88,119 @@ def match_status_icon(match: Match, now: datetime) -> str:
     return "🟢"
 
 
+async def build_leaderboard_for_round(round_number: int) -> list[dict]:
+    """
+    Возвращает список строк-лидеров за тур:
+    [{"tg_user_id":..., "name":..., "total":..., "exact":..., "diff":..., "outcome":...}, ...]
+    """
+    async with SessionLocal() as session:
+        res_users = await session.execute(select(User))
+        users = res_users.scalars().all()
+
+        # points только за выбранный тур (через join с Match)
+        res_points = await session.execute(
+            select(Point, Match)
+            .join(Match, Point.match_id == Match.id)
+            .where(Match.round_number == round_number)
+        )
+        point_match_rows = res_points.all()
+
+    # подготовим словарь пользователей (чтобы имена были)
+    stats: dict[int, dict] = {}
+    for u in users:
+        name = u.username if u.username else str(u.tg_user_id)
+        stats[u.tg_user_id] = {"tg_user_id": u.tg_user_id, "name": name, "total": 0, "exact": 0, "diff": 0, "outcome": 0}
+
+    # наполняем по очкам
+    for p, _m in point_match_rows:
+        if p.tg_user_id not in stats:
+            stats[p.tg_user_id] = {"tg_user_id": p.tg_user_id, "name": str(p.tg_user_id), "total": 0, "exact": 0, "diff": 0, "outcome": 0}
+
+        stats[p.tg_user_id]["total"] += int(p.points)
+        if p.category == "exact":
+            stats[p.tg_user_id]["exact"] += 1
+        elif p.category == "diff":
+            stats[p.tg_user_id]["diff"] += 1
+        elif p.category == "outcome":
+            stats[p.tg_user_id]["outcome"] += 1
+
+    rows = list(stats.values())
+
+    # покажем только тех, кто реально участвовал в туре (есть хотя бы один Point)
+    rows = [r for r in rows if r["total"] > 0 or r["exact"] > 0 or r["diff"] > 0 or r["outcome"] > 0]
+
+    rows.sort(key=lambda x: (x["total"], x["exact"], x["diff"], x["outcome"]), reverse=True)
+    return rows
+
+
+async def get_round_total_points_for_user(tg_user_id: int, round_number: int) -> int:
+    async with SessionLocal() as session:
+        res = await session.execute(
+            select(func.coalesce(func.sum(Point.points), 0))
+            .join(Match, Point.match_id == Match.id)
+            .where(Match.round_number == round_number, Point.tg_user_id == tg_user_id)
+        )
+        total = res.scalar_one()
+    return int(total or 0)
+
+
+async def get_matches_played_stats() -> tuple[int, int]:
+    """
+    Возвращает (played, total) по всем матчам в базе.
+    played = где есть итог (home_score и away_score не None)
+    """
+    async with SessionLocal() as session:
+        total_res = await session.execute(select(func.count(Match.id)))
+        total = int(total_res.scalar_one() or 0)
+
+        played_res = await session.execute(
+            select(func.count(Match.id)).where(Match.home_score.is_not(None), Match.away_score.is_not(None))
+        )
+        played = int(played_res.scalar_one() or 0)
+
+    return played, total
+
+
+async def get_best_player_of_last_played_round() -> tuple[int, int] | None:
+    """
+    Возвращает (round_number, tg_user_id) лучшего игрока последнего тура, где есть хоть один сыгранный матч.
+    Если нет сыгранных матчей — None.
+    """
+    async with SessionLocal() as session:
+        last_round_res = await session.execute(
+            select(func.max(Match.round_number))
+            .where(Match.home_score.is_not(None), Match.away_score.is_not(None))
+        )
+        last_round = last_round_res.scalar_one()
+        if last_round is None:
+            return None
+
+        # топ по сумме очков за этот тур
+        top_res = await session.execute(
+            select(Point.tg_user_id, func.coalesce(func.sum(Point.points), 0).label("s"))
+            .join(Match, Point.match_id == Match.id)
+            .where(Match.round_number == last_round)
+            .group_by(Point.tg_user_id)
+            .order_by(func.coalesce(func.sum(Point.points), 0).desc())
+            .limit(1)
+        )
+        row = top_res.first()
+        if not row:
+            return None
+
+        tg_user_id = int(row[0])
+        return int(last_round), tg_user_id
+
+
+async def get_user_display_name(tg_user_id: int) -> str:
+    async with SessionLocal() as session:
+        res = await session.execute(select(User).where(User.tg_user_id == tg_user_id))
+        u = res.scalar_one_or_none()
+    if u and u.username:
+        return u.username
+    return str(tg_user_id)
+
+
 def register_user_handlers(dp: Dispatcher) -> None:
     @dp.message(CommandStart())
     async def cmd_start(message: types.Message):
@@ -103,7 +216,8 @@ def register_user_handlers(dp: Dispatcher) -> None:
             "/predict 1 2:0 — прогноз на матч\n"
             "/predict_round 1 — прогнозы на тур одним сообщением\n"
             "/my 1 — мои прогнозы на тур\n"
-            "/table — таблица лидеров\n"
+            "/table — общая таблица\n"
+            "/table_round 1 — таблица за тур\n"
             "/stats — подробная статистика\n"
             "/help — помощь"
         )
@@ -119,7 +233,8 @@ def register_user_handlers(dp: Dispatcher) -> None:
             "/predict <match_id> <счет> — прогноз (пример: /predict 1 2:0)\n"
             "/predict_round N — прогнозы на тур одним сообщением (пример: /predict_round 1)\n"
             "/my N — мои прогнозы на тур (пример: /my 1)\n"
-            "/table — таблица лидеров\n"
+            "/table — общая таблица лидеров\n"
+            "/table_round N — таблица лидеров за тур\n"
             "/stats — подробная статистика\n\n"
             "Правила:\n"
             "⏰ Время матчей и дедлайны — по Москве (МСК).\n"
@@ -172,7 +287,6 @@ def register_user_handlers(dp: Dispatcher) -> None:
             if m.home_score is not None and m.away_score is not None:
                 extra = f" | итог: {m.home_score}:{m.away_score}"
             elif m.kickoff_time > now:
-                # покажем, сколько примерно осталось до старта (в минутах/часах)
                 delta = m.kickoff_time - now
                 minutes = int(delta.total_seconds() // 60)
                 if minutes >= 60:
@@ -214,14 +328,12 @@ def register_user_handlers(dp: Dispatcher) -> None:
         async with SessionLocal() as session:
             await ensure_user(session, message)
 
-            # матч существует?
             result = await session.execute(select(Match).where(Match.id == match_id))
             match = result.scalar_one_or_none()
             if match is None:
                 await message.answer(f"Матч с id={match_id} не найден. Посмотри /round 1")
                 return
 
-            # запрет после начала матча
             if match.kickoff_time <= now:
                 await message.answer(
                     "⛔️ Матч уже начался. Ставить/менять прогноз нельзя.\n"
@@ -229,7 +341,6 @@ def register_user_handlers(dp: Dispatcher) -> None:
                 )
                 return
 
-            # upsert прогноз
             result = await session.execute(
                 select(Prediction).where(
                     Prediction.match_id == match_id,
@@ -342,6 +453,8 @@ def register_user_handlers(dp: Dispatcher) -> None:
                     continue
 
                 match_id_str, score_str_raw = parts
+                match_id_str = match_id_str.lstrip("#")
+
                 try:
                     match_id = int(match_id_str)
                 except ValueError:
@@ -369,7 +482,6 @@ def register_user_handlers(dp: Dispatcher) -> None:
                     error_lines.append(f"❌ '{ln}' (матч не найден)")
                     continue
 
-                # пропускаем матчи, которые уже начались
                 if m.kickoff_time <= now:
                     skipped += 1
                     skipped_details.append(f"🔒 #{m.id} {m.home_team}—{m.away_team} ({m.kickoff_time.strftime('%Y-%m-%d %H:%M')} МСК)")
@@ -405,7 +517,6 @@ def register_user_handlers(dp: Dispatcher) -> None:
         reply = [f"✅ Сохранено прогнозов: {saved}"]
         if skipped:
             reply.append(f"⛔️ Пропущено (матч уже начался): {skipped}")
-            # покажем до 10 строк пропусков
             reply.append("Пропущенные матчи:")
             reply.extend(skipped_details[:10])
             if len(skipped_details) > 10:
@@ -437,10 +548,18 @@ def register_user_handlers(dp: Dispatcher) -> None:
 
         tg_user_id = message.from_user.id
         text = await build_my_round_text(tg_user_id=tg_user_id, round_number=round_number)
+
+        total = await get_round_total_points_for_user(tg_user_id=tg_user_id, round_number=round_number)
+        # добавим итог за тур, если в тексте вообще есть матчи
+        if text and "пока нет матчей" not in text.lower():
+            text = f"{text}\n\nИтого за тур: {total} очк."
+
         await message.answer(text)
 
     @dp.message(Command("table"))
     async def cmd_table(message: types.Message):
+        played, total = await get_matches_played_stats()
+
         async with SessionLocal() as session:
             res_users = await session.execute(select(User))
             users = res_users.scalars().all()
@@ -472,7 +591,33 @@ def register_user_handlers(dp: Dispatcher) -> None:
             await message.answer("Пока нет данных для таблицы.")
             return
 
-        lines = ["🏆 Таблица лидеров:"]
+        lines = ["🏆 Таблица лидеров (общая):"]
+        lines.append(f"Матчей сыграно: {played} / {total}")
+        for i, r in enumerate(rows[:20], start=1):
+            lines.append(f"{i}. {r['name']} — {r['total']} очк. | 🎯{r['exact']} | 📏{r['diff']} | ✅{r['outcome']}")
+
+        await message.answer("\n".join(lines))
+
+    @dp.message(Command("table_round"))
+    async def cmd_table_round(message: types.Message):
+        parts = message.text.strip().split()
+        if len(parts) != 2:
+            await message.answer("Неверный формат. Пример: /table_round 1")
+            return
+
+        try:
+            round_number = int(parts[1])
+        except ValueError:
+            await message.answer("Номер тура должен быть числом. Пример: /table_round 1")
+            return
+
+        rows = await build_leaderboard_for_round(round_number)
+
+        if not rows:
+            await message.answer(f"Пока нет данных для таблицы тура {round_number}.")
+            return
+
+        lines = [f"🏁 Таблица тура {round_number}:"]
         for i, r in enumerate(rows[:20], start=1):
             lines.append(f"{i}. {r['name']} — {r['total']} очк. | 🎯{r['exact']} | 📏{r['diff']} | ✅{r['outcome']}")
 
@@ -481,4 +626,18 @@ def register_user_handlers(dp: Dispatcher) -> None:
     @dp.message(Command("stats"))
     async def cmd_stats(message: types.Message):
         text = await build_stats_text()
+
+        best = await get_best_player_of_last_played_round()
+        if best is not None:
+            round_number, tg_user_id = best
+            name = await get_user_display_name(tg_user_id)
+            # посчитаем очки этого человека за тур
+            total = await get_round_total_points_for_user(tg_user_id=tg_user_id, round_number=round_number)
+
+            extra = (
+                "\n\n🏅 Лучший игрок последнего сыгранного тура:\n"
+                f"Тур {round_number}: {name} — {total} очк."
+            )
+            text = f"{text}{extra}"
+
         await message.answer(text)
