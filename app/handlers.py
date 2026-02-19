@@ -6,7 +6,8 @@ from aiogram.filters import CommandStart, Command
 from sqlalchemy import select
 
 from app.db import SessionLocal
-from app.models import User, Match, Prediction
+from app.models import User, Match, Prediction, Point
+from app.scoring import calculate_points
 
 ADMIN_IDS = {210477579}
 
@@ -27,9 +28,10 @@ def register_handlers(dp: Dispatcher) -> None:
 
         await message.answer(
             "Привет! Я живой 🙂\n\n"
-            "Основные команды:\n"
-            "/round 1 — показать матчи тура\n"
-            "/predict <match_id> <счет> — сделать прогноз (пример: /predict 1 2:0)\n"
+            "Команды:\n"
+            "/round 1 — матчи тура\n"
+            "/predict 1 2:0 — сделать прогноз\n"
+            "/table — таблица лидеров\n"
             "/help — помощь"
         )
 
@@ -41,10 +43,12 @@ def register_handlers(dp: Dispatcher) -> None:
             "/help — помощь\n"
             "/ping — проверка\n"
             "/round N — матчи тура (пример: /round 1)\n"
-            "/predict <match_id> <счет> — прогноз (пример: /predict 1 2:0)\n\n"
+            "/predict <match_id> <счет> — прогноз (пример: /predict 1 2:0)\n"
+            "/table — таблица лидеров\n\n"
             "Админ:\n"
             "/admin_add_match — добавить матч\n"
             "/admin_set_result — поставить результат (пример: /admin_set_result 1 2:1)\n"
+            "/admin_recalc — пересчитать очки по сыгранным матчам\n"
         )
         await message.answer(text)
 
@@ -190,7 +194,6 @@ def register_handlers(dp: Dispatcher) -> None:
 
     @dp.message(Command("predict"))
     async def cmd_predict(message: types.Message):
-        # Формат: /predict 1 2:0
         parts = message.text.strip().split()
         if len(parts) != 3:
             await message.answer("Неверный формат. Пример: /predict 1 2:0")
@@ -218,14 +221,12 @@ def register_handlers(dp: Dispatcher) -> None:
         tg_user_id = message.from_user.id
 
         async with SessionLocal() as session:
-            # Проверим, что матч существует
             result = await session.execute(select(Match).where(Match.id == match_id))
             match = result.scalar_one_or_none()
             if match is None:
                 await message.answer(f"Матч с id={match_id} не найден. Посмотри /round 1")
                 return
 
-            # Есть ли уже прогноз?
             result = await session.execute(
                 select(Prediction).where(
                     Prediction.match_id == match_id,
@@ -250,3 +251,105 @@ def register_handlers(dp: Dispatcher) -> None:
             await session.commit()
 
         await message.answer(f"✅ Прогноз сохранён для матча #{match_id}: {pred_home}:{pred_away}")
+
+    @dp.message(Command("admin_recalc"))
+    async def cmd_admin_recalc(message: types.Message):
+        if message.from_user.id not in ADMIN_IDS:
+            await message.answer("⛔️ У вас нет прав на эту команду.")
+            return
+
+        updates = 0
+
+        async with SessionLocal() as session:
+            res_matches = await session.execute(
+                select(Match).where(Match.home_score.is_not(None), Match.away_score.is_not(None))
+            )
+            matches = res_matches.scalars().all()
+
+            for m in matches:
+                res_preds = await session.execute(select(Prediction).where(Prediction.match_id == m.id))
+                preds = res_preds.scalars().all()
+
+                for p in preds:
+                    calc = calculate_points(p.pred_home, p.pred_away, m.home_score, m.away_score)
+
+                    res_point = await session.execute(
+                        select(Point).where(Point.match_id == m.id, Point.tg_user_id == p.tg_user_id)
+                    )
+                    point = res_point.scalar_one_or_none()
+
+                    if point is None:
+                        session.add(
+                            Point(
+                                match_id=m.id,
+                                tg_user_id=p.tg_user_id,
+                                points=calc.points,
+                                category=calc.category,
+                            )
+                        )
+                    else:
+                        point.points = calc.points
+                        point.category = calc.category
+
+                    updates += 1
+
+            await session.commit()
+
+        await message.answer(f"✅ Пересчитано начислений: {updates}")
+
+    @dp.message(Command("table"))
+    async def cmd_table(message: types.Message):
+        # Собираем всех пользователей и все начисления, считаем статистику в Python
+        async with SessionLocal() as session:
+            res_users = await session.execute(select(User))
+            users = res_users.scalars().all()
+
+            res_points = await session.execute(select(Point))
+            points_rows = res_points.scalars().all()
+
+        # Подготовим базовую структуру по всем юзерам (даже если очков нет)
+        stats = {}
+        for u in users:
+            name = u.username if u.username else str(u.tg_user_id)
+            stats[u.tg_user_id] = {
+                "name": name,
+                "total": 0,
+                "exact": 0,
+                "diff": 0,
+                "outcome": 0,
+            }
+
+        # Добавим начисления
+        for r in points_rows:
+            if r.tg_user_id not in stats:
+                stats[r.tg_user_id] = {
+                    "name": str(r.tg_user_id),
+                    "total": 0,
+                    "exact": 0,
+                    "diff": 0,
+                    "outcome": 0,
+                }
+
+            stats[r.tg_user_id]["total"] += int(r.points)
+            if r.category == "exact":
+                stats[r.tg_user_id]["exact"] += 1
+            elif r.category == "diff":
+                stats[r.tg_user_id]["diff"] += 1
+            elif r.category == "outcome":
+                stats[r.tg_user_id]["outcome"] += 1
+
+        # Сортировка
+        rows = list(stats.values())
+        rows.sort(key=lambda x: (x["total"], x["exact"], x["diff"], x["outcome"]), reverse=True)
+
+        if not rows:
+            await message.answer("Пока нет данных для таблицы.")
+            return
+
+        lines = ["🏆 Таблица лидеров:"]
+        for i, r in enumerate(rows[:20], start=1):
+            lines.append(
+                f"{i}. {r['name']} — {r['total']} очк. | 🎯{r['exact']} | 📏{r['diff']} | ✅{r['outcome']}"
+            )
+
+        await message.answer("\n".join(lines))
