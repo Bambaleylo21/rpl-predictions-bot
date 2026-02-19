@@ -253,21 +253,16 @@ def register_admin_handlers(dp: Dispatcher) -> None:
 
     @dp.message(Command("admin_api_debug"))
     async def cmd_admin_api_debug(message: types.Message):
-        """
-        Показывает максимум отладочной инфы по API:
-        - league_id, season_year
-        - rounds_count (может быть 0)
-        - fallback_discovered_rounds_count/head (если rounds пустые)
-        """
         if message.from_user.id not in ADMIN_IDS:
             await message.answer("⛔️ У вас нет прав на эту команду.")
             return
 
         try:
             _, dbg = await fetch_rpl_round(1)
-        except Exception:
-            await message.answer("⚠️ Ошибка обращения к API. Смотри логи Render.")
-            raise
+        except Exception as e:
+            print("API DEBUG ERROR:", repr(e))
+            await message.answer(f"⚠️ Ошибка обращения к API: {type(e).__name__}. Смотри логи Render.")
+            return
 
         text = (
             "🔎 API debug\n"
@@ -284,10 +279,6 @@ def register_admin_handlers(dp: Dispatcher) -> None:
 
     @dp.message(Command("admin_sync_round"))
     async def cmd_admin_sync_round(message: types.Message):
-        """
-        /admin_sync_round N
-        Подтягивает матчи тура N из API-Football и upsert'ит в matches по api_fixture_id.
-        """
         if message.from_user.id not in ADMIN_IDS:
             await message.answer("⛔️ У вас нет прав на эту команду.")
             return
@@ -305,9 +296,10 @@ def register_admin_handlers(dp: Dispatcher) -> None:
 
         try:
             fixtures, dbg = await fetch_rpl_round(round_number)
-        except Exception:
-            await message.answer("⚠️ Не смог получить матчи из API. Детали смотри в логах Render.")
-            raise
+        except Exception as e:
+            print("API SYNC ERROR:", repr(e))
+            await message.answer(f"⚠️ Ошибка обращения к API: {type(e).__name__}. Смотри логи Render.")
+            return
 
         if not fixtures:
             await message.answer(
@@ -316,7 +308,6 @@ def register_admin_handlers(dp: Dispatcher) -> None:
                 f"rounds_count: {dbg.get('rounds_count')}\n"
                 f"fallback_discovered_rounds_count: {dbg.get('fallback_discovered_rounds_count')}\n"
                 f"fallback_discovered_rounds_head: {dbg.get('fallback_discovered_rounds_head')}\n"
-                "Сделай /admin_api_debug и пришли сюда ответ — скажу, что править дальше."
             )
             return
 
