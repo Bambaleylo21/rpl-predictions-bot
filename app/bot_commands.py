@@ -9,6 +9,7 @@ def get_bot_commands() -> list[types.BotCommand]:
         types.BotCommand(command="round", description="Матчи тура: /round 1"),
         types.BotCommand(command="predict", description="Сделать прогноз: /predict 1 2:0"),
         types.BotCommand(command="table", description="Таблица лидеров"),
+        types.BotCommand(command="stats", description="Подробная статистика"),
         types.BotCommand(command="admin_add_match", description="Админ: добавить матч"),
         types.BotCommand(command="admin_set_result", description="Админ: поставить результат"),
         types.BotCommand(command="admin_recalc", description="Админ: пересчитать очки"),

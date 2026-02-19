@@ -8,6 +8,7 @@ from sqlalchemy import select
 from app.db import SessionLocal
 from app.models import User, Match, Prediction, Point
 from app.scoring import calculate_points
+from app.stats import build_stats_text
 
 ADMIN_IDS = {210477579}
 
@@ -32,6 +33,7 @@ def register_handlers(dp: Dispatcher) -> None:
             "/round 1 — матчи тура\n"
             "/predict 1 2:0 — сделать прогноз\n"
             "/table — таблица лидеров\n"
+            "/stats — подробная статистика\n"
             "/help — помощь"
         )
 
@@ -44,7 +46,8 @@ def register_handlers(dp: Dispatcher) -> None:
             "/ping — проверка\n"
             "/round N — матчи тура (пример: /round 1)\n"
             "/predict <match_id> <счет> — прогноз (пример: /predict 1 2:0)\n"
-            "/table — таблица лидеров\n\n"
+            "/table — таблица лидеров\n"
+            "/stats — подробная статистика\n\n"
             "Админ:\n"
             "/admin_add_match — добавить матч\n"
             "/admin_set_result — поставить результат (пример: /admin_set_result 1 2:1)\n"
@@ -156,6 +159,54 @@ def register_handlers(dp: Dispatcher) -> None:
 
         await message.answer(f"✅ Результат сохранён для матча #{match_id}: {home_score}:{away_score}")
 
+    @dp.message(Command("admin_recalc"))
+    async def cmd_admin_recalc(message: types.Message):
+        if message.from_user.id not in ADMIN_IDS:
+            await message.answer("⛔️ У вас нет прав на эту команду.")
+            return
+
+        updates = 0
+
+        async with SessionLocal() as session:
+            # Матчи, где есть итоговый счет
+            res_matches = await session.execute(
+                select(Match).where(Match.home_score.is_not(None), Match.away_score.is_not(None))
+            )
+            matches = res_matches.scalars().all()
+
+            for m in matches:
+                # Все прогнозы на матч
+                res_preds = await session.execute(select(Prediction).where(Prediction.match_id == m.id))
+                preds = res_preds.scalars().all()
+
+                for p in preds:
+                    calc = calculate_points(p.pred_home, p.pred_away, m.home_score, m.away_score)
+
+                    # Уже есть начисление?
+                    res_point = await session.execute(
+                        select(Point).where(Point.match_id == m.id, Point.tg_user_id == p.tg_user_id)
+                    )
+                    point = res_point.scalar_one_or_none()
+
+                    if point is None:
+                        session.add(
+                            Point(
+                                match_id=m.id,
+                                tg_user_id=p.tg_user_id,
+                                points=calc.points,
+                                category=calc.category,
+                            )
+                        )
+                    else:
+                        point.points = calc.points
+                        point.category = calc.category
+
+                    updates += 1
+
+            await session.commit()
+
+        await message.answer(f"✅ Пересчитано начислений: {updates}")
+
     @dp.message(Command("round"))
     async def cmd_round(message: types.Message):
         parts = message.text.strip().split()
@@ -221,12 +272,14 @@ def register_handlers(dp: Dispatcher) -> None:
         tg_user_id = message.from_user.id
 
         async with SessionLocal() as session:
+            # матч существует?
             result = await session.execute(select(Match).where(Match.id == match_id))
             match = result.scalar_one_or_none()
             if match is None:
                 await message.answer(f"Матч с id={match_id} не найден. Посмотри /round 1")
                 return
 
+            # есть ли прогноз?
             result = await session.execute(
                 select(Prediction).where(
                     Prediction.match_id == match_id,
@@ -252,54 +305,8 @@ def register_handlers(dp: Dispatcher) -> None:
 
         await message.answer(f"✅ Прогноз сохранён для матча #{match_id}: {pred_home}:{pred_away}")
 
-    @dp.message(Command("admin_recalc"))
-    async def cmd_admin_recalc(message: types.Message):
-        if message.from_user.id not in ADMIN_IDS:
-            await message.answer("⛔️ У вас нет прав на эту команду.")
-            return
-
-        updates = 0
-
-        async with SessionLocal() as session:
-            res_matches = await session.execute(
-                select(Match).where(Match.home_score.is_not(None), Match.away_score.is_not(None))
-            )
-            matches = res_matches.scalars().all()
-
-            for m in matches:
-                res_preds = await session.execute(select(Prediction).where(Prediction.match_id == m.id))
-                preds = res_preds.scalars().all()
-
-                for p in preds:
-                    calc = calculate_points(p.pred_home, p.pred_away, m.home_score, m.away_score)
-
-                    res_point = await session.execute(
-                        select(Point).where(Point.match_id == m.id, Point.tg_user_id == p.tg_user_id)
-                    )
-                    point = res_point.scalar_one_or_none()
-
-                    if point is None:
-                        session.add(
-                            Point(
-                                match_id=m.id,
-                                tg_user_id=p.tg_user_id,
-                                points=calc.points,
-                                category=calc.category,
-                            )
-                        )
-                    else:
-                        point.points = calc.points
-                        point.category = calc.category
-
-                    updates += 1
-
-            await session.commit()
-
-        await message.answer(f"✅ Пересчитано начислений: {updates}")
-
     @dp.message(Command("table"))
     async def cmd_table(message: types.Message):
-        # Собираем всех пользователей и все начисления, считаем статистику в Python
         async with SessionLocal() as session:
             res_users = await session.execute(select(User))
             users = res_users.scalars().all()
@@ -307,19 +314,11 @@ def register_handlers(dp: Dispatcher) -> None:
             res_points = await session.execute(select(Point))
             points_rows = res_points.scalars().all()
 
-        # Подготовим базовую структуру по всем юзерам (даже если очков нет)
         stats = {}
         for u in users:
             name = u.username if u.username else str(u.tg_user_id)
-            stats[u.tg_user_id] = {
-                "name": name,
-                "total": 0,
-                "exact": 0,
-                "diff": 0,
-                "outcome": 0,
-            }
+            stats[u.tg_user_id] = {"name": name, "total": 0, "exact": 0, "diff": 0, "outcome": 0}
 
-        # Добавим начисления
         for r in points_rows:
             if r.tg_user_id not in stats:
                 stats[r.tg_user_id] = {
@@ -338,7 +337,6 @@ def register_handlers(dp: Dispatcher) -> None:
             elif r.category == "outcome":
                 stats[r.tg_user_id]["outcome"] += 1
 
-        # Сортировка
         rows = list(stats.values())
         rows.sort(key=lambda x: (x["total"], x["exact"], x["diff"], x["outcome"]), reverse=True)
 
@@ -353,3 +351,8 @@ def register_handlers(dp: Dispatcher) -> None:
             )
 
         await message.answer("\n".join(lines))
+
+    @dp.message(Command("stats"))
+    async def cmd_stats(message: types.Message):
+        text = await build_stats_text()
+        await message.answer(text)
