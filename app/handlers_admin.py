@@ -12,7 +12,7 @@ from app.config import load_admin_ids
 from app.db import SessionLocal
 from app.models import Match, Prediction, Point, User
 from app.scoring import calculate_points
-from app.rpl_api import fetch_rpl_round  # <-- используем удобный wrapper
+from app.rpl_api import fetch_rpl_round  # (fixtures, debug_info)
 
 ADMIN_IDS = load_admin_ids()
 
@@ -254,7 +254,10 @@ def register_admin_handlers(dp: Dispatcher) -> None:
     @dp.message(Command("admin_api_debug"))
     async def cmd_admin_api_debug(message: types.Message):
         """
-        Показывает, какой season/year и какие названия туров реально видит API.
+        Показывает максимум отладочной инфы по API:
+        - league_id, season_year
+        - rounds_count (может быть 0)
+        - fallback_discovered_rounds_count/head (если rounds пустые)
         """
         if message.from_user.id not in ADMIN_IDS:
             await message.answer("⛔️ У вас нет прав на эту команду.")
@@ -274,6 +277,8 @@ def register_admin_handlers(dp: Dispatcher) -> None:
             f"target_round_for_1: {dbg.get('target_round')}\n"
             f"rounds_head: {dbg.get('rounds_head')}\n"
             f"rounds_tail: {dbg.get('rounds_tail')}\n"
+            f"fallback_discovered_rounds_count: {dbg.get('fallback_discovered_rounds_count')}\n"
+            f"fallback_discovered_rounds_head: {dbg.get('fallback_discovered_rounds_head')}\n"
         )
         await message.answer(text)
 
@@ -308,9 +313,10 @@ def register_admin_handlers(dp: Dispatcher) -> None:
             await message.answer(
                 "Матчи тура не найдены (API вернул пусто).\n"
                 f"season_year: {dbg.get('season_year')}\n"
-                f"target_round: {dbg.get('target_round')}\n"
-                f"rounds_head: {dbg.get('rounds_head')}\n"
-                "Сделай /admin_api_debug и пришли сюда ответ — скажу точно, что не так."
+                f"rounds_count: {dbg.get('rounds_count')}\n"
+                f"fallback_discovered_rounds_count: {dbg.get('fallback_discovered_rounds_count')}\n"
+                f"fallback_discovered_rounds_head: {dbg.get('fallback_discovered_rounds_head')}\n"
+                "Сделай /admin_api_debug и пришли сюда ответ — скажу, что править дальше."
             )
             return
 
@@ -347,7 +353,7 @@ def register_admin_handlers(dp: Dispatcher) -> None:
         await message.answer(
             "✅ Синхронизация завершена.\n"
             f"Тур: {round_number}\n"
-            f"API round: {fixtures[0].round_str}\n"
+            f"API round example: {fixtures[0].round_str}\n"
             f"Матчей из API: {len(fixtures)}\n"
             f"Создано: {created}\n"
             f"Обновлено: {updated}"
