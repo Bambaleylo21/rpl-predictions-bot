@@ -85,39 +85,78 @@ def match_status_icon(match: Match, now: datetime) -> str:
     return "🟢"
 
 
-async def build_leaderboard_for_round(round_number: int) -> list[dict]:
+async def _get_user_name_map(user_ids: set[int]) -> dict[int, str]:
+    """
+    Возвращает map tg_user_id -> отображаемое имя.
+    Даже если user не зарегистрирован в users (маловероятно) — будет fallback на id.
+    """
+    if not user_ids:
+        return {}
+
     async with SessionLocal() as session:
-        res_users = await session.execute(select(User))
+        res_users = await session.execute(select(User).where(User.tg_user_id.in_(user_ids)))
         users = res_users.scalars().all()
 
-        res_points = await session.execute(
-            select(Point, Match)
-            .join(Match, Point.match_id == Match.id)
-            .where(Match.round_number == round_number)
+    mp: dict[int, str] = {uid: str(uid) for uid in user_ids}
+    for u in users:
+        mp[u.tg_user_id] = format_user_name(u.username, u.full_name, u.tg_user_id)
+    return mp
+
+
+async def build_leaderboard_for_round(round_number: int) -> tuple[list[dict], int]:
+    """
+    Таблица за тур: показываем только пользователей, у которых есть хотя бы 1 прогноз в этом туре.
+    Возвращает (rows, participants_count)
+    """
+    async with SessionLocal() as session:
+        # матчи тура
+        res_matches = await session.execute(select(Match).where(Match.round_number == round_number))
+        matches = res_matches.scalars().all()
+
+        match_ids = [m.id for m in matches]
+        if not match_ids:
+            return [], 0
+
+        # участники тура = те, кто сделал прогноз хотя бы на 1 матч тура
+        res_part = await session.execute(
+            select(Prediction.tg_user_id).where(Prediction.match_id.in_(match_ids)).distinct()
         )
-        point_match_rows = res_points.all()
+        participant_ids = {int(x[0]) for x in res_part.all()}
+
+        if not participant_ids:
+            return [], 0
+
+        # очки по матчам тура
+        res_points = await session.execute(
+            select(Point).where(Point.match_id.in_(match_ids), Point.tg_user_id.in_(participant_ids))
+        )
+        points_rows = res_points.scalars().all()
+
+    name_map = await _get_user_name_map(participant_ids)
 
     stats: dict[int, dict] = {}
-    for u in users:
-        name = format_user_name(u.username, u.full_name, u.tg_user_id)
-        stats[u.tg_user_id] = {"tg_user_id": u.tg_user_id, "name": name, "total": 0, "exact": 0, "diff": 0, "outcome": 0}
+    for uid in participant_ids:
+        stats[uid] = {
+            "tg_user_id": uid,
+            "name": name_map.get(uid, str(uid)),
+            "total": 0,
+            "exact": 0,
+            "diff": 0,
+            "outcome": 0,
+        }
 
-    for p, _m in point_match_rows:
-        if p.tg_user_id not in stats:
-            stats[p.tg_user_id] = {"tg_user_id": p.tg_user_id, "name": str(p.tg_user_id), "total": 0, "exact": 0, "diff": 0, "outcome": 0}
-
-        stats[p.tg_user_id]["total"] += int(p.points)
-        if p.category == "exact":
-            stats[p.tg_user_id]["exact"] += 1
-        elif p.category == "diff":
-            stats[p.tg_user_id]["diff"] += 1
-        elif p.category == "outcome":
-            stats[p.tg_user_id]["outcome"] += 1
+    for r in points_rows:
+        stats[r.tg_user_id]["total"] += int(r.points)
+        if r.category == "exact":
+            stats[r.tg_user_id]["exact"] += 1
+        elif r.category == "diff":
+            stats[r.tg_user_id]["diff"] += 1
+        elif r.category == "outcome":
+            stats[r.tg_user_id]["outcome"] += 1
 
     rows = list(stats.values())
-    rows = [r for r in rows if r["total"] > 0 or r["exact"] > 0 or r["diff"] > 0 or r["outcome"] > 0]
     rows.sort(key=lambda x: (x["total"], x["exact"], x["diff"], x["outcome"]), reverse=True)
-    return rows
+    return rows, len(participant_ids)
 
 
 async def get_round_total_points_for_user(tg_user_id: int, round_number: int) -> int:
@@ -184,6 +223,48 @@ async def round_has_matches(round_number: int) -> bool:
         res = await session.execute(select(func.count(Match.id)).where(Match.round_number == round_number))
         cnt = int(res.scalar_one() or 0)
     return cnt > 0
+
+
+async def build_overall_leaderboard() -> tuple[list[dict], int]:
+    """
+    Общая таблица: показываем только пользователей, у которых есть хотя бы 1 prediction.
+    Возвращает (rows, participants_count)
+    """
+    async with SessionLocal() as session:
+        res_part = await session.execute(select(Prediction.tg_user_id).distinct())
+        participant_ids = {int(x[0]) for x in res_part.all()}
+
+        if not participant_ids:
+            return [], 0
+
+        res_points = await session.execute(select(Point).where(Point.tg_user_id.in_(participant_ids)))
+        points_rows = res_points.scalars().all()
+
+    name_map = await _get_user_name_map(participant_ids)
+
+    stats: dict[int, dict] = {}
+    for uid in participant_ids:
+        stats[uid] = {
+            "tg_user_id": uid,
+            "name": name_map.get(uid, str(uid)),
+            "total": 0,
+            "exact": 0,
+            "diff": 0,
+            "outcome": 0,
+        }
+
+    for r in points_rows:
+        stats[r.tg_user_id]["total"] += int(r.points)
+        if r.category == "exact":
+            stats[r.tg_user_id]["exact"] += 1
+        elif r.category == "diff":
+            stats[r.tg_user_id]["diff"] += 1
+        elif r.category == "outcome":
+            stats[r.tg_user_id]["outcome"] += 1
+
+    rows = list(stats.values())
+    rows.sort(key=lambda x: (x["total"], x["exact"], x["diff"], x["outcome"]), reverse=True)
+    return rows, len(participant_ids)
 
 
 def register_user_handlers(dp: Dispatcher) -> None:
@@ -533,39 +614,15 @@ def register_user_handlers(dp: Dispatcher) -> None:
     @dp.message(Command("table"))
     async def cmd_table(message: types.Message):
         played, total = await get_matches_played_stats()
-
-        async with SessionLocal() as session:
-            res_users = await session.execute(select(User))
-            users = res_users.scalars().all()
-
-            res_points = await session.execute(select(Point))
-            points_rows = res_points.scalars().all()
-
-        stats = {}
-        for u in users:
-            name = format_user_name(u.username, u.full_name, u.tg_user_id)
-            stats[u.tg_user_id] = {"name": name, "total": 0, "exact": 0, "diff": 0, "outcome": 0}
-
-        for r in points_rows:
-            if r.tg_user_id not in stats:
-                stats[r.tg_user_id] = {"name": str(r.tg_user_id), "total": 0, "exact": 0, "diff": 0, "outcome": 0}
-
-            stats[r.tg_user_id]["total"] += int(r.points)
-            if r.category == "exact":
-                stats[r.tg_user_id]["exact"] += 1
-            elif r.category == "diff":
-                stats[r.tg_user_id]["diff"] += 1
-            elif r.category == "outcome":
-                stats[r.tg_user_id]["outcome"] += 1
-
-        rows = list(stats.values())
-        rows.sort(key=lambda x: (x["total"], x["exact"], x["diff"], x["outcome"]), reverse=True)
+        rows, participants = await build_overall_leaderboard()
 
         if not rows:
-            await message.answer("Пока нет данных для таблицы.")
+            await message.answer("Пока нет участников с прогнозами. Сделай первый прогноз через /predict или /predict_round.")
             return
 
-        lines = ["🏆 Таблица лидеров (общая):", f"Матчей сыграно: {played} / {total}"]
+        lines = ["🏆 Таблица лидеров (общая):"]
+        lines.append(f"Участников с прогнозами: {participants}")
+        lines.append(f"Матчей сыграно: {played} / {total}")
         for i, r in enumerate(rows[:20], start=1):
             lines.append(f"{i}. {r['name']} — {r['total']} очк. | 🎯{r['exact']} | 📏{r['diff']} | ✅{r['outcome']}")
 
@@ -584,13 +641,14 @@ def register_user_handlers(dp: Dispatcher) -> None:
             await message.answer("Номер тура должен быть числом. Пример: /table_round 1")
             return
 
-        rows = await build_leaderboard_for_round(round_number)
+        rows, participants = await build_leaderboard_for_round(round_number)
 
         if not rows:
-            await message.answer(f"Пока нет данных для таблицы тура {round_number}.")
+            await message.answer(f"Пока нет участников с прогнозами в туре {round_number}.")
             return
 
         lines = [f"🏁 Таблица тура {round_number}:"]
+        lines.append(f"Участников с прогнозами: {participants}")
         for i, r in enumerate(rows[:20], start=1):
             lines.append(f"{i}. {r['name']} — {r['total']} очк. | 🎯{r['exact']} | 📏{r['diff']} | ✅{r['outcome']}")
 
