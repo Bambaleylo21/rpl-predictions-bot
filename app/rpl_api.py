@@ -1,7 +1,7 @@
-# app/rpl_api.py
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -13,6 +13,7 @@ import aiohttp
 class RplFixture:
     api_fixture_id: int
     round_number: int
+    round_str: str
     home_team: str
     away_team: str
     start_time_utc: datetime
@@ -44,7 +45,6 @@ class ApiFootballClient:
     async def resolve_rpl_league_and_season(self, session: aiohttp.ClientSession) -> tuple[int, int]:
         """
         Resolve Russian Premier League league_id + current season year.
-        We avoid hardcoding IDs.
         """
         data = await self._get(
             session,
@@ -55,19 +55,12 @@ class ApiFootballClient:
         if not resp:
             raise RuntimeError("API-Football: не нашёл лигу Russia / Premier League")
 
-        # choose best match
-        # response item: {"league": {...}, "country": {...}, "seasons": [...]}
         item = resp[0]
         league_id = int(item["league"]["id"])
 
-        # get current season
         data2 = await self._get(session, "/leagues", params={"id": league_id, "current": "true"})
         resp2 = data2.get("response") or []
-        if not resp2:
-            # fallback: use last season in the first response
-            seasons = item.get("seasons") or []
-        else:
-            seasons = resp2[0].get("seasons") or []
+        seasons = (resp2[0].get("seasons") if resp2 else item.get("seasons")) or []
 
         current = None
         for s in seasons:
@@ -92,20 +85,25 @@ class ApiFootballClient:
         return list(data.get("response") or [])
 
     @staticmethod
-    def _extract_round_number(round_str: str) -> Optional[int]:
+    def find_round_string(rounds: list[str], round_number: int) -> Optional[str]:
         """
-        Typical round string example: "Regular Season - 1"
-        We'll parse trailing integer.
+        Подбираем строку тура максимально устойчиво.
+        Ищем число тура как отдельное число в конце или рядом со словом Round/тур и т.п.
         """
-        if not round_str:
+        if not rounds:
             return None
-        parts = [p.strip() for p in round_str.split("-")]
-        if not parts:
-            return None
-        try:
-            return int(parts[-1])
-        except Exception:
-            return None
+
+        # 1) Самый частый: "... - 1"
+        for r in rounds:
+            if re.search(rf"[-\s]{round_number}\s*$", r):
+                return r
+
+        # 2) Любой формат "Round 1", "тур 1", "Matchday 1", "Regular Season - Round 1"
+        for r in rounds:
+            if re.search(rf"\b{round_number}\b", r):
+                return r
+
+        return None
 
     async def get_fixtures_by_round(
         self,
@@ -113,20 +111,25 @@ class ApiFootballClient:
         league_id: int,
         season_year: int,
         round_number: int,
-    ) -> list[RplFixture]:
+    ) -> tuple[list[RplFixture], dict[str, Any]]:
+        """
+        Возвращает (fixtures, debug_info)
+        debug_info полезен для /admin_api_debug и для ошибок "пусто".
+        """
         rounds = await self.get_rounds(session, league_id, season_year)
+        target_round = self.find_round_string(rounds, round_number)
 
-        # Find matching round string
-        target_round: Optional[str] = None
-        for r in rounds:
-            n = self._extract_round_number(r)
-            if n == round_number:
-                target_round = r
-                break
+        debug_info = {
+            "league_id": league_id,
+            "season_year": season_year,
+            "rounds_count": len(rounds),
+            "target_round": target_round,
+            "rounds_head": rounds[:5],
+            "rounds_tail": rounds[-5:] if len(rounds) > 5 else rounds,
+        }
 
-        # Fallback: common pattern
-        if target_round is None:
-            target_round = f"Regular Season - {round_number}"
+        if not target_round:
+            return [], debug_info
 
         data = await self._get(
             session,
@@ -146,8 +149,6 @@ class ApiFootballClient:
             if not date_str:
                 continue
 
-            # API gives ISO with timezone, parse to aware -> UTC
-            # Example: "2026-02-19T17:00:00+00:00"
             dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=timezone.utc)
@@ -163,6 +164,7 @@ class ApiFootballClient:
                 RplFixture(
                     api_fixture_id=api_fixture_id,
                     round_number=round_number,
+                    round_str=target_round,
                     home_team=home,
                     away_team=away,
                     start_time_utc=start_utc,
@@ -172,17 +174,11 @@ class ApiFootballClient:
                 )
             )
 
-        # Sort by kickoff
         out.sort(key=lambda x: x.start_time_utc)
-        return out
+        return out, debug_info
 
 
-async def fetch_rpl_round(round_number: int) -> list[RplFixture]:
-    """
-    Convenience wrapper using env vars:
-    FOOTBALL_API_KEY (required)
-    FOOTBALL_API_BASE_URL (optional)
-    """
+async def fetch_rpl_round(round_number: int) -> tuple[list[RplFixture], dict[str, Any]]:
     api_key = os.getenv("FOOTBALL_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError("FOOTBALL_API_KEY не задан в env")
