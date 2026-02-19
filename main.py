@@ -6,7 +6,30 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from app.db import init_db
 from app.handlers import register_handlers
-from app.bot_commands import set_bot_commands
+
+
+async def _setup_commands(bot: Bot) -> None:
+    """
+    Универсально: поддерживаем разные названия функции в app/bot_commands.py
+    - set_bot_commands(bot)
+    - bot_commands(bot)
+    Если файла/функции нет — просто пропускаем.
+    """
+    try:
+        from app.bot_commands import set_bot_commands  # type: ignore
+        await set_bot_commands(bot)  # type: ignore
+        return
+    except Exception:
+        pass
+
+    try:
+        from app.bot_commands import bot_commands  # type: ignore
+        res = bot_commands(bot)  # type: ignore
+        if asyncio.iscoroutine(res):
+            await res
+        return
+    except Exception:
+        pass
 
 
 async def main():
@@ -20,7 +43,8 @@ async def main():
     dp = Dispatcher(storage=MemoryStorage())
 
     register_handlers(dp)
-    await set_bot_commands(bot)
+
+    await _setup_commands(bot)
 
     await dp.start_polling(bot)
 
