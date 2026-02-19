@@ -5,12 +5,14 @@ from aiogram.filters import CommandStart, Command
 
 from sqlalchemy import select
 
+from app.config import load_admin_ids
 from app.db import SessionLocal
 from app.models import User, Match, Prediction, Point
 from app.scoring import calculate_points
 from app.stats import build_stats_text
 
-ADMIN_IDS = {210477579}
+# ✅ теперь админы читаются из .env
+ADMIN_IDS = load_admin_ids()
 
 
 def register_handlers(dp: Dispatcher) -> None:
@@ -168,21 +170,18 @@ def register_handlers(dp: Dispatcher) -> None:
         updates = 0
 
         async with SessionLocal() as session:
-            # Матчи, где есть итоговый счет
             res_matches = await session.execute(
                 select(Match).where(Match.home_score.is_not(None), Match.away_score.is_not(None))
             )
             matches = res_matches.scalars().all()
 
             for m in matches:
-                # Все прогнозы на матч
                 res_preds = await session.execute(select(Prediction).where(Prediction.match_id == m.id))
                 preds = res_preds.scalars().all()
 
                 for p in preds:
                     calc = calculate_points(p.pred_home, p.pred_away, m.home_score, m.away_score)
 
-                    # Уже есть начисление?
                     res_point = await session.execute(
                         select(Point).where(Point.match_id == m.id, Point.tg_user_id == p.tg_user_id)
                     )
@@ -272,14 +271,12 @@ def register_handlers(dp: Dispatcher) -> None:
         tg_user_id = message.from_user.id
 
         async with SessionLocal() as session:
-            # матч существует?
             result = await session.execute(select(Match).where(Match.id == match_id))
             match = result.scalar_one_or_none()
             if match is None:
                 await message.answer(f"Матч с id={match_id} не найден. Посмотри /round 1")
                 return
 
-            # есть ли прогноз?
             result = await session.execute(
                 select(Prediction).where(
                     Prediction.match_id == match_id,
