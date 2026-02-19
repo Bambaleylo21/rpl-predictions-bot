@@ -15,22 +15,34 @@ class PredictRoundStates(StatesGroup):
     waiting_for_predictions_block = State()
 
 
+async def ensure_user(session, message: types.Message) -> None:
+    """
+    Гарантирует, что пользователь есть в БД, и что username актуален.
+    Вызываем в командах, чтобы /table всегда показывала ник,
+    даже если человек не нажимал /start.
+    """
+    if not message.from_user:
+        return
+
+    tg_user_id = message.from_user.id
+    username = message.from_user.username  # без "@", может быть None
+
+    result = await session.execute(select(User).where(User.tg_user_id == tg_user_id))
+    user = result.scalar_one_or_none()
+
+    if user is None:
+        session.add(User(tg_user_id=tg_user_id, username=username))
+    else:
+        user.username = username
+
+    await session.commit()
+
+
 def register_user_handlers(dp: Dispatcher) -> None:
     @dp.message(CommandStart())
     async def cmd_start(message: types.Message):
-        tg_user_id = message.from_user.id
-        username = message.from_user.username  # без "@", может быть None
-
         async with SessionLocal() as session:
-            result = await session.execute(select(User).where(User.tg_user_id == tg_user_id))
-            user = result.scalar_one_or_none()
-
-            if user is None:
-                session.add(User(tg_user_id=tg_user_id, username=username))
-            else:
-                user.username = username  # обновляем ник, если изменился/появился
-
-            await session.commit()
+            await ensure_user(session, message)
 
         await message.answer(
             "Привет! Я бот турнира прогнозов РПЛ ⚽️\n\n"
@@ -42,28 +54,6 @@ def register_user_handlers(dp: Dispatcher) -> None:
             "/table — таблица лидеров\n"
             "/stats — подробная статистика\n"
             "/help — помощь"
-        )
-
-    @dp.message(Command("whoami"))
-    async def cmd_whoami(message: types.Message):
-        tg_user_id = message.from_user.id
-        username = message.from_user.username
-        full_name = message.from_user.full_name
-
-        async with SessionLocal() as session:
-            result = await session.execute(select(User).where(User.tg_user_id == tg_user_id))
-            user = result.scalar_one_or_none()
-
-        db_username = None
-        if user is not None:
-            db_username = user.username
-
-        await message.answer(
-            "👤 whoami\n"
-            f"tg_user_id: {tg_user_id}\n"
-            f"from_user.username: {username}\n"
-            f"from_user.full_name: {full_name}\n"
-            f"DB users.username: {db_username}\n"
         )
 
     @dp.message(Command("help"))
@@ -155,12 +145,17 @@ def register_user_handlers(dp: Dispatcher) -> None:
         tg_user_id = message.from_user.id
 
         async with SessionLocal() as session:
+            # гарантируем, что юзер есть в БД и ник актуален
+            await ensure_user(session, message)
+
+            # матч существует?
             result = await session.execute(select(Match).where(Match.id == match_id))
             match = result.scalar_one_or_none()
             if match is None:
                 await message.answer(f"Матч с id={match_id} не найден. Посмотри /round 1")
                 return
 
+            # upsert прогноз
             result = await session.execute(
                 select(Prediction).where(
                     Prediction.match_id == match_id,
@@ -200,6 +195,9 @@ def register_user_handlers(dp: Dispatcher) -> None:
             return
 
         async with SessionLocal() as session:
+            # гарантируем, что юзер есть в БД и ник актуален
+            await ensure_user(session, message)
+
             result = await session.execute(
                 select(Match)
                 .where(Match.round_number == round_number)
@@ -238,19 +236,21 @@ def register_user_handlers(dp: Dispatcher) -> None:
             return
 
         async with SessionLocal() as session:
+            # гарантируем, что юзер есть в БД и ник актуален
+            await ensure_user(session, message)
+
             res = await session.execute(select(Match).where(Match.round_number == round_number))
             matches = res.scalars().all()
-        allowed_match_ids = {m.id for m in matches}
+            allowed_match_ids = {m.id for m in matches}
 
-        lines = [ln.strip() for ln in message.text.splitlines() if ln.strip()]
+            lines = [ln.strip() for ln in message.text.splitlines() if ln.strip()]
 
-        saved = 0
-        errors = 0
-        error_lines: list[str] = []
+            saved = 0
+            errors = 0
+            error_lines: list[str] = []
 
-        tg_user_id = message.from_user.id
+            tg_user_id = message.from_user.id
 
-        async with SessionLocal() as session:
             for ln in lines:
                 parts = ln.split()
                 if len(parts) != 2:
@@ -334,6 +334,9 @@ def register_user_handlers(dp: Dispatcher) -> None:
         except ValueError:
             await message.answer("Номер тура должен быть числом. Пример: /my 1")
             return
+
+        async with SessionLocal() as session:
+            await ensure_user(session, message)
 
         tg_user_id = message.from_user.id
         text = await build_my_round_text(tg_user_id=tg_user_id, round_number=round_number)
