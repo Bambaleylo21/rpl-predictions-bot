@@ -8,7 +8,6 @@ from sqlalchemy import select
 from app.db import SessionLocal
 from app.models import User, Match
 
-# ✅ ваш tg_user_id как админа (мы уже видели его в базе users)
 ADMIN_IDS = {210477579}
 
 
@@ -29,8 +28,9 @@ def register_handlers(dp: Dispatcher) -> None:
         await message.answer(
             "Привет! Я живой 🙂\n"
             "Ты зарегистрирован(а) в турнире.\n\n"
-            "Дальше будем принимать прогнозы на РПЛ.\n"
-            "Набери /help, чтобы увидеть подсказку."
+            "Команды:\n"
+            "/help — помощь\n"
+            "/round 1 — показать матчи тура 1"
         )
 
     @dp.message(Command("help"))
@@ -39,14 +39,10 @@ def register_handlers(dp: Dispatcher) -> None:
             "📌 Команды:\n"
             "/start — начать\n"
             "/help — помощь\n"
-            "/ping — проверка\n\n"
+            "/ping — проверка\n"
+            "/round N — матчи тура (пример: /round 1)\n\n"
             "Админ:\n"
-            "/admin_add_match — добавить матч\n\n"
-            "Что будет дальше:\n"
-            "— выбор тура\n"
-            "— список матчей\n"
-            "— ввод прогнозов\n"
-            "— таблица лидеров\n"
+            "/admin_add_match — добавить матч\n"
         )
         await message.answer(text)
 
@@ -56,14 +52,10 @@ def register_handlers(dp: Dispatcher) -> None:
 
     @dp.message(Command("admin_add_match"))
     async def cmd_admin_add_match(message: types.Message):
-        # 1) Проверка админа
         if message.from_user.id not in ADMIN_IDS:
             await message.answer("⛔️ У вас нет прав на эту команду.")
             return
 
-        # 2) Парсим команду
-        # Пример:
-        # /admin_add_match 1 | Zenit | Spartak | 2026-03-01 18:30
         raw = message.text.replace("/admin_add_match", "", 1).strip()
 
         if "|" not in raw:
@@ -97,7 +89,6 @@ def register_handlers(dp: Dispatcher) -> None:
             await message.answer("Дата/время должны быть в формате YYYY-MM-DD HH:MM (например 2026-03-01 18:30)")
             return
 
-        # 3) Сохраняем матч
         async with SessionLocal() as session:
             session.add(
                 Match(
@@ -109,9 +100,40 @@ def register_handlers(dp: Dispatcher) -> None:
             )
             await session.commit()
 
-        # 4) Ответ
         await message.answer(
             f"✅ Матч добавлен:\n"
             f"Тур {round_number}: {home_team} — {away_team}\n"
             f"Начало: {kickoff_time.strftime('%Y-%m-%d %H:%M')}"
         )
+
+    @dp.message(Command("round"))
+    async def cmd_round(message: types.Message):
+        # Ожидаем: /round 1
+        parts = message.text.strip().split()
+        if len(parts) != 2:
+            await message.answer("Неверный формат. Пример: /round 1")
+            return
+
+        try:
+            round_number = int(parts[1])
+        except ValueError:
+            await message.answer("Номер тура должен быть числом. Пример: /round 1")
+            return
+
+        async with SessionLocal() as session:
+            result = await session.execute(
+                select(Match)
+                .where(Match.round_number == round_number)
+                .order_by(Match.kickoff_time.asc())
+            )
+            matches = result.scalars().all()
+
+        if not matches:
+            await message.answer(f"В туре {round_number} пока нет матчей.")
+            return
+
+        lines = [f"📅 Тур {round_number}:"]
+        for m in matches:
+            lines.append(f"— {m.home_team} — {m.away_team} | {m.kickoff_time.strftime('%Y-%m-%d %H:%M')}")
+
+        await message.answer("\n".join(lines))

@@ -6,4 +6,5 @@ def get_bot_commands() -> list[types.BotCommand]:
         types.BotCommand(command="start", description="Запустить бота"),
         types.BotCommand(command="help", description="Как пользоваться ботом"),
         types.BotCommand(command="ping", description="Проверка: бот жив?"),
+        types.BotCommand(command="round", description="Матчи тура: /round 1"),
     ]
