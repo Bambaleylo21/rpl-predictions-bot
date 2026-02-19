@@ -1,59 +1,70 @@
 import os
-import ssl
 
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.models import Base
 
 
-def _make_async_db_url(raw_url: str) -> str:
-    url = raw_url.strip()
-
+def _make_async_db_url(url: str) -> str:
+    # Render часто даёт DATABASE_URL вида postgresql://...
+    # SQLAlchemy asyncpg хочет postgresql+asyncpg://...
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
     if url.startswith("postgres://"):
-        url = url.replace("postgres://", "postgresql+asyncpg://", 1)
-    elif url.startswith("postgresql://"):
-        url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
-
+        return url.replace("postgres://", "postgresql+asyncpg://", 1)
     return url
 
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./bot.db")
+ASYNC_DATABASE_URL = _make_async_db_url(DATABASE_URL)
 
-if DATABASE_URL:
-    ASYNC_DB_URL = _make_async_db_url(DATABASE_URL)
+# Если ты добавлял sslmode=require — оно обычно уже в DATABASE_URL.
+engine = create_async_engine(ASYNC_DATABASE_URL, echo=False, future=True)
 
-    ssl_ctx = ssl.create_default_context()
-    ssl_ctx.check_hostname = False
-    ssl_ctx.verify_mode = ssl.CERT_NONE
+SessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-    engine = create_async_engine(
-        ASYNC_DB_URL,
-        echo=False,
-        pool_pre_ping=True,
-        connect_args={"ssl": ssl_ctx},
-    )
-else:
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///./bot.db",
-        echo=False,
-    )
 
-SessionLocal: async_sessionmaker[AsyncSession] = async_sessionmaker(
-    bind=engine,
-    expire_on_commit=False,
-    class_=AsyncSession,
-)
+async def _apply_postgres_schema_fixes(conn) -> None:
+    """
+    Мини-миграции без Alembic.
+    Чиним created_at дефолты (чтобы Postgres не падал на NOT NULL).
+    """
+    if not str(engine.url).startswith("postgresql+asyncpg://"):
+        return
+
+    statements = [
+        # users
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT NOW()",
+        "ALTER TABLE users ALTER COLUMN created_at SET DEFAULT NOW()",
+        "UPDATE users SET created_at = NOW() WHERE created_at IS NULL",
+
+        # matches
+        "ALTER TABLE matches ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT NOW()",
+        "ALTER TABLE matches ALTER COLUMN created_at SET DEFAULT NOW()",
+        "UPDATE matches SET created_at = NOW() WHERE created_at IS NULL",
+
+        # predictions (ВАЖНО)
+        "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT NOW()",
+        "ALTER TABLE predictions ALTER COLUMN created_at SET DEFAULT NOW()",
+        "UPDATE predictions SET created_at = NOW() WHERE created_at IS NULL",
+
+        # points
+        "ALTER TABLE points ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT NOW()",
+        "ALTER TABLE points ALTER COLUMN created_at SET DEFAULT NOW()",
+        "UPDATE points SET created_at = NOW() WHERE created_at IS NULL",
+    ]
+
+    for sql in statements:
+        try:
+            await conn.execute(text(sql))
+        except Exception as e:
+            # не валим бот, если какая-то команда не применима
+            print("MIGRATION SKIP:", sql, "ERR:", repr(e))
 
 
 async def init_db() -> None:
-    """
-    1) создаём таблицы, если их нет
-    2) добавляем колонку users.full_name (для старых БД)
-    """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-
-        # Postgres: добавим колонку, если её не было раньше
-        if DATABASE_URL:
-            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name VARCHAR(128);"))
+        await _apply_postgres_schema_fixes(conn)
