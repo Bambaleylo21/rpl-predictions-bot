@@ -44,21 +44,74 @@ class ApiFootballClient:
             params=params,
             timeout=aiohttp.ClientTimeout(total=30),
         ) as r:
+            # Важно: API иногда отдаёт 200, но с errors внутри.
+            data = await r.json()
+            errors = data.get("errors")
+            if errors:
+                # errors может быть dict с ключами requests/plan/...
+                raise RuntimeError(f"API-Football errors: {errors}")
             r.raise_for_status()
-            return await r.json()
+            return data
+
+    @staticmethod
+    def _is_russia_country(item: dict[str, Any]) -> bool:
+        country = item.get("country") or {}
+        name = (country.get("name") or "").lower()
+        code = (country.get("code") or "").upper()
+        return ("russia" in name) or (code == "RU")
+
+    @staticmethod
+    def _looks_like_rpl(item: dict[str, Any]) -> bool:
+        league = item.get("league") or {}
+        lname = (league.get("name") or "").lower()
+        ltype = (league.get("type") or "").lower()
+        # В API встречаются разные формулировки, но "premier" почти всегда есть
+        return ("premier" in lname) and (ltype in ("league", "", None))
 
     async def resolve_rpl_league_and_season(self, session: aiohttp.ClientSession) -> tuple[int, int]:
         """
         Resolve Russian Premier League league_id + current season year.
+        Устойчивый поиск: пробуем несколько запросов и фильтруем ответ.
         """
-        data = await self._get(session, "/leagues", params={"country": "Russia", "name": "Premier League"})
-        resp = data.get("response") or []
-        if not resp:
-            raise RuntimeError("API-Football: не нашёл лигу Russia / Premier League")
+        candidates: list[dict[str, Any]] = []
 
-        item = resp[0]
-        league_id = int(item["league"]["id"])
+        # 1) самый прямой
+        try:
+            d1 = await self._get(session, "/leagues", params={"country": "Russia"})
+            candidates += list(d1.get("response") or [])
+        except Exception:
+            pass
 
+        # 2) через search (иногда лучше работает)
+        try:
+            d2 = await self._get(session, "/leagues", params={"search": "Russia"})
+            candidates += list(d2.get("response") or [])
+        except Exception:
+            pass
+
+        # 3) поиск по "Premier"
+        try:
+            d3 = await self._get(session, "/leagues", params={"search": "Premier"})
+            candidates += list(d3.get("response") or [])
+        except Exception:
+            pass
+
+        # Фильтруем “похоже на РПЛ”
+        filtered = [it for it in candidates if self._is_russia_country(it) and self._looks_like_rpl(it)]
+
+        if not filtered:
+            # Для диагностики: покажем какие вообще лиги РФ пришли
+            rf_leagues = []
+            for it in candidates:
+                if self._is_russia_country(it):
+                    league = it.get("league") or {}
+                    rf_leagues.append(league.get("name"))
+            raise RuntimeError(f"API-Football: не нашёл РПЛ. Russia leagues seen: {rf_leagues[:15]}")
+
+        item = filtered[0]
+        league_id = int((item.get("league") or {}).get("id"))
+
+        # текущий сезон
         data2 = await self._get(session, "/leagues", params={"id": league_id, "current": "true"})
         resp2 = data2.get("response") or []
         seasons = (resp2[0].get("seasons") if resp2 else item.get("seasons")) or []
@@ -83,27 +136,9 @@ class ApiFootballClient:
 
     @staticmethod
     def _match_round_number(round_str: str, round_number: int) -> bool:
-        """
-        Проверяем, что строка тура содержит нужный номер.
-        Примеры round_str: "Regular Season - 1", "Regular Season - Round 1", "Matchday 1" и т.п.
-        """
         if not round_str:
             return False
         return re.search(rf"\b{round_number}\b", round_str) is not None
-
-    @staticmethod
-    def find_round_string(rounds: list[str], round_number: int) -> Optional[str]:
-        if not rounds:
-            return None
-        # 1) чаще всего "... - 1" в конце
-        for r in rounds:
-            if re.search(rf"[-\s]{round_number}\s*$", r):
-                return r
-        # 2) любой вариант, где есть число тура как отдельное слово
-        for r in rounds:
-            if ApiFootballClient._match_round_number(r, round_number):
-                return r
-        return None
 
     def _parse_fixture_item(self, it: dict[str, Any], round_number: int) -> Optional[RplFixture]:
         fx = it.get("fixture", {})
@@ -152,30 +187,22 @@ class ApiFootballClient:
         last_n: int = 300,
         next_n: int = 300,
     ) -> tuple[list[dict[str, Any]], list[str]]:
-        """
-        Фолбэк, когда /fixtures/rounds возвращает пусто:
-        берём last и next матчи, собираем возможные round_str из league.round.
-        """
         items: list[dict[str, Any]] = []
 
-        # последние матчи (для ранних туров сезона)
         d_last = await self._get(session, "/fixtures", params={"league": league_id, "season": season_year, "last": last_n})
         items += list(d_last.get("response") or [])
 
-        # ближайшие матчи (для будущих туров)
         d_next = await self._get(session, "/fixtures", params={"league": league_id, "season": season_year, "next": next_n})
         items += list(d_next.get("response") or [])
 
-        # уникальные round strings из полученных матчей
-        round_set = []
+        round_list = []
         seen = set()
         for it in items:
             r = (it.get("league") or {}).get("round")
             if r and r not in seen:
                 seen.add(r)
-                round_set.append(r)
-
-        return items, round_set
+                round_list.append(r)
+        return items, round_list
 
     async def get_fixtures_by_round(
         self,
@@ -185,40 +212,44 @@ class ApiFootballClient:
         round_number: int,
     ) -> tuple[list[RplFixture], dict[str, Any]]:
         rounds = await self.get_rounds(session, league_id, season_year)
-        target_round = self.find_round_string(rounds, round_number)
 
         debug_info: dict[str, Any] = {
             "league_id": league_id,
             "season_year": season_year,
             "rounds_count": len(rounds),
-            "target_round": target_round,
+            "target_round": None,
             "rounds_head": rounds[:5],
             "rounds_tail": rounds[-5:] if len(rounds) > 5 else rounds,
         }
 
-        # Нормальный путь: rounds есть
-        if target_round:
-            data = await self._get(
-                session,
-                "/fixtures",
-                params={"league": league_id, "season": season_year, "round": target_round},
-            )
-            resp = data.get("response") or []
-            out: list[RplFixture] = []
-            for it in resp:
-                fx = self._parse_fixture_item(it, round_number)
-                if fx:
-                    fx.round_str = target_round
-                    out.append(fx)
-            out.sort(key=lambda x: x.start_time_utc)
-            return out, debug_info
+        # Если rounds есть — используем их
+        if rounds:
+            # простой поиск строки тура
+            target = None
+            for r in rounds:
+                if self._match_round_number(r, round_number):
+                    target = r
+                    break
+            debug_info["target_round"] = target
 
-        # Фолбэк: rounds пустые или не нашли нужный round-string
+            if target:
+                data = await self._get(session, "/fixtures", params={"league": league_id, "season": season_year, "round": target})
+                resp = data.get("response") or []
+                out = []
+                for it in resp:
+                    fx = self._parse_fixture_item(it, round_number)
+                    if fx:
+                        fx.round_str = target
+                        out.append(fx)
+                out.sort(key=lambda x: x.start_time_utc)
+                return out, debug_info
+
+        # Фолбэк: rounds пустые → собираем rounds из fixtures (last/next)
         items, discovered_rounds = await self._fixtures_fallback_collect(session, league_id, season_year)
-        debug_info["fallback_discovered_rounds_head"] = discovered_rounds[:10]
         debug_info["fallback_discovered_rounds_count"] = len(discovered_rounds)
+        debug_info["fallback_discovered_rounds_head"] = discovered_rounds[:10]
 
-        out2: list[RplFixture] = []
+        out2 = []
         for it in items:
             rstr = (it.get("league") or {}).get("round") or ""
             if not self._match_round_number(rstr, round_number):
