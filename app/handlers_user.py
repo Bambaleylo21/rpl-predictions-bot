@@ -22,14 +22,11 @@ MSK_TZ = ZoneInfo("Europe/Moscow")
 
 
 async def ensure_user(session, message: types.Message) -> None:
-    """
-    Гарантирует, что пользователь есть в БД, и что username актуален.
-    """
     if not message.from_user:
         return
 
     tg_user_id = message.from_user.id
-    username = message.from_user.username  # без "@", может быть None
+    username = message.from_user.username
 
     result = await session.execute(select(User).where(User.tg_user_id == tg_user_id))
     user = result.scalar_one_or_none()
@@ -43,25 +40,14 @@ async def ensure_user(session, message: types.Message) -> None:
 
 
 def now_msk_naive() -> datetime:
-    """
-    Возвращает текущее время как naive datetime в МСК.
-    Предположение: kickoff_time в БД хранится как naive datetime в МСК
-    (ты вводишь даты матчей в МСК).
-    """
     return datetime.now(MSK_TZ).replace(tzinfo=None)
 
 
 def normalize_score(score_str: str) -> str:
-    """
-    Нормализуем ввод счета: принимаем 2:0 и 2-0
-    """
     return score_str.strip().replace("-", ":")
 
 
 def parse_score(score_str: str) -> tuple[int, int] | None:
-    """
-    Парсим счет вида 2:0 (после normalize_score)
-    """
     if ":" not in score_str:
         return None
     try:
@@ -76,11 +62,6 @@ def parse_score(score_str: str) -> tuple[int, int] | None:
 
 
 def match_status_icon(match: Match, now: datetime) -> str:
-    """
-    ✅ есть итог
-    🔒 матч начался, прогноз закрыт
-    🟢 матч не начался, прогноз открыт
-    """
     if match.home_score is not None and match.away_score is not None:
         return "✅"
     if match.kickoff_time <= now:
@@ -89,15 +70,10 @@ def match_status_icon(match: Match, now: datetime) -> str:
 
 
 async def build_leaderboard_for_round(round_number: int) -> list[dict]:
-    """
-    Возвращает список строк-лидеров за тур:
-    [{"tg_user_id":..., "name":..., "total":..., "exact":..., "diff":..., "outcome":...}, ...]
-    """
     async with SessionLocal() as session:
         res_users = await session.execute(select(User))
         users = res_users.scalars().all()
 
-        # points только за выбранный тур (через join с Match)
         res_points = await session.execute(
             select(Point, Match)
             .join(Match, Point.match_id == Match.id)
@@ -105,16 +81,28 @@ async def build_leaderboard_for_round(round_number: int) -> list[dict]:
         )
         point_match_rows = res_points.all()
 
-    # подготовим словарь пользователей (чтобы имена были)
     stats: dict[int, dict] = {}
     for u in users:
         name = u.username if u.username else str(u.tg_user_id)
-        stats[u.tg_user_id] = {"tg_user_id": u.tg_user_id, "name": name, "total": 0, "exact": 0, "diff": 0, "outcome": 0}
+        stats[u.tg_user_id] = {
+            "tg_user_id": u.tg_user_id,
+            "name": name,
+            "total": 0,
+            "exact": 0,
+            "diff": 0,
+            "outcome": 0,
+        }
 
-    # наполняем по очкам
     for p, _m in point_match_rows:
         if p.tg_user_id not in stats:
-            stats[p.tg_user_id] = {"tg_user_id": p.tg_user_id, "name": str(p.tg_user_id), "total": 0, "exact": 0, "diff": 0, "outcome": 0}
+            stats[p.tg_user_id] = {
+                "tg_user_id": p.tg_user_id,
+                "name": str(p.tg_user_id),
+                "total": 0,
+                "exact": 0,
+                "diff": 0,
+                "outcome": 0,
+            }
 
         stats[p.tg_user_id]["total"] += int(p.points)
         if p.category == "exact":
@@ -125,10 +113,7 @@ async def build_leaderboard_for_round(round_number: int) -> list[dict]:
             stats[p.tg_user_id]["outcome"] += 1
 
     rows = list(stats.values())
-
-    # покажем только тех, кто реально участвовал в туре (есть хотя бы один Point)
     rows = [r for r in rows if r["total"] > 0 or r["exact"] > 0 or r["diff"] > 0 or r["outcome"] > 0]
-
     rows.sort(key=lambda x: (x["total"], x["exact"], x["diff"], x["outcome"]), reverse=True)
     return rows
 
@@ -145,10 +130,6 @@ async def get_round_total_points_for_user(tg_user_id: int, round_number: int) ->
 
 
 async def get_matches_played_stats() -> tuple[int, int]:
-    """
-    Возвращает (played, total) по всем матчам в базе.
-    played = где есть итог (home_score и away_score не None)
-    """
     async with SessionLocal() as session:
         total_res = await session.execute(select(func.count(Match.id)))
         total = int(total_res.scalar_one() or 0)
@@ -162,10 +143,6 @@ async def get_matches_played_stats() -> tuple[int, int]:
 
 
 async def get_best_player_of_last_played_round() -> tuple[int, int] | None:
-    """
-    Возвращает (round_number, tg_user_id) лучшего игрока последнего тура, где есть хоть один сыгранный матч.
-    Если нет сыгранных матчей — None.
-    """
     async with SessionLocal() as session:
         last_round_res = await session.execute(
             select(func.max(Match.round_number))
@@ -175,7 +152,6 @@ async def get_best_player_of_last_played_round() -> tuple[int, int] | None:
         if last_round is None:
             return None
 
-        # топ по сумме очков за этот тур
         top_res = await session.execute(
             select(Point.tg_user_id, func.coalesce(func.sum(Point.points), 0).label("s"))
             .join(Match, Point.match_id == Match.id)
@@ -199,6 +175,15 @@ async def get_user_display_name(tg_user_id: int) -> str:
     if u and u.username:
         return u.username
     return str(tg_user_id)
+
+
+async def round_has_matches(round_number: int) -> bool:
+    async with SessionLocal() as session:
+        res = await session.execute(
+            select(func.count(Match.id)).where(Match.round_number == round_number)
+        )
+        cnt = int(res.scalar_one() or 0)
+    return cnt > 0
 
 
 def register_user_handlers(dp: Dispatcher) -> None:
@@ -549,9 +534,8 @@ def register_user_handlers(dp: Dispatcher) -> None:
         tg_user_id = message.from_user.id
         text = await build_my_round_text(tg_user_id=tg_user_id, round_number=round_number)
 
-        total = await get_round_total_points_for_user(tg_user_id=tg_user_id, round_number=round_number)
-        # добавим итог за тур, если в тексте вообще есть матчи
-        if text and "пока нет матчей" not in text.lower():
+        if await round_has_matches(round_number):
+            total = await get_round_total_points_for_user(tg_user_id=tg_user_id, round_number=round_number)
             text = f"{text}\n\nИтого за тур: {total} очк."
 
         await message.answer(text)
@@ -631,7 +615,6 @@ def register_user_handlers(dp: Dispatcher) -> None:
         if best is not None:
             round_number, tg_user_id = best
             name = await get_user_display_name(tg_user_id)
-            # посчитаем очки этого человека за тур
             total = await get_round_total_points_for_user(tg_user_id=tg_user_id, round_number=round_number)
 
             extra = (
