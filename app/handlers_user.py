@@ -21,22 +21,38 @@ class PredictRoundStates(StatesGroup):
 MSK_TZ = ZoneInfo("Europe/Moscow")
 
 
-async def ensure_user(session, message: types.Message) -> None:
+def format_user_name(username: str | None, full_name: str | None, tg_user_id: int) -> str:
+    if username:
+        return f"@{username}"
+    if full_name:
+        return full_name
+    return str(tg_user_id)
+
+
+async def upsert_user_from_message(session, message: types.Message) -> tuple[bool, str]:
+    """
+    Возвращает (created, display_name).
+    """
     if not message.from_user:
-        return
+        return False, "unknown"
 
     tg_user_id = message.from_user.id
     username = message.from_user.username
+    full_name = message.from_user.full_name
 
     result = await session.execute(select(User).where(User.tg_user_id == tg_user_id))
     user = result.scalar_one_or_none()
 
+    created = False
     if user is None:
-        session.add(User(tg_user_id=tg_user_id, username=username))
+        session.add(User(tg_user_id=tg_user_id, username=username, full_name=full_name))
+        created = True
     else:
         user.username = username
+        user.full_name = full_name
 
     await session.commit()
+    return created, format_user_name(username, full_name, tg_user_id)
 
 
 def now_msk_naive() -> datetime:
@@ -83,26 +99,12 @@ async def build_leaderboard_for_round(round_number: int) -> list[dict]:
 
     stats: dict[int, dict] = {}
     for u in users:
-        name = u.username if u.username else str(u.tg_user_id)
-        stats[u.tg_user_id] = {
-            "tg_user_id": u.tg_user_id,
-            "name": name,
-            "total": 0,
-            "exact": 0,
-            "diff": 0,
-            "outcome": 0,
-        }
+        name = format_user_name(u.username, u.full_name, u.tg_user_id)
+        stats[u.tg_user_id] = {"tg_user_id": u.tg_user_id, "name": name, "total": 0, "exact": 0, "diff": 0, "outcome": 0}
 
     for p, _m in point_match_rows:
         if p.tg_user_id not in stats:
-            stats[p.tg_user_id] = {
-                "tg_user_id": p.tg_user_id,
-                "name": str(p.tg_user_id),
-                "total": 0,
-                "exact": 0,
-                "diff": 0,
-                "outcome": 0,
-            }
+            stats[p.tg_user_id] = {"tg_user_id": p.tg_user_id, "name": str(p.tg_user_id), "total": 0, "exact": 0, "diff": 0, "outcome": 0}
 
         stats[p.tg_user_id]["total"] += int(p.points)
         if p.category == "exact":
@@ -172,16 +174,14 @@ async def get_user_display_name(tg_user_id: int) -> str:
     async with SessionLocal() as session:
         res = await session.execute(select(User).where(User.tg_user_id == tg_user_id))
         u = res.scalar_one_or_none()
-    if u and u.username:
-        return u.username
+    if u:
+        return format_user_name(u.username, u.full_name, u.tg_user_id)
     return str(tg_user_id)
 
 
 async def round_has_matches(round_number: int) -> bool:
     async with SessionLocal() as session:
-        res = await session.execute(
-            select(func.count(Match.id)).where(Match.round_number == round_number)
-        )
+        res = await session.execute(select(func.count(Match.id)).where(Match.round_number == round_number))
         cnt = int(res.scalar_one() or 0)
     return cnt > 0
 
@@ -190,13 +190,19 @@ def register_user_handlers(dp: Dispatcher) -> None:
     @dp.message(CommandStart())
     async def cmd_start(message: types.Message):
         async with SessionLocal() as session:
-            await ensure_user(session, message)
+            created, display = await upsert_user_from_message(session, message)
 
         await message.answer(
-            "Привет! Я бот турнира прогнозов РПЛ ⚽️\n\n"
+            (
+                f"✅ Ты зарегистрирован в турнире: {display}\n\n"
+                if created
+                else f"✅ Твои данные обновлены: {display}\n\n"
+            )
+            + "Привет! Я бот турнира прогнозов РПЛ ⚽️\n\n"
             "⏰ Время матчей и дедлайны — по Москве (МСК).\n"
             "⛔️ После начала матча прогноз ставить/менять нельзя.\n\n"
             "Команды:\n"
+            "/join — вступить в турнир\n"
             "/round 1 — матчи тура\n"
             "/predict 1 2:0 — прогноз на матч\n"
             "/predict_round 1 — прогнозы на тур одним сообщением\n"
@@ -207,11 +213,22 @@ def register_user_handlers(dp: Dispatcher) -> None:
             "/help — помощь"
         )
 
+    @dp.message(Command("join"))
+    async def cmd_join(message: types.Message):
+        async with SessionLocal() as session:
+            created, display = await upsert_user_from_message(session, message)
+
+        if created:
+            await message.answer(f"✅ Добро пожаловать! Ты в турнире: {display}")
+        else:
+            await message.answer(f"✅ Уже в турнире. Данные обновлены: {display}")
+
     @dp.message(Command("help"))
     async def cmd_help(message: types.Message):
-        text = (
+        await message.answer(
             "📌 Команды:\n"
             "/start — начать\n"
+            "/join — вступить в турнир\n"
             "/help — помощь\n"
             "/ping — проверка\n"
             "/round N — матчи тура (пример: /round 1)\n"
@@ -224,13 +241,8 @@ def register_user_handlers(dp: Dispatcher) -> None:
             "Правила:\n"
             "⏰ Время матчей и дедлайны — по Москве (МСК).\n"
             "⛔️ После начала матча прогноз ставить/менять нельзя.\n"
-            "✅ Можно вводить счет как 2:0 или 2-0.\n\n"
-            "Админ:\n"
-            "/admin_add_match — добавить матч\n"
-            "/admin_set_result — поставить результат\n"
-            "/admin_recalc — пересчитать очки\n"
+            "✅ Можно вводить счет как 2:0 или 2-0."
         )
-        await message.answer(text)
 
     @dp.message(Command("ping"))
     async def cmd_ping(message: types.Message):
@@ -253,9 +265,7 @@ def register_user_handlers(dp: Dispatcher) -> None:
 
         async with SessionLocal() as session:
             result = await session.execute(
-                select(Match)
-                .where(Match.round_number == round_number)
-                .order_by(Match.kickoff_time.asc())
+                select(Match).where(Match.round_number == round_number).order_by(Match.kickoff_time.asc())
             )
             matches = result.scalars().all()
 
@@ -263,8 +273,7 @@ def register_user_handlers(dp: Dispatcher) -> None:
             await message.answer(f"В туре {round_number} пока нет матчей.")
             return
 
-        lines = [f"📅 Тур {round_number} (МСК):"]
-        lines.append("Легенда: 🟢 прогноз открыт · 🔒 прогноз закрыт · ✅ есть итог")
+        lines = [f"📅 Тур {round_number} (МСК):", "Легенда: 🟢 прогноз открыт · 🔒 прогноз закрыт · ✅ есть итог"]
         for m in matches:
             icon = match_status_icon(m, now)
 
@@ -311,7 +320,7 @@ def register_user_handlers(dp: Dispatcher) -> None:
         now = now_msk_naive()
 
         async with SessionLocal() as session:
-            await ensure_user(session, message)
+            await upsert_user_from_message(session, message)
 
             result = await session.execute(select(Match).where(Match.id == match_id))
             match = result.scalar_one_or_none()
@@ -327,21 +336,13 @@ def register_user_handlers(dp: Dispatcher) -> None:
                 return
 
             result = await session.execute(
-                select(Prediction).where(
-                    Prediction.match_id == match_id,
-                    Prediction.tg_user_id == tg_user_id,
-                )
+                select(Prediction).where(Prediction.match_id == match_id, Prediction.tg_user_id == tg_user_id)
             )
             pred = result.scalar_one_or_none()
 
             if pred is None:
                 session.add(
-                    Prediction(
-                        match_id=match_id,
-                        tg_user_id=tg_user_id,
-                        pred_home=pred_home,
-                        pred_away=pred_away,
-                    )
+                    Prediction(match_id=match_id, tg_user_id=tg_user_id, pred_home=pred_home, pred_away=pred_away)
                 )
             else:
                 pred.pred_home = pred_home
@@ -365,12 +366,9 @@ def register_user_handlers(dp: Dispatcher) -> None:
             return
 
         async with SessionLocal() as session:
-            await ensure_user(session, message)
-
+            await upsert_user_from_message(session, message)
             result = await session.execute(
-                select(Match)
-                .where(Match.round_number == round_number)
-                .order_by(Match.kickoff_time.asc())
+                select(Match).where(Match.round_number == round_number).order_by(Match.kickoff_time.asc())
             )
             matches = result.scalars().all()
 
@@ -412,7 +410,7 @@ def register_user_handlers(dp: Dispatcher) -> None:
         now = now_msk_naive()
 
         async with SessionLocal() as session:
-            await ensure_user(session, message)
+            await upsert_user_from_message(session, message)
 
             res = await session.execute(select(Match).where(Match.round_number == round_number))
             matches = res.scalars().all()
@@ -473,21 +471,13 @@ def register_user_handlers(dp: Dispatcher) -> None:
                     continue
 
                 res_pred = await session.execute(
-                    select(Prediction).where(
-                        Prediction.match_id == match_id,
-                        Prediction.tg_user_id == tg_user_id,
-                    )
+                    select(Prediction).where(Prediction.match_id == match_id, Prediction.tg_user_id == tg_user_id)
                 )
                 pred = res_pred.scalar_one_or_none()
 
                 if pred is None:
                     session.add(
-                        Prediction(
-                            match_id=match_id,
-                            tg_user_id=tg_user_id,
-                            pred_home=pred_home,
-                            pred_away=pred_away,
-                        )
+                        Prediction(match_id=match_id, tg_user_id=tg_user_id, pred_home=pred_home, pred_away=pred_away)
                     )
                 else:
                     pred.pred_home = pred_home
@@ -529,7 +519,7 @@ def register_user_handlers(dp: Dispatcher) -> None:
             return
 
         async with SessionLocal() as session:
-            await ensure_user(session, message)
+            await upsert_user_from_message(session, message)
 
         tg_user_id = message.from_user.id
         text = await build_my_round_text(tg_user_id=tg_user_id, round_number=round_number)
@@ -553,7 +543,7 @@ def register_user_handlers(dp: Dispatcher) -> None:
 
         stats = {}
         for u in users:
-            name = u.username if u.username else str(u.tg_user_id)
+            name = format_user_name(u.username, u.full_name, u.tg_user_id)
             stats[u.tg_user_id] = {"name": name, "total": 0, "exact": 0, "diff": 0, "outcome": 0}
 
         for r in points_rows:
@@ -575,8 +565,7 @@ def register_user_handlers(dp: Dispatcher) -> None:
             await message.answer("Пока нет данных для таблицы.")
             return
 
-        lines = ["🏆 Таблица лидеров (общая):"]
-        lines.append(f"Матчей сыграно: {played} / {total}")
+        lines = ["🏆 Таблица лидеров (общая):", f"Матчей сыграно: {played} / {total}"]
         for i, r in enumerate(rows[:20], start=1):
             lines.append(f"{i}. {r['name']} — {r['total']} очк. | 🎯{r['exact']} | 📏{r['diff']} | ✅{r['outcome']}")
 
@@ -617,10 +606,9 @@ def register_user_handlers(dp: Dispatcher) -> None:
             name = await get_user_display_name(tg_user_id)
             total = await get_round_total_points_for_user(tg_user_id=tg_user_id, round_number=round_number)
 
-            extra = (
-                "\n\n🏅 Лучший игрок последнего сыгранного тура:\n"
+            text = (
+                f"{text}\n\n🏅 Лучший игрок последнего сыгранного тура:\n"
                 f"Тур {round_number}: {name} — {total} очк."
             )
-            text = f"{text}{extra}"
 
         await message.answer(text)

@@ -15,10 +15,6 @@ ADMIN_IDS = load_admin_ids()
 
 
 async def recalc_points_for_match(match_id: int) -> int:
-    """
-    Пересчитывает очки ТОЛЬКО для одного матча.
-    Возвращает количество обработанных прогнозов.
-    """
     updates = 0
 
     async with SessionLocal() as session:
@@ -62,9 +58,6 @@ async def recalc_points_for_match(match_id: int) -> int:
 
 
 def _db_mode_text() -> str:
-    """
-    Для админ-диагностики: понятно написать, что сейчас используется.
-    """
     if os.getenv("DATABASE_URL"):
         return "Postgres (DATABASE_URL)"
     return "SQLite fallback (⚠️ так быть не должно на Render)"
@@ -144,7 +137,7 @@ def register_admin_handlers(dp: Dispatcher) -> None:
             await message.answer("match_id должен быть числом. Пример: /admin_set_result 1 2:1")
             return
 
-        score_str = parts[2].strip()
+        score_str = parts[2].strip().replace("-", ":")
         if ":" not in score_str:
             await message.answer("Счёт должен быть в формате 2:1")
             return
@@ -239,10 +232,15 @@ def register_admin_handlers(dp: Dispatcher) -> None:
                 )).scalar_one() or 0
             )
 
+            active_users_cnt = int(
+                (await session.execute(select(func.count(func.distinct(Prediction.tg_user_id))))).scalar_one() or 0
+            )
+
         text = (
             "🩺 admin_health\n"
             f"DB: {_db_mode_text()}\n"
-            f"users: {users_cnt}\n"
+            f"users (registered): {users_cnt}\n"
+            f"users (active): {active_users_cnt}\n"
             f"matches: {matches_cnt}\n"
             f"played matches: {played_cnt}\n"
             f"predictions: {preds_cnt}\n"
