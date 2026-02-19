@@ -66,6 +66,16 @@ def _db_mode_text() -> str:
     return "SQLite fallback (⚠️ так быть не должно на Render)"
 
 
+def _short_err(e: Exception, limit: int = 600) -> str:
+    """
+    Коротко показываем ошибку в чат (админу), чтобы не лезть в логи.
+    """
+    msg = str(e) if str(e) else repr(e)
+    if len(msg) > limit:
+        msg = msg[:limit] + "…"
+    return msg
+
+
 def register_admin_handlers(dp: Dispatcher) -> None:
     @dp.message(Command("admin_add_match"))
     async def cmd_admin_add_match(message: types.Message):
@@ -261,7 +271,7 @@ def register_admin_handlers(dp: Dispatcher) -> None:
             _, dbg = await fetch_rpl_round(1)
         except Exception as e:
             print("API DEBUG ERROR:", repr(e))
-            await message.answer(f"⚠️ Ошибка обращения к API: {type(e).__name__}. Смотри логи Render.")
+            await message.answer(f"⚠️ Ошибка API: {type(e).__name__}: {_short_err(e)}")
             return
 
         text = (
@@ -298,7 +308,7 @@ def register_admin_handlers(dp: Dispatcher) -> None:
             fixtures, dbg = await fetch_rpl_round(round_number)
         except Exception as e:
             print("API SYNC ERROR:", repr(e))
-            await message.answer(f"⚠️ Ошибка обращения к API: {type(e).__name__}. Смотри логи Render.")
+            await message.answer(f"⚠️ Ошибка API: {type(e).__name__}: {_short_err(e)}")
             return
 
         if not fixtures:
