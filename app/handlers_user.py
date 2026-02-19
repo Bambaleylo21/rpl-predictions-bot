@@ -8,6 +8,7 @@ from sqlalchemy import select
 from app.db import SessionLocal
 from app.models import User, Match, Prediction, Point
 from app.stats import build_stats_text
+from app.my_predictions import build_my_round_text
 
 
 class PredictRoundStates(StatesGroup):
@@ -34,6 +35,7 @@ def register_user_handlers(dp: Dispatcher) -> None:
             "/round 1 — матчи тура\n"
             "/predict 1 2:0 — прогноз на матч\n"
             "/predict_round 1 — прогнозы на тур одним сообщением\n"
+            "/my 1 — мои прогнозы на тур\n"
             "/table — таблица лидеров\n"
             "/stats — подробная статистика\n"
             "/help — помощь"
@@ -49,6 +51,7 @@ def register_user_handlers(dp: Dispatcher) -> None:
             "/round N — матчи тура (пример: /round 1)\n"
             "/predict <match_id> <счет> — прогноз (пример: /predict 1 2:0)\n"
             "/predict_round N — прогнозы на тур одним сообщением (пример: /predict_round 1)\n"
+            "/my N — мои прогнозы на тур (пример: /my 1)\n"
             "/table — таблица лидеров\n"
             "/stats — подробная статистика\n\n"
             "Админ:\n"
@@ -295,6 +298,23 @@ def register_user_handlers(dp: Dispatcher) -> None:
                 reply.append("…(ещё есть ошибки, показываю первые 10)")
 
         await message.answer("\n".join(reply))
+
+    @dp.message(Command("my"))
+    async def cmd_my(message: types.Message):
+        parts = message.text.strip().split()
+        if len(parts) != 2:
+            await message.answer("Неверный формат. Пример: /my 1")
+            return
+
+        try:
+            round_number = int(parts[1])
+        except ValueError:
+            await message.answer("Номер тура должен быть числом. Пример: /my 1")
+            return
+
+        tg_user_id = message.from_user.id
+        text = await build_my_round_text(tg_user_id=tg_user_id, round_number=round_number)
+        await message.answer(text)
 
     @dp.message(Command("table"))
     async def cmd_table(message: types.Message):
