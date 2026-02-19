@@ -5,7 +5,8 @@ from aiogram.fsm.state import State, StatesGroup
 
 from sqlalchemy import select
 
-from datetime import datetime, timezone
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from app.db import SessionLocal
 from app.models import User, Match, Prediction, Point
@@ -15,6 +16,9 @@ from app.my_predictions import build_my_round_text
 
 class PredictRoundStates(StatesGroup):
     waiting_for_predictions_block = State()
+
+
+MSK_TZ = ZoneInfo("Europe/Moscow")
 
 
 async def ensure_user(session, message: types.Message) -> None:
@@ -38,12 +42,50 @@ async def ensure_user(session, message: types.Message) -> None:
     await session.commit()
 
 
-def _now_utc_naive() -> datetime:
+def now_msk_naive() -> datetime:
     """
-    Возвращает текущее время как naive datetime в UTC.
-    Это удобно, если kickoff_time в БД хранится как naive (без timezone).
+    Возвращает текущее время как naive datetime в МСК.
+    Предположение: kickoff_time в БД хранится как naive datetime в МСК
+    (ты вводишь даты матчей в МСК).
     """
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(MSK_TZ).replace(tzinfo=None)
+
+
+def normalize_score(score_str: str) -> str:
+    """
+    Нормализуем ввод счета: принимаем 2:0 и 2-0
+    """
+    return score_str.strip().replace("-", ":")
+
+
+def parse_score(score_str: str) -> tuple[int, int] | None:
+    """
+    Парсим счет вида 2:0 (после normalize_score)
+    """
+    if ":" not in score_str:
+        return None
+    try:
+        h, a = score_str.split(":")
+        home = int(h)
+        away = int(a)
+    except Exception:
+        return None
+    if home < 0 or away < 0:
+        return None
+    return home, away
+
+
+def match_status_icon(match: Match, now: datetime) -> str:
+    """
+    ✅ есть итог
+    🔒 матч начался, прогноз закрыт
+    🟢 матч не начался, прогноз открыт
+    """
+    if match.home_score is not None and match.away_score is not None:
+        return "✅"
+    if match.kickoff_time <= now:
+        return "🔒"
+    return "🟢"
 
 
 def register_user_handlers(dp: Dispatcher) -> None:
@@ -54,6 +96,8 @@ def register_user_handlers(dp: Dispatcher) -> None:
 
         await message.answer(
             "Привет! Я бот турнира прогнозов РПЛ ⚽️\n\n"
+            "⏰ Время матчей и дедлайны — по Москве (МСК).\n"
+            "⛔️ После начала матча прогноз ставить/менять нельзя.\n\n"
             "Команды:\n"
             "/round 1 — матчи тура\n"
             "/predict 1 2:0 — прогноз на матч\n"
@@ -77,8 +121,10 @@ def register_user_handlers(dp: Dispatcher) -> None:
             "/my N — мои прогнозы на тур (пример: /my 1)\n"
             "/table — таблица лидеров\n"
             "/stats — подробная статистика\n\n"
-            "Правило:\n"
-            "⛔️ Нельзя менять/ставить прогноз после начала матча.\n\n"
+            "Правила:\n"
+            "⏰ Время матчей и дедлайны — по Москве (МСК).\n"
+            "⛔️ После начала матча прогноз ставить/менять нельзя.\n"
+            "✅ Можно вводить счет как 2:0 или 2-0.\n\n"
             "Админ:\n"
             "/admin_add_match — добавить матч\n"
             "/admin_set_result — поставить результат\n"
@@ -103,6 +149,8 @@ def register_user_handlers(dp: Dispatcher) -> None:
             await message.answer("Номер тура должен быть числом. Пример: /round 1")
             return
 
+        now = now_msk_naive()
+
         async with SessionLocal() as session:
             result = await session.execute(
                 select(Match)
@@ -115,13 +163,27 @@ def register_user_handlers(dp: Dispatcher) -> None:
             await message.answer(f"В туре {round_number} пока нет матчей.")
             return
 
-        lines = [f"📅 Тур {round_number}:"]
+        lines = [f"📅 Тур {round_number} (МСК):"]
+        lines.append("Легенда: 🟢 прогноз открыт · 🔒 прогноз закрыт · ✅ есть итог")
         for m in matches:
-            score = ""
+            icon = match_status_icon(m, now)
+
+            extra = ""
             if m.home_score is not None and m.away_score is not None:
-                score = f" | итог: {m.home_score}:{m.away_score}"
+                extra = f" | итог: {m.home_score}:{m.away_score}"
+            elif m.kickoff_time > now:
+                # покажем, сколько примерно осталось до старта (в минутах/часах)
+                delta = m.kickoff_time - now
+                minutes = int(delta.total_seconds() // 60)
+                if minutes >= 60:
+                    extra = f" | старт через ~{minutes // 60}ч {minutes % 60}м"
+                else:
+                    extra = f" | старт через ~{minutes}м"
+            else:
+                extra = " | матч начался"
+
             lines.append(
-                f"#{m.id} — {m.home_team} — {m.away_team} | {m.kickoff_time.strftime('%Y-%m-%d %H:%M')}{score}"
+                f"{icon} #{m.id} — {m.home_team} — {m.away_team} | {m.kickoff_time.strftime('%Y-%m-%d %H:%M')} МСК{extra}"
             )
 
         await message.answer("\n".join(lines))
@@ -139,23 +201,17 @@ def register_user_handlers(dp: Dispatcher) -> None:
             await message.answer("match_id должен быть числом. Пример: /predict 1 2:0")
             return
 
-        score_str = parts[2].strip()
-        if ":" not in score_str:
-            await message.answer("Счёт должен быть в формате 2:0")
+        score_str = normalize_score(parts[2])
+        parsed = parse_score(score_str)
+        if parsed is None:
+            await message.answer("Счёт должен быть в формате 2:0 (или 2-0)")
             return
 
-        try:
-            h, a = score_str.split(":")
-            pred_home = int(h)
-            pred_away = int(a)
-        except ValueError:
-            await message.answer("Счёт должен быть числом. Пример: 2:0")
-            return
-
+        pred_home, pred_away = parsed
         tg_user_id = message.from_user.id
+        now = now_msk_naive()
 
         async with SessionLocal() as session:
-            # гарантируем, что юзер есть в БД и ник актуален
             await ensure_user(session, message)
 
             # матч существует?
@@ -166,9 +222,11 @@ def register_user_handlers(dp: Dispatcher) -> None:
                 return
 
             # запрет после начала матча
-            now = _now_utc_naive()
             if match.kickoff_time <= now:
-                await message.answer("⛔️ Матч уже начался. Ставить/менять прогноз нельзя.")
+                await message.answer(
+                    "⛔️ Матч уже начался. Ставить/менять прогноз нельзя.\n"
+                    f"Начало: {match.kickoff_time.strftime('%Y-%m-%d %H:%M')} МСК"
+                )
                 return
 
             # upsert прогноз
@@ -211,7 +269,6 @@ def register_user_handlers(dp: Dispatcher) -> None:
             return
 
         async with SessionLocal() as session:
-            # гарантируем, что юзер есть в БД и ник актуален
             await ensure_user(session, message)
 
             result = await session.execute(
@@ -225,22 +282,24 @@ def register_user_handlers(dp: Dispatcher) -> None:
             await message.answer(f"В туре {round_number} пока нет матчей.")
             return
 
-        # Примечание про правило блокировки
         await state.update_data(round_number=round_number)
         await state.set_state(PredictRoundStates.waiting_for_predictions_block)
 
-        lines = [f"📝 Ввод прогнозов на тур {round_number} одним сообщением."]
-        lines.append("⛔️ После начала матча прогноз поставить/изменить нельзя.")
+        lines = [f"📝 Ввод прогнозов на тур {round_number} (МСК) одним сообщением."]
+        lines.append("✅ Можно вводить счет как 2:0 или 2-0.")
+        lines.append("⛔️ После начала матча прогноз поставить/изменить нельзя (такие строки будут пропущены).")
         lines.append("")
         lines.append("Отправь следующим сообщением строки в формате:")
         lines.append("match_id счет")
         lines.append("Пример:")
         lines.append("1 2:0")
-        lines.append("2 1:1")
+        lines.append("2 1-1")
         lines.append("")
         lines.append("Матчи тура:")
+        now = now_msk_naive()
         for m in matches:
-            lines.append(f"#{m.id} {m.home_team} — {m.away_team} ({m.kickoff_time.strftime('%Y-%m-%d %H:%M')})")
+            icon = match_status_icon(m, now)
+            lines.append(f"{icon} #{m.id} {m.home_team} — {m.away_team} ({m.kickoff_time.strftime('%Y-%m-%d %H:%M')} МСК)")
 
         await message.answer("\n".join(lines))
 
@@ -254,10 +313,9 @@ def register_user_handlers(dp: Dispatcher) -> None:
             await state.clear()
             return
 
-        now = _now_utc_naive()
+        now = now_msk_naive()
 
         async with SessionLocal() as session:
-            # гарантируем, что юзер есть в БД и ник актуален
             await ensure_user(session, message)
 
             res = await session.execute(select(Match).where(Match.round_number == round_number))
@@ -271,6 +329,7 @@ def register_user_handlers(dp: Dispatcher) -> None:
             saved = 0
             errors = 0
             skipped = 0
+            skipped_details: list[str] = []
             error_lines: list[str] = []
 
             tg_user_id = message.from_user.id
@@ -282,7 +341,7 @@ def register_user_handlers(dp: Dispatcher) -> None:
                     error_lines.append(f"❌ '{ln}' (нужно: match_id счет)")
                     continue
 
-                match_id_str, score_str = parts
+                match_id_str, score_str_raw = parts
                 try:
                     match_id = int(match_id_str)
                 except ValueError:
@@ -295,19 +354,14 @@ def register_user_handlers(dp: Dispatcher) -> None:
                     error_lines.append(f"❌ '{ln}' (match_id не из тура {round_number})")
                     continue
 
-                if ":" not in score_str:
+                score_str = normalize_score(score_str_raw)
+                parsed = parse_score(score_str)
+                if parsed is None:
                     errors += 1
-                    error_lines.append(f"❌ '{ln}' (счёт должен быть 2:0)")
+                    error_lines.append(f"❌ '{ln}' (счёт должен быть 2:0 или 2-0)")
                     continue
 
-                try:
-                    h, a = score_str.split(":")
-                    pred_home = int(h)
-                    pred_away = int(a)
-                except ValueError:
-                    errors += 1
-                    error_lines.append(f"❌ '{ln}' (счёт должен быть числом, пример 2:0)")
-                    continue
+                pred_home, pred_away = parsed
 
                 m = match_by_id.get(match_id)
                 if m is None:
@@ -318,6 +372,7 @@ def register_user_handlers(dp: Dispatcher) -> None:
                 # пропускаем матчи, которые уже начались
                 if m.kickoff_time <= now:
                     skipped += 1
+                    skipped_details.append(f"🔒 #{m.id} {m.home_team}—{m.away_team} ({m.kickoff_time.strftime('%Y-%m-%d %H:%M')} МСК)")
                     continue
 
                 res_pred = await session.execute(
@@ -350,6 +405,11 @@ def register_user_handlers(dp: Dispatcher) -> None:
         reply = [f"✅ Сохранено прогнозов: {saved}"]
         if skipped:
             reply.append(f"⛔️ Пропущено (матч уже начался): {skipped}")
+            # покажем до 10 строк пропусков
+            reply.append("Пропущенные матчи:")
+            reply.extend(skipped_details[:10])
+            if len(skipped_details) > 10:
+                reply.append("…(ещё есть пропущенные, показываю первые 10)")
         if errors:
             reply.append(f"⚠️ Ошибок: {errors}")
             reply.append("Проблемные строки:")
