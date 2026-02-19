@@ -15,7 +15,7 @@ def register_handlers(dp: Dispatcher) -> None:
     @dp.message(CommandStart())
     async def cmd_start(message: types.Message):
         tg_user_id = message.from_user.id
-        username = message.from_user.username  # может быть None
+        username = message.from_user.username
 
         async with SessionLocal() as session:
             result = await session.execute(select(User).where(User.tg_user_id == tg_user_id))
@@ -27,7 +27,6 @@ def register_handlers(dp: Dispatcher) -> None:
 
         await message.answer(
             "Привет! Я живой 🙂\n"
-            "Ты зарегистрирован(а) в турнире.\n\n"
             "Команды:\n"
             "/help — помощь\n"
             "/round 1 — показать матчи тура 1"
@@ -43,6 +42,7 @@ def register_handlers(dp: Dispatcher) -> None:
             "/round N — матчи тура (пример: /round 1)\n\n"
             "Админ:\n"
             "/admin_add_match — добавить матч\n"
+            "/admin_set_result — поставить результат (пример: /admin_set_result 1 2:1)\n"
         )
         await message.answer(text)
 
@@ -108,7 +108,6 @@ def register_handlers(dp: Dispatcher) -> None:
 
     @dp.message(Command("round"))
     async def cmd_round(message: types.Message):
-        # Ожидаем: /round 1
         parts = message.text.strip().split()
         if len(parts) != 2:
             await message.answer("Неверный формат. Пример: /round 1")
@@ -134,6 +133,56 @@ def register_handlers(dp: Dispatcher) -> None:
 
         lines = [f"📅 Тур {round_number}:"]
         for m in matches:
-            lines.append(f"— {m.home_team} — {m.away_team} | {m.kickoff_time.strftime('%Y-%m-%d %H:%M')}")
+            score = ""
+            if m.home_score is not None and m.away_score is not None:
+                score = f" | итог: {m.home_score}:{m.away_score}"
+            lines.append(
+                f"#{m.id} — {m.home_team} — {m.away_team} | {m.kickoff_time.strftime('%Y-%m-%d %H:%M')}{score}"
+            )
 
         await message.answer("\n".join(lines))
+
+    @dp.message(Command("admin_set_result"))
+    async def cmd_admin_set_result(message: types.Message):
+        if message.from_user.id not in ADMIN_IDS:
+            await message.answer("⛔️ У вас нет прав на эту команду.")
+            return
+
+        # Формат: /admin_set_result 1 2:1
+        parts = message.text.strip().split()
+        if len(parts) != 3:
+            await message.answer("Неверный формат. Пример: /admin_set_result 1 2:1")
+            return
+
+        try:
+            match_id = int(parts[1])
+        except ValueError:
+            await message.answer("match_id должен быть числом. Пример: /admin_set_result 1 2:1")
+            return
+
+        score_str = parts[2].strip()
+        if ":" not in score_str:
+            await message.answer("Счёт должен быть в формате 2:1")
+            return
+
+        try:
+            home_s, away_s = score_str.split(":")
+            home_score = int(home_s)
+            away_score = int(away_s)
+        except ValueError:
+            await message.answer("Счёт должен быть числом, пример: 2:1")
+            return
+
+        async with SessionLocal() as session:
+            result = await session.execute(select(Match).where(Match.id == match_id))
+            match = result.scalar_one_or_none()
+
+            if match is None:
+                await message.answer(f"Матч с id={match_id} не найден.")
+                return
+
+            match.home_score = home_score
+            match.away_score = away_score
+            await session.commit()
+
+        await message.answer(f"✅ Результат сохранён для матча #{match_id}: {home_score}:{away_score}")
