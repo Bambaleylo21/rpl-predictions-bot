@@ -41,6 +41,10 @@ class Match(Base):
     home_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     away_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    # ✅ NEW: внешний id матча из API-Football (fixture id)
+    # Нужен для синхронизации "без дублей" и обновлений матчей.
+    api_fixture_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,

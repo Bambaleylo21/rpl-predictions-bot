@@ -1,4 +1,6 @@
-from datetime import datetime
+from __future__ import annotations
+
+from datetime import datetime, timezone
 import os
 
 from aiogram import Dispatcher, types
@@ -6,10 +8,13 @@ from aiogram.filters import Command
 
 from sqlalchemy import select, func
 
-from app.config import load_admin_ids
+from app.config import load_admin_ids, load_football_api_key, load_football_api_base_url
 from app.db import SessionLocal
 from app.models import Match, Prediction, Point, User
 from app.scoring import calculate_points
+
+# Новый клиент API-Football
+from app.rpl_api import ApiFootballClient
 
 ADMIN_IDS = load_admin_ids()
 
@@ -61,6 +66,20 @@ def _db_mode_text() -> str:
     if os.getenv("DATABASE_URL"):
         return "Postgres (DATABASE_URL)"
     return "SQLite fallback (⚠️ так быть не должно на Render)"
+
+
+def _msk_from_utc_naive(dt_utc_naive: datetime) -> datetime:
+    """
+    В проекте используем МСК как UTC+3 без zoneinfo.
+    match.kickoff_time хранится как naive UTC (как и раньше в твоей логике).
+    """
+    return dt_utc_naive.replace(tzinfo=timezone.utc).astimezone(timezone.utc).replace(tzinfo=None)  # UTC naive
+    # NB: В тексте мы просто будем показывать МСК как +3 к UTC naive ниже.
+
+
+def _utc_to_msk_naive(dt_utc_naive: datetime) -> datetime:
+    # Перевод naive UTC -> naive MSK (UTC+3)
+    return dt_utc_naive + (datetime(2000, 1, 1, 3, 0) - datetime(2000, 1, 1, 0, 0))
 
 
 def register_admin_handlers(dp: Dispatcher) -> None:
@@ -247,3 +266,102 @@ def register_admin_handlers(dp: Dispatcher) -> None:
             f"points: {points_cnt}"
         )
         await message.answer(text)
+
+    @dp.message(Command("admin_sync_round"))
+    async def cmd_admin_sync_round(message: types.Message):
+        """
+        /admin_sync_round N
+        Подтягивает матчи тура N из API-Football и upsert'ит в matches.
+        Важно: чтобы это работало, в таблице matches должен быть столбец api_fixture_id (мы добавили в db.py миграцией).
+        """
+        if message.from_user.id not in ADMIN_IDS:
+            await message.answer("⛔️ У вас нет прав на эту команду.")
+            return
+
+        parts = message.text.strip().split()
+        if len(parts) != 2:
+            await message.answer("Неверный формат. Пример: /admin_sync_round 1")
+            return
+
+        try:
+            round_number = int(parts[1])
+        except ValueError:
+            await message.answer("N должен быть числом. Пример: /admin_sync_round 1")
+            return
+
+        # Читаем ключ из env
+        try:
+            api_key = load_football_api_key()
+            base_url = load_football_api_base_url()
+        except Exception:
+            await message.answer(
+                "⚠️ Не настроен API-Football.\n"
+                "Добавьте FOOTBALL_API_KEY в Render → Environment (или в .env локально)."
+            )
+            return
+
+        client = ApiFootballClient(api_key=api_key, base_url=base_url)
+
+        # Тянем матчи из API
+        try:
+            import aiohttp
+
+            async with aiohttp.ClientSession() as http:
+                league_id, season_year = await client.resolve_rpl_league_and_season(http)
+                fixtures = await client.get_fixtures_by_round(http, league_id, season_year, round_number)
+        except Exception as e:
+            await message.answer("⚠️ Не смог получить матчи из API. Детали смотри в логах Render.")
+            raise
+
+        if not fixtures:
+            await message.answer(f"Матчи тура {round_number} не найдены (API вернул пусто).")
+            return
+
+        created = 0
+        updated = 0
+
+        async with SessionLocal() as session:
+            for fx in fixtures:
+                # Ищем по api_fixture_id (если уже синкали)
+                existing = None
+                try:
+                    res = await session.execute(select(Match).where(Match.api_fixture_id == fx.api_fixture_id))
+                    existing = res.scalar_one_or_none()
+                except Exception:
+                    # если ORM ещё не знает про поле api_fixture_id, будет ошибка
+                    await message.answer(
+                        "⚠️ В модели Match нет поля api_fixture_id.\n"
+                        "Нужно добавить его в app/models.py (как колонку), иначе синхронизация невозможна."
+                    )
+                    return
+
+                # API отдаёт datetime aware UTC, храним у себя naive UTC
+                kickoff_utc_naive = fx.start_time_utc.astimezone(timezone.utc).replace(tzinfo=None)
+
+                if existing is None:
+                    created += 1
+                    session.add(
+                        Match(
+                            round_number=round_number,
+                            home_team=fx.home_team,
+                            away_team=fx.away_team,
+                            kickoff_time=kickoff_utc_naive,
+                            api_fixture_id=fx.api_fixture_id,
+                        )
+                    )
+                else:
+                    updated += 1
+                    existing.round_number = round_number
+                    existing.home_team = fx.home_team
+                    existing.away_team = fx.away_team
+                    existing.kickoff_time = kickoff_utc_naive
+
+            await session.commit()
+
+        await message.answer(
+            "✅ Синхронизация завершена.\n"
+            f"Тур: {round_number}\n"
+            f"Матчей из API: {len(fixtures)}\n"
+            f"Создано: {created}\n"
+            f"Обновлено: {updated}"
+        )

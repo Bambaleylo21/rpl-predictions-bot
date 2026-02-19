@@ -29,7 +29,9 @@ SessionLocal = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 async def _apply_postgres_schema_fixes(conn) -> None:
     """
     Мини-миграции без Alembic.
-    Чиним created_at дефолты (чтобы Postgres не падал на NOT NULL).
+
+    Чиним created_at дефолты (чтобы Postgres не падал на NOT NULL)
+    + добавляем поле api_fixture_id для синхронизации матчей с внешним API.
     """
     if not str(engine.url).startswith("postgresql+asyncpg://"):
         return
@@ -44,6 +46,10 @@ async def _apply_postgres_schema_fixes(conn) -> None:
         "ALTER TABLE matches ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT NOW()",
         "ALTER TABLE matches ALTER COLUMN created_at SET DEFAULT NOW()",
         "UPDATE matches SET created_at = NOW() WHERE created_at IS NULL",
+
+        # NEW: внешний id матча из API (API-Football fixture id)
+        "ALTER TABLE matches ADD COLUMN IF NOT EXISTS api_fixture_id BIGINT",
+        "CREATE INDEX IF NOT EXISTS ix_matches_api_fixture_id ON matches (api_fixture_id)",
 
         # predictions (ВАЖНО)
         "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT NOW()",
