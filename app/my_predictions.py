@@ -42,6 +42,6 @@ async def build_my_round_text(tg_user_id: int, round_number: int, tournament_id:
             if pt is not None:
                 result_txt += f" | очки {pt.points} ({pt.category})"
 
-        lines.append(f"#{m.id} {m.home_team} — {m.away_team} | прогноз: {pred_txt}{result_txt}")
+        lines.append(f"{m.home_team} — {m.away_team} | прогноз: {pred_txt}{result_txt}")
 
     return "\n".join(lines)
