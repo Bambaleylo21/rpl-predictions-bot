@@ -7,7 +7,7 @@ from app.models import Match, Prediction, Point
 async def build_my_round_text(tg_user_id: int, round_number: int) -> str:
     async with SessionLocal() as session:
         res_matches = await session.execute(
-            select(Match).where(Match.round_number == round_number).order_by(Match.kickoff_time.asc())
+            select(Match).where(Match.round_number == round_number, Match.source == "manual").order_by(Match.kickoff_time.asc())
         )
         matches = res_matches.scalars().all()
 

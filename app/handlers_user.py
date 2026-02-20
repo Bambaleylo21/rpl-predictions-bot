@@ -52,7 +52,11 @@ async def get_current_round_default() -> int:
                 func.min(Match.kickoff_time).label("starts_at"),
                 func.max(Match.kickoff_time).label("ends_at"),
             )
-            .where(Match.round_number >= ROUND_MIN, Match.round_number <= ROUND_MAX)
+            .where(
+                Match.round_number >= ROUND_MIN,
+                Match.round_number <= ROUND_MAX,
+                Match.source == "manual",
+            )
             .group_by(Match.round_number)
             .order_by(Match.round_number.asc())
         )
@@ -181,7 +185,9 @@ def match_status_icon(match: Match, now: datetime) -> str:
 
 async def round_has_matches(round_number: int) -> bool:
     async with SessionLocal() as session:
-        result = await session.execute(select(func.count(Match.id)).where(Match.round_number == round_number))
+        result = await session.execute(
+            select(func.count(Match.id)).where(Match.round_number == round_number, Match.source == "manual")
+        )
         cnt = result.scalar_one()
         return cnt > 0
 
@@ -192,7 +198,7 @@ async def get_round_total_points_for_user(tg_user_id: int, round_number: int) ->
             select(func.coalesce(func.sum(Point.points), 0))
             .select_from(Point)
             .join(Match, Match.id == Point.match_id)
-            .where(Point.tg_user_id == tg_user_id, Match.round_number == round_number)
+            .where(Point.tg_user_id == tg_user_id, Match.round_number == round_number, Match.source == "manual")
         )
         return int(q.scalar_one())
 
@@ -261,7 +267,7 @@ async def build_round_leaderboard(round_number: int) -> tuple[list[dict], int]:
             select(func.count(func.distinct(Prediction.tg_user_id)))
             .select_from(Prediction)
             .join(Match, Match.id == Prediction.match_id)
-            .where(Match.round_number == round_number)
+            .where(Match.round_number == round_number, Match.source == "manual")
         )
         participants = int(participants_q.scalar_one())
 
@@ -279,7 +285,7 @@ async def build_round_leaderboard(round_number: int) -> tuple[list[dict], int]:
             .join(Prediction, Prediction.tg_user_id == User.tg_user_id)
             .join(Match, Match.id == Prediction.match_id)
             .outerjoin(Point, (Point.tg_user_id == User.tg_user_id) & (Point.match_id == Match.id))
-            .where(Match.round_number == round_number)
+            .where(Match.round_number == round_number, Match.source == "manual")
             .group_by(User.tg_user_id)
             .order_by(func.coalesce(func.sum(Point.points), 0).desc())
         )
@@ -396,7 +402,7 @@ def register_user_handlers(dp: Dispatcher):
 
         async with SessionLocal() as session:
             result = await session.execute(
-                select(Match).where(Match.round_number == round_number).order_by(Match.kickoff_time.asc())
+                select(Match).where(Match.round_number == round_number, Match.source == "manual").order_by(Match.kickoff_time.asc())
             )
             matches = result.scalars().all()
 
@@ -502,7 +508,7 @@ def register_user_handlers(dp: Dispatcher):
             await upsert_user_from_message(session, message)
 
             q = await session.execute(
-                select(Match).where(Match.round_number == round_number).order_by(Match.kickoff_time.asc())
+                select(Match).where(Match.round_number == round_number, Match.source == "manual").order_by(Match.kickoff_time.asc())
             )
             matches = q.scalars().all()
 
@@ -573,7 +579,9 @@ def register_user_handlers(dp: Dispatcher):
                     continue
                 pred_home, pred_away = parsed
 
-                match_q = await session.execute(select(Match).where(Match.id == match_id, Match.round_number == round_number))
+                match_q = await session.execute(
+                    select(Match).where(Match.id == match_id, Match.round_number == round_number, Match.source == "manual")
+                )
                 match = match_q.scalar_one_or_none()
                 if match is None:
                     skipped += 1
