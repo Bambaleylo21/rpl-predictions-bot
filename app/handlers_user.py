@@ -26,6 +26,8 @@ def build_main_menu_keyboard(default_round: int = ROUND_DEFAULT) -> types.ReplyK
             [types.KeyboardButton(text="🎯 Поставить прогноз")],
             [types.KeyboardButton(text=f"/predict_round {default_round}"), types.KeyboardButton(text=f"/my {default_round}")],
             [types.KeyboardButton(text="/table"), types.KeyboardButton(text="/stats")],
+            [types.KeyboardButton(text="/profile"), types.KeyboardButton(text="/history")],
+            [types.KeyboardButton(text="/mvp_round"), types.KeyboardButton(text="/tops_round")],
             [types.KeyboardButton(text="📘 Правила")],
             [types.KeyboardButton(text="/help")],
         ],
@@ -90,6 +92,19 @@ def build_open_matches_inline_keyboard(matches: list[Match]) -> types.InlineKeyb
     if current_row:
         rows.append(current_row)
 
+    return types.InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_round_history_keyboard() -> types.InlineKeyboardMarkup:
+    rows: list[list[types.InlineKeyboardButton]] = []
+    row: list[types.InlineKeyboardButton] = []
+    for r in range(ROUND_MIN, ROUND_MAX + 1):
+        row.append(types.InlineKeyboardButton(text=str(r), callback_data=f"history_round:{r}"))
+        if len(row) == 4:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
     return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -326,7 +341,207 @@ async def build_round_leaderboard(round_number: int) -> tuple[list[dict], int]:
         return rows, participants
 
 
+async def build_round_matches_text(round_number: int, now: datetime | None = None) -> str:
+    if now is None:
+        now = now_msk_naive()
+
+    async with SessionLocal() as session:
+        result = await session.execute(
+            select(Match).where(Match.round_number == round_number, Match.source == "manual").order_by(Match.kickoff_time.asc())
+        )
+        matches = result.scalars().all()
+
+    if not matches:
+        return f"В туре {round_number} пока нет матчей."
+
+    lines = [f"📅 Тур {round_number} (МСК)"]
+    for m in matches:
+        icon = match_status_icon(m, now)
+        score = ""
+        if m.home_score is not None and m.away_score is not None:
+            score = f" | {m.home_score}:{m.away_score}"
+        lines.append(f"{icon} #{m.id} {m.home_team} — {m.away_team} | {m.kickoff_time.strftime('%d.%m %H:%M')}{score}")
+    lines.append("")
+    lines.append("🟢 прогноз открыт · 🔒 прогноз закрыт · ✅ есть итог")
+    return "\n".join(lines)
+
+
+async def build_profile_text(tg_user_id: int) -> str:
+    async with SessionLocal() as session:
+        user_q = await session.execute(select(User).where(User.tg_user_id == tg_user_id))
+        user = user_q.scalar_one_or_none()
+        if user is None:
+            return "Сначала вступи в турнир: /join"
+
+        rank_q = await session.execute(
+            select(
+                User.tg_user_id,
+                func.coalesce(func.sum(Point.points), 0).label("total"),
+                func.coalesce(func.sum(case((Point.category == "exact", 1), else_=0)), 0).label("exact"),
+                func.coalesce(func.sum(case((Point.category == "diff", 1), else_=0)), 0).label("diff"),
+                func.coalesce(func.sum(case((Point.category == "outcome", 1), else_=0)), 0).label("outcome"),
+            )
+            .select_from(User)
+            .outerjoin(Point, Point.tg_user_id == User.tg_user_id)
+            .outerjoin(Match, Match.id == Point.match_id)
+            .where((Match.source == "manual") | (Match.id.is_(None)))
+            .group_by(User.tg_user_id)
+            .order_by(func.coalesce(func.sum(Point.points), 0).desc(), User.tg_user_id.asc())
+        )
+        ranking = rank_q.all()
+
+        place = None
+        total = exact = diff = outcome = 0
+        for i, row in enumerate(ranking, start=1):
+            if int(row[0]) == tg_user_id:
+                place = i
+                total = int(row[1] or 0)
+                exact = int(row[2] or 0)
+                diff = int(row[3] or 0)
+                outcome = int(row[4] or 0)
+                break
+        if place is None:
+            place = len(ranking) + 1
+
+        preds_q = await session.execute(
+            select(func.count(Prediction.id))
+            .select_from(Prediction)
+            .join(Match, Match.id == Prediction.match_id)
+            .where(Prediction.tg_user_id == tg_user_id, Match.source == "manual")
+        )
+        preds_count = int(preds_q.scalar_one() or 0)
+
+        rounds_q = await session.execute(
+            select(
+                Match.round_number,
+                func.coalesce(func.sum(Point.points), 0).label("pts"),
+            )
+            .select_from(Point)
+            .join(Match, Match.id == Point.match_id)
+            .where(Point.tg_user_id == tg_user_id, Match.source == "manual")
+            .group_by(Match.round_number)
+            .order_by(Match.round_number.desc())
+        )
+        rounds = rounds_q.all()
+
+    avg_per_round = round((total / len(rounds)), 2) if rounds else 0.0
+    form = " | ".join([f"Т{int(r[0])}:{int(r[1])}" for r in rounds[:3]]) if rounds else "нет данных"
+    name = format_user_name(user.username, user.full_name, tg_user_id)
+    return (
+        f"👤 Профиль: {name}\n"
+        f"Место в общем зачёте: {place}\n"
+        f"Очки: {total}\n"
+        f"Прогнозов: {preds_count}\n"
+        f"🎯{exact} | 📏{diff} | ✅{outcome}\n"
+        f"Средние очки за тур: {avg_per_round}\n"
+        f"Форма (последние туры): {form}"
+    )
+
+
+async def build_mvp_round_text(round_number: int) -> str:
+    rows, participants = await build_round_leaderboard(round_number)
+    if not rows:
+        return f"В туре {round_number} пока нет данных для MVP."
+    best = rows[0]["total"]
+    winners = [r for r in rows if r["total"] == best]
+    lines = [f"🏅 MVP тура {round_number}"]
+    lines.append(f"Участников: {participants}")
+    for w in winners[:5]:
+        lines.append(f"{w['name']} — {w['total']} очк. | 🎯{w['exact']} | 📏{w['diff']} | ✅{w['outcome']}")
+    return "\n".join(lines)
+
+
+async def build_round_tops_text(round_number: int) -> str:
+    rows, participants = await build_round_leaderboard(round_number)
+    if not rows:
+        return f"В туре {round_number} пока нет данных для топов."
+
+    def top_by(key: str) -> list[dict]:
+        mx = max(int(r[key]) for r in rows)
+        return [r for r in rows if int(r[key]) == mx and mx > 0]
+
+    exact_top = top_by("exact")
+    diff_top = top_by("diff")
+    outcome_top = top_by("outcome")
+
+    def names(items: list[dict]) -> str:
+        return ", ".join(i["name"] for i in items[:3]) if items else "—"
+
+    lines = [f"📊 Топы тура {round_number}", f"Участников: {participants}", ""]
+    lines.append(f"🎯 Точные: {names(exact_top)}")
+    lines.append(f"📏 Разница+исход: {names(diff_top)}")
+    lines.append(f"✅ Только исход: {names(outcome_top)}")
+    return "\n".join(lines)
+
+
 def register_user_handlers(dp: Dispatcher):
+    @dp.message(Command("history"))
+    async def cmd_history(message: types.Message):
+        await message.answer("🗂 История туров: выбери тур", reply_markup=build_round_history_keyboard())
+
+    @dp.callback_query(F.data.startswith("history_round:"))
+    async def on_history_round(callback: types.CallbackQuery):
+        data = callback.data or ""
+        try:
+            round_number = int(data.split(":", 1)[1])
+        except Exception:
+            await callback.answer("Ошибка выбора тура", show_alert=True)
+            return
+        text = await build_round_matches_text(round_number)
+        await callback.message.answer(text)
+        await callback.answer()
+
+    @dp.message(Command("profile"))
+    async def cmd_profile(message: types.Message):
+        async with SessionLocal() as session:
+            await upsert_user_from_message(session, message)
+        text = await build_profile_text(message.from_user.id)
+        await message.answer(text)
+
+    @dp.message(Command("mvp_round"))
+    async def cmd_mvp_round(message: types.Message):
+        default_round = await get_current_round_default()
+        parts = (message.text or "").strip().split()
+        if len(parts) == 1:
+            round_number = default_round
+        elif len(parts) == 2:
+            try:
+                round_number = int(parts[1])
+            except ValueError:
+                await message.answer(f"Номер тура должен быть числом. Пример: /mvp_round {default_round}")
+                return
+        else:
+            await message.answer(f"Формат: /mvp_round {default_round}")
+            return
+
+        if not is_tournament_round(round_number):
+            await message.answer(f"Можно использовать только туры {ROUND_MIN}..{ROUND_MAX}. Пример: /mvp_round {default_round}")
+            return
+
+        await message.answer(await build_mvp_round_text(round_number))
+
+    @dp.message(Command("tops_round"))
+    async def cmd_tops_round(message: types.Message):
+        default_round = await get_current_round_default()
+        parts = (message.text or "").strip().split()
+        if len(parts) == 1:
+            round_number = default_round
+        elif len(parts) == 2:
+            try:
+                round_number = int(parts[1])
+            except ValueError:
+                await message.answer(f"Номер тура должен быть числом. Пример: /tops_round {default_round}")
+                return
+        else:
+            await message.answer(f"Формат: /tops_round {default_round}")
+            return
+
+        if not is_tournament_round(round_number):
+            await message.answer(f"Можно использовать только туры {ROUND_MIN}..{ROUND_MAX}. Пример: /tops_round {default_round}")
+            return
+
+        await message.answer(await build_round_tops_text(round_number))
+
     @dp.message(F.text == "📘 Правила")
     async def quick_rules(message: types.Message):
         await message.answer(
@@ -494,6 +709,10 @@ def register_user_handlers(dp: Dispatcher):
             "/my N - мои прогнозы на тур\n"
             "/table - общая таблица лидеров\n"
             "/table_round N - таблица лидеров за тур\n"
+            "/history - история туров кнопками\n"
+            "/profile - мой профиль и мини-аналитика\n"
+            "/mvp_round N - MVP тура (N необязателен)\n"
+            "/tops_round N - топы тура по категориям\n"
             "/stats - подробная статистика\n"
             "/ping - проверка\n\n"
             f"Сейчас для старта: тур {default_round}"
@@ -527,32 +746,7 @@ def register_user_handlers(dp: Dispatcher):
             await message.answer(f"Можно использовать только туры {ROUND_MIN}..{ROUND_MAX}. Пример: /round {default_round}")
             return
 
-        now = now_msk_naive()
-
-        async with SessionLocal() as session:
-            result = await session.execute(
-                select(Match).where(Match.round_number == round_number, Match.source == "manual").order_by(Match.kickoff_time.asc())
-            )
-            matches = result.scalars().all()
-
-        if not matches:
-            await message.answer(f"В туре {round_number} пока нет матчей.")
-            return
-
-        lines = [f"📅 Тур {round_number} (МСК)"]
-        for m in matches:
-            icon = match_status_icon(m, now)
-            score = ""
-            if m.home_score is not None and m.away_score is not None:
-                score = f" | {m.home_score}:{m.away_score}"
-
-            lines.append(
-                f"{icon} #{m.id} {m.home_team} — {m.away_team} | {m.kickoff_time.strftime('%d.%m %H:%M')}{score}"
-            )
-        lines.append("")
-        lines.append("🟢 прогноз открыт · 🔒 прогноз закрыт · ✅ есть итог")
-
-        await send_long(message, "\n".join(lines))
+        await send_long(message, await build_round_matches_text(round_number))
 
     @dp.message(Command("predict"))
     async def cmd_predict(message: types.Message):
