@@ -40,7 +40,7 @@ async def main():
     await init_db()
 
     bot_token = os.getenv("BOT_TOKEN", "")
-    print("BOT_TOKEN detected:", _mask_token(bot_token))
+    print("BOT_TOKEN detected:", _mask_token(bot_token), flush=True)
 
     if not bot_token.strip():
         raise RuntimeError("BOT_TOKEN is not set in environment variables")
