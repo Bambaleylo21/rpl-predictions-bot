@@ -30,7 +30,14 @@ async def build_stats_text(tournament_id: int | None = None) -> str:
     # Мапа tg_user_id -> имя
     names = {}
     for u in users:
-        names[u.tg_user_id] = u.username if u.username else str(u.tg_user_id)
+        if u.display_name:
+            names[u.tg_user_id] = u.display_name
+        elif u.username:
+            names[u.tg_user_id] = f"@{u.username}"
+        elif u.full_name:
+            names[u.tg_user_id] = u.full_name
+        else:
+            names[u.tg_user_id] = str(u.tg_user_id)
 
     # Считаем по пользователям
     per_user = defaultdict(lambda: {"total": 0, "exact": 0, "diff": 0, "outcome": 0, "none": 0, "cnt": 0})

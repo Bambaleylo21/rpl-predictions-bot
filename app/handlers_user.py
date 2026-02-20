@@ -16,6 +16,7 @@ from app.my_predictions import build_my_round_text
 class PredictRoundStates(StatesGroup):
     waiting_for_predictions_block = State()
     waiting_for_single_match_score = State()
+    waiting_for_display_name = State()
 
 
 DEFAULT_TOURNAMENT_CODE = "RPL"
@@ -176,12 +177,21 @@ def build_round_history_keyboard(round_min: int, round_max: int) -> types.Inline
     return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def format_user_name(username: str | None, full_name: str | None, tg_user_id: int) -> str:
+def format_user_name(display_name: str | None, username: str | None, full_name: str | None, tg_user_id: int) -> str:
+    if display_name:
+        return display_name
     if username:
         return f"@{username}"
     if full_name:
         return full_name
     return str(tg_user_id)
+
+
+def normalize_display_name(raw: str) -> str | None:
+    name = " ".join((raw or "").strip().split())
+    if len(name) < 2 or len(name) > 24:
+        return None
+    return name
 
 
 # Telegram ограничивает длину одного сообщения (примерно 4096 символов).
@@ -357,6 +367,7 @@ async def build_overall_leaderboard(tournament_id: int) -> tuple[list[dict], int
         q = await session.execute(
             select(
                 User.tg_user_id,
+                User.display_name,
                 User.username,
                 User.full_name,
                 func.coalesce(func.sum(Point.points), 0).label("total"),
@@ -369,16 +380,16 @@ async def build_overall_leaderboard(tournament_id: int) -> tuple[list[dict], int
             .outerjoin(Point, Point.tg_user_id == User.tg_user_id)
             .outerjoin(Match, Match.id == Point.match_id)
             .where((Match.id.is_(None)) | ((Match.tournament_id == tournament_id) & (Match.source == "manual")))
-            .group_by(User.tg_user_id, User.username, User.full_name)
+            .group_by(User.tg_user_id, User.display_name, User.username, User.full_name)
             .order_by(func.coalesce(func.sum(Point.points), 0).desc())
         )
 
         rows = []
-        for tg_user_id, username, full_name, total, exact, diff, outcome in q.all():
+        for tg_user_id, display_name, username, full_name, total, exact, diff, outcome in q.all():
             rows.append(
                 {
                     "tg_user_id": tg_user_id,
-                    "name": format_user_name(username, full_name, tg_user_id),
+                    "name": format_user_name(display_name, username, full_name, tg_user_id),
                     "total": int(total),
                     "exact": int(exact),
                     "diff": int(diff),
@@ -402,6 +413,7 @@ async def build_round_leaderboard(round_number: int, tournament_id: int) -> tupl
         q = await session.execute(
             select(
                 User.tg_user_id,
+                User.display_name,
                 User.username,
                 User.full_name,
                 func.coalesce(func.sum(Point.points), 0).label("total"),
@@ -414,16 +426,16 @@ async def build_round_leaderboard(round_number: int, tournament_id: int) -> tupl
             .join(Match, Match.id == Prediction.match_id)
             .outerjoin(Point, (Point.tg_user_id == User.tg_user_id) & (Point.match_id == Match.id))
             .where(Match.round_number == round_number, Match.source == "manual", Match.tournament_id == tournament_id)
-            .group_by(User.tg_user_id, User.username, User.full_name)
+            .group_by(User.tg_user_id, User.display_name, User.username, User.full_name)
             .order_by(func.coalesce(func.sum(Point.points), 0).desc())
         )
 
         rows = []
-        for tg_user_id, username, full_name, total, exact, diff, outcome in q.all():
+        for tg_user_id, display_name, username, full_name, total, exact, diff, outcome in q.all():
             rows.append(
                 {
                     "tg_user_id": tg_user_id,
-                    "name": format_user_name(username, full_name, tg_user_id),
+                    "name": format_user_name(display_name, username, full_name, tg_user_id),
                     "total": int(total),
                     "exact": int(exact),
                     "diff": int(diff),
@@ -525,7 +537,7 @@ async def build_profile_text(tg_user_id: int, tournament_id: int, tournament_nam
 
     avg_per_round = round((total / len(rounds)), 2) if rounds else 0.0
     form = " | ".join([f"Т{int(r[0])}:{int(r[1])}" for r in rounds[:3]]) if rounds else "нет данных"
-    name = format_user_name(user.username, user.full_name, tg_user_id)
+    name = format_user_name(user.display_name, user.username, user.full_name, tg_user_id)
     return (
         f"👤 Профиль: {name}\n"
         f"Турнир: {tournament_name}\n"
@@ -688,14 +700,21 @@ def register_user_handlers(dp: Dispatcher):
         await state.update_data(round_number=round_number)
         await send_long(message, "\n".join(lines))
 
+    async def _request_display_name_for_join(message: types.Message, state: FSMContext, tournament: Tournament) -> None:
+        await state.set_state(PredictRoundStates.waiting_for_display_name)
+        await state.update_data(join_tournament_id=tournament.id, join_tournament_name=tournament.name)
+        await message.answer(
+            f"Вступление в {tournament.name}.\n"
+            "Введи имя для таблицы (2-24 символа).\n"
+            "Пример: Роман"
+        )
+
     @dp.message(F.text == "✅ Вступить в турнир")
-    async def btn_join(message: types.Message):
+    async def btn_join(message: types.Message, state: FSMContext):
         async with SessionLocal() as session:
             await upsert_user_from_message(session, message)
             tournament = await get_selected_tournament_for_user(session, message.from_user.id)
-            await ensure_user_membership(session, message.from_user.id, tournament.id)
-            await session.commit()
-        await message.answer(f"✅ Ты в турнире: {tournament.name}")
+        await _request_display_name_for_join(message, state, tournament)
 
     @dp.message(F.text == "📅 Матчи тура")
     async def btn_round(message: types.Message):
@@ -993,6 +1012,45 @@ def register_user_handlers(dp: Dispatcher):
         await state.clear()
         await message.answer(f"✅ Прогноз: {match.home_team} — {match.away_team} | {pred_home}:{pred_away}")
 
+    @dp.message(PredictRoundStates.waiting_for_display_name)
+    async def on_display_name_input(message: types.Message, state: FSMContext):
+        display_name = normalize_display_name(message.text or "")
+        if display_name is None:
+            await message.answer("Имя должно быть длиной 2-24 символа. Попробуй ещё раз.")
+            return
+
+        data = await state.get_data()
+        tournament_id = int(data.get("join_tournament_id") or 0)
+        tournament_name = str(data.get("join_tournament_name") or "")
+
+        async with SessionLocal() as session:
+            await upsert_user_from_message(session, message)
+
+            user_q = await session.execute(select(User).where(User.tg_user_id == message.from_user.id))
+            user = user_q.scalar_one_or_none()
+            if user is None:
+                await state.clear()
+                await message.answer("Не удалось обновить профиль. Попробуй /join ещё раз.")
+                return
+            user.display_name = display_name
+
+            tournament = None
+            if tournament_id > 0:
+                t_q = await session.execute(select(Tournament).where(Tournament.id == tournament_id))
+                tournament = t_q.scalar_one_or_none()
+            if tournament is None:
+                tournament = await get_selected_tournament_for_user(session, message.from_user.id)
+
+            await ensure_user_membership(session, message.from_user.id, tournament.id)
+            await session.commit()
+
+        await state.clear()
+        t_name = tournament_name or tournament.name
+        await message.answer(
+            f"✅ Ты в турнире: {t_name}\n"
+            f"Имя в таблице: {display_name}"
+        )
+
     @dp.message(CommandStart())
     async def cmd_start(message: types.Message):
         tournament, default_round = await _get_user_tournament_context(message.from_user.id)
@@ -1024,13 +1082,11 @@ def register_user_handlers(dp: Dispatcher):
         await message.answer("pong ✅")
 
     @dp.message(Command("join"))
-    async def cmd_join(message: types.Message):
+    async def cmd_join(message: types.Message, state: FSMContext):
         async with SessionLocal() as session:
             await upsert_user_from_message(session, message)
             tournament = await get_selected_tournament_for_user(session, message.from_user.id)
-            await ensure_user_membership(session, message.from_user.id, tournament.id)
-            await session.commit()
-        await message.answer(f"✅ Ты в турнире: {tournament.name}")
+        await _request_display_name_for_join(message, state, tournament)
 
     @dp.message(Command("round"))
     async def cmd_round(message: types.Message):
