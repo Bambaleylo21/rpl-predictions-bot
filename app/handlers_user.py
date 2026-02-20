@@ -24,7 +24,7 @@ def build_main_menu_keyboard(default_round: int = ROUND_DEFAULT) -> types.ReplyK
         keyboard=[
             [types.KeyboardButton(text="✅ Вступить в турнир"), types.KeyboardButton(text="📅 Матчи тура")],
             [types.KeyboardButton(text="🎯 Поставить прогноз")],
-            [types.KeyboardButton(text="🧾 Прогнозы на тур"), types.KeyboardButton(text="🗂 Мои прогнозы")],
+            [types.KeyboardButton(text="🗂 Мои прогнозы")],
             [types.KeyboardButton(text="🏆 Общая таблица"), types.KeyboardButton(text="📊 Статистика")],
             [types.KeyboardButton(text="👤 Мой профиль"), types.KeyboardButton(text="🗓 История туров")],
             [types.KeyboardButton(text="🥇 MVP тура"), types.KeyboardButton(text="⭐ Топы тура")],
@@ -360,7 +360,7 @@ async def build_round_matches_text(round_number: int, now: datetime | None = Non
         score = ""
         if m.home_score is not None and m.away_score is not None:
             score = f" | {m.home_score}:{m.away_score}"
-        lines.append(f"{icon} #{m.id} {m.home_team} — {m.away_team} | {m.kickoff_time.strftime('%d.%m %H:%M')}{score}")
+        lines.append(f"{icon} {m.home_team} — {m.away_team} | {m.kickoff_time.strftime('%d.%m %H:%M')}{score}")
     lines.append("")
     lines.append("🟢 прогноз открыт · 🔒 прогноз закрыт · ✅ есть итог")
     return "\n".join(lines)
@@ -539,11 +539,6 @@ def register_user_handlers(dp: Dispatcher):
     async def btn_round(message: types.Message):
         default_round = await get_current_round_default()
         await send_long(message, await build_round_matches_text(default_round))
-
-    @dp.message(F.text == "🧾 Прогнозы на тур")
-    async def btn_predict_round(message: types.Message, state: FSMContext):
-        default_round = await get_current_round_default()
-        await _open_predict_round(message, state, default_round)
 
     @dp.message(F.text == "🗂 Мои прогнозы")
     async def btn_my(message: types.Message):
