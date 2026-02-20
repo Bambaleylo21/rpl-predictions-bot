@@ -8,7 +8,7 @@ from sqlalchemy import case, func, select
 from datetime import datetime, timedelta
 
 from app.db import SessionLocal
-from app.models import User, Match, Prediction, Point
+from app.models import Match, Point, Prediction, Tournament, User, UserTournament
 from app.stats import build_stats_text
 from app.my_predictions import build_my_round_text
 from app.tournament import ROUND_DEFAULT, ROUND_MAX, ROUND_MIN, is_tournament_round
@@ -187,6 +187,20 @@ async def upsert_user_from_message(session, message: types.Message):
     else:
         user.username = username
         user.full_name = full_name
+
+    # Этап 1 мульти-турниров: по умолчанию добавляем пользователя в RPL.
+    rpl_q = await session.execute(select(Tournament).where(Tournament.code == "RPL"))
+    rpl = rpl_q.scalar_one_or_none()
+    if rpl is not None:
+        membership_q = await session.execute(
+            select(UserTournament).where(
+                UserTournament.tg_user_id == tg_user_id,
+                UserTournament.tournament_id == rpl.id,
+            )
+        )
+        membership = membership_q.scalar_one_or_none()
+        if membership is None:
+            session.add(UserTournament(tg_user_id=tg_user_id, tournament_id=rpl.id))
 
     await session.commit()
 

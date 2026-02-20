@@ -26,10 +26,54 @@ class User(Base):
     )
 
 
+class Tournament(Base):
+    __tablename__ = "tournaments"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(16), unique=True, index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    round_min: Mapped[int] = mapped_column(Integer, nullable=False)
+    round_max: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_active: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        server_default=func.now(),
+    )
+
+
+class UserTournament(Base):
+    __tablename__ = "user_tournaments"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    tg_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    tournament_id: Mapped[int] = mapped_column(ForeignKey("tournaments.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tg_user_id", "tournament_id", name="uq_user_tournaments_user_tournament"),
+    )
+
+
 class Match(Base):
     __tablename__ = "matches"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    tournament_id: Mapped[int] = mapped_column(
+        ForeignKey("tournaments.id", ondelete="RESTRICT"),
+        nullable=False,
+        default=1,
+        server_default="1",
+        index=True,
+    )
     round_number: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
 
     home_team: Mapped[str] = mapped_column(String(64), nullable=False)

@@ -4,7 +4,7 @@ from datetime import datetime
 from sqlalchemy import delete, func, select
 
 from app.db import SessionLocal, init_db
-from app.models import Match, Point, Prediction
+from app.models import Match, Point, Prediction, Tournament
 
 SCHEDULE = {
     19: [
@@ -68,8 +68,14 @@ async def main() -> None:
     deleted_unused = 0
 
     async with SessionLocal() as session:
+        t_q = await session.execute(select(Tournament).where(Tournament.code == "RPL"))
+        rpl = t_q.scalar_one_or_none()
+        if rpl is None:
+            print("ERROR: RPL tournament not found")
+            return
+
         existing_q = await session.execute(
-            select(Match).where(Match.round_number >= 19, Match.round_number <= 22)
+            select(Match).where(Match.round_number >= 19, Match.round_number <= 22, Match.tournament_id == rpl.id)
         )
         existing = existing_q.scalars().all()
 
@@ -90,7 +96,7 @@ async def main() -> None:
             deleted_unused += 1
 
         existing_q2 = await session.execute(
-            select(Match).where(Match.round_number >= 19, Match.round_number <= 22)
+            select(Match).where(Match.round_number >= 19, Match.round_number <= 22, Match.tournament_id == rpl.id)
         )
         existing2 = existing_q2.scalars().all()
         by_full = {
@@ -116,12 +122,16 @@ async def main() -> None:
                 if row.source != "manual":
                     row.source = "manual"
                     changed = True
+                if row.tournament_id != rpl.id:
+                    row.tournament_id = rpl.id
+                    changed = True
                 if changed:
                     updated += 1
                 continue
 
             session.add(
                 Match(
+                    tournament_id=rpl.id,
                     round_number=rnd,
                     home_team=home,
                     away_team=away,
@@ -134,7 +144,13 @@ async def main() -> None:
         await session.commit()
 
         for rnd in (19, 20, 21, 22):
-            cnt_q = await session.execute(select(func.count(Match.id)).where(Match.round_number == rnd, Match.source == "manual"))
+            cnt_q = await session.execute(
+                select(func.count(Match.id)).where(
+                    Match.round_number == rnd,
+                    Match.source == "manual",
+                    Match.tournament_id == rpl.id,
+                )
+            )
             print(f"ROUND_{rnd}_MANUAL={int(cnt_q.scalar_one() or 0)}")
 
     print(f"INSERTED={inserted}")

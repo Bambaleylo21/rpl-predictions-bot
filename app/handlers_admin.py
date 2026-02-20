@@ -8,7 +8,7 @@ from sqlalchemy import delete, select, func
 
 from app.config import load_admin_ids
 from app.db import SessionLocal
-from app.models import Match, Prediction, Point, User, Setting
+from app.models import Match, Prediction, Point, User, Setting, Tournament
 from app.scoring import calculate_points
 from app.tournament import ROUND_DEFAULT, ROUND_MAX, ROUND_MIN, is_tournament_round
 
@@ -164,7 +164,12 @@ async def admin_add_match(message: types.Message):
         return
 
     async with SessionLocal() as session:
+        t_q = await session.execute(select(Tournament).where(Tournament.code == "RPL"))
+        rpl = t_q.scalar_one_or_none()
+        tournament_id = rpl.id if rpl is not None else 1
+
         m = Match(
+            tournament_id=tournament_id,
             round_number=round_number,
             home_team=home,
             away_team=away,
