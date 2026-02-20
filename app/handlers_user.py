@@ -30,256 +30,273 @@ def format_user_name(username: str | None, full_name: str | None, tg_user_id: in
     return str(tg_user_id)
 
 
-async def upsert_user_from_message(session, message: types.Message) -> tuple[bool, str]:
-    if not message.from_user:
-        return False, "unknown"
+# Telegram ограничивает длину одного сообщения (примерно 4096 символов).
+# Если текст длиннее — Telegram вернёт ошибку "Bad Request: text is too long".
+MAX_TELEGRAM_TEXT = 3800
 
+
+def _split_text_for_telegram(text: str, max_len: int = MAX_TELEGRAM_TEXT) -> list[str]:
+    text = (text or "").strip()
+    if not text:
+        return [""]
+    if len(text) <= max_len:
+        return [text]
+
+    chunks: list[str] = []
+    buf: list[str] = []
+    buf_len = 0
+
+    # Режем по строкам, стараясь не ломать форматирование
+    for line in text.split("\n"):
+        # +1 за символ переноса строки (если он будет добавлен)
+        add_len = len(line) + (1 if buf else 0)
+
+        if buf_len + add_len <= max_len:
+            if buf:
+                buf.append(line)
+                buf_len += add_len
+            else:
+                buf = [line]
+                buf_len = len(line)
+            continue
+
+        # Если текущий буфер не пуст — закрываем его
+        if buf:
+            chunks.append("\n".join(buf).strip())
+            buf = []
+            buf_len = 0
+
+        # Если одна строка сама по себе слишком длинная — режем её по символам
+        if len(line) > max_len:
+            start = 0
+            while start < len(line):
+                chunks.append(line[start:start + max_len])
+                start += max_len
+        else:
+            buf = [line]
+            buf_len = len(line)
+
+    if buf:
+        chunks.append("\n".join(buf).strip())
+
+    return [c for c in chunks if c]
+
+
+async def send_long(message: types.Message, text: str) -> None:
+    for chunk in _split_text_for_telegram(text):
+        await message.answer(chunk)
+
+
+async def upsert_user_from_message(session, message: types.Message):
     tg_user_id = message.from_user.id
     username = message.from_user.username
-    full_name = message.from_user.full_name
+    full_name = f"{message.from_user.first_name or ''} {message.from_user.last_name or ''}".strip() or None
 
-    result = await session.execute(select(User).where(User.tg_user_id == tg_user_id))
-    user = result.scalar_one_or_none()
+    existing = await session.execute(select(User).where(User.tg_user_id == tg_user_id))
+    user = existing.scalar_one_or_none()
 
-    created = False
     if user is None:
-        session.add(User(tg_user_id=tg_user_id, username=username, full_name=full_name))
-        created = True
+        user = User(tg_user_id=tg_user_id, username=username, full_name=full_name)
+        session.add(user)
     else:
         user.username = username
         user.full_name = full_name
 
     await session.commit()
-    return created, format_user_name(username, full_name, tg_user_id)
 
 
-def normalize_score(score_str: str) -> str:
-    return score_str.strip().replace("-", ":")
+def normalize_score(s: str) -> str:
+    s = s.strip()
+    s = s.replace("-", ":")
+    return s
 
 
-def parse_score(score_str: str) -> tuple[int, int] | None:
-    if ":" not in score_str:
+def parse_score(s: str) -> tuple[int, int] | None:
+    if ":" not in s:
         return None
+    a, b = s.split(":", 1)
     try:
-        h, a = score_str.split(":")
-        home = int(h)
-        away = int(a)
-    except Exception:
+        return int(a), int(b)
+    except ValueError:
         return None
-    if home < 0 or away < 0:
-        return None
-    return home, away
 
 
 def match_status_icon(match: Match, now: datetime) -> str:
+    # ✅ если есть итог
     if match.home_score is not None and match.away_score is not None:
         return "✅"
+    # 🔒 если матч начался/прошёл и итога нет
     if match.kickoff_time <= now:
         return "🔒"
+    # 🟢 если прогноз открыт
     return "🟢"
-
-
-async def _get_user_name_map(user_ids: set[int]) -> dict[int, str]:
-    if not user_ids:
-        return {}
-
-    async with SessionLocal() as session:
-        res_users = await session.execute(select(User).where(User.tg_user_id.in_(user_ids)))
-        users = res_users.scalars().all()
-
-    mp: dict[int, str] = {uid: str(uid) for uid in user_ids}
-    for u in users:
-        mp[u.tg_user_id] = format_user_name(u.username, u.full_name, u.tg_user_id)
-    return mp
-
-
-async def build_leaderboard_for_round(round_number: int) -> tuple[list[dict], int]:
-    """
-    Таблица за тур: только те, у кого есть хотя бы 1 прогноз в этом туре.
-    """
-    async with SessionLocal() as session:
-        res_matches = await session.execute(select(Match).where(Match.round_number == round_number))
-        matches = res_matches.scalars().all()
-
-        match_ids = [m.id for m in matches]
-        if not match_ids:
-            return [], 0
-
-        res_part = await session.execute(
-            select(Prediction.tg_user_id).where(Prediction.match_id.in_(match_ids)).distinct()
-        )
-        participant_ids = {int(x[0]) for x in res_part.all()}
-
-        if not participant_ids:
-            return [], 0
-
-        res_points = await session.execute(
-            select(Point).where(Point.match_id.in_(match_ids), Point.tg_user_id.in_(participant_ids))
-        )
-        points_rows = res_points.scalars().all()
-
-    name_map = await _get_user_name_map(participant_ids)
-
-    stats: dict[int, dict] = {}
-    for uid in participant_ids:
-        stats[uid] = {"name": name_map.get(uid, str(uid)), "total": 0, "exact": 0, "diff": 0, "outcome": 0}
-
-    for r in points_rows:
-        stats[r.tg_user_id]["total"] += int(r.points)
-        if r.category == "exact":
-            stats[r.tg_user_id]["exact"] += 1
-        elif r.category == "diff":
-            stats[r.tg_user_id]["diff"] += 1
-        elif r.category == "outcome":
-            stats[r.tg_user_id]["outcome"] += 1
-
-    rows = list(stats.values())
-    rows.sort(key=lambda x: (x["total"], x["exact"], x["diff"], x["outcome"]), reverse=True)
-    return rows, len(participant_ids)
-
-
-async def build_overall_leaderboard() -> tuple[list[dict], int]:
-    """
-    Общая таблица: только те, у кого есть хотя бы 1 прогноз вообще.
-    """
-    async with SessionLocal() as session:
-        res_part = await session.execute(select(Prediction.tg_user_id).distinct())
-        participant_ids = {int(x[0]) for x in res_part.all()}
-
-        if not participant_ids:
-            return [], 0
-
-        res_points = await session.execute(select(Point).where(Point.tg_user_id.in_(participant_ids)))
-        points_rows = res_points.scalars().all()
-
-    name_map = await _get_user_name_map(participant_ids)
-
-    stats: dict[int, dict] = {}
-    for uid in participant_ids:
-        stats[uid] = {"name": name_map.get(uid, str(uid)), "total": 0, "exact": 0, "diff": 0, "outcome": 0}
-
-    for r in points_rows:
-        stats[r.tg_user_id]["total"] += int(r.points)
-        if r.category == "exact":
-            stats[r.tg_user_id]["exact"] += 1
-        elif r.category == "diff":
-            stats[r.tg_user_id]["diff"] += 1
-        elif r.category == "outcome":
-            stats[r.tg_user_id]["outcome"] += 1
-
-    rows = list(stats.values())
-    rows.sort(key=lambda x: (x["total"], x["exact"], x["diff"], x["outcome"]), reverse=True)
-    return rows, len(participant_ids)
-
-
-async def get_round_total_points_for_user(tg_user_id: int, round_number: int) -> int:
-    async with SessionLocal() as session:
-        res = await session.execute(
-            select(func.coalesce(func.sum(Point.points), 0))
-            .join(Match, Point.match_id == Match.id)
-            .where(Match.round_number == round_number, Point.tg_user_id == tg_user_id)
-        )
-        total = res.scalar_one()
-    return int(total or 0)
-
-
-async def get_matches_played_stats() -> tuple[int, int]:
-    async with SessionLocal() as session:
-        total_res = await session.execute(select(func.count(Match.id)))
-        total = int(total_res.scalar_one() or 0)
-
-        played_res = await session.execute(
-            select(func.count(Match.id)).where(Match.home_score.is_not(None), Match.away_score.is_not(None))
-        )
-        played = int(played_res.scalar_one() or 0)
-
-    return played, total
 
 
 async def round_has_matches(round_number: int) -> bool:
     async with SessionLocal() as session:
-        res = await session.execute(select(func.count(Match.id)).where(Match.round_number == round_number))
-        cnt = int(res.scalar_one() or 0)
-    return cnt > 0
+        result = await session.execute(select(func.count(Match.id)).where(Match.round_number == round_number))
+        cnt = result.scalar_one()
+        return cnt > 0
 
 
-def register_user_handlers(dp: Dispatcher) -> None:
-    # ✅ Глобальный перехват ошибок: пользователю коротко, детали — в логах Render
-    @dp.error()
-    async def on_error(event: types.ErrorEvent):
-        try:
-            print("UNHANDLED ERROR:", repr(event.exception))
-        except Exception:
-            pass
+async def get_round_total_points_for_user(tg_user_id: int, round_number: int) -> int:
+    async with SessionLocal() as session:
+        q = await session.execute(
+            select(func.coalesce(func.sum(Point.points), 0))
+            .select_from(Point)
+            .join(Match, Match.id == Point.match_id)
+            .where(Point.tg_user_id == tg_user_id, Match.round_number == round_number)
+        )
+        return int(q.scalar_one())
 
-        upd = event.update
-        if upd and upd.message:
-            try:
-                await upd.message.answer("⚠️ Команда временно недоступна. Попробуйте позже.")
-            except Exception:
-                pass
-        return True
+
+async def get_matches_played_stats() -> tuple[int, int]:
+    async with SessionLocal() as session:
+        total_q = await session.execute(select(func.count(Match.id)))
+        total = int(total_q.scalar_one())
+
+        played_q = await session.execute(
+            select(func.count(Match.id)).where(Match.home_score.isnot(None), Match.away_score.isnot(None))
+        )
+        played = int(played_q.scalar_one())
+
+    return played, total
+
+
+async def build_overall_leaderboard() -> tuple[list[dict], int]:
+    async with SessionLocal() as session:
+        # Только участники, у которых есть хотя бы 1 прогноз (по сути — есть points или predictions)
+        participants_q = await session.execute(select(func.count(func.distinct(Prediction.tg_user_id))))
+        participants = int(participants_q.scalar_one())
+
+        q = await session.execute(
+            select(
+                User.tg_user_id,
+                User.username,
+                User.full_name,
+                func.coalesce(func.sum(Point.points), 0).label("total"),
+                func.coalesce(func.sum(Point.exact), 0).label("exact"),
+                func.coalesce(func.sum(Point.diff), 0).label("diff"),
+                func.coalesce(func.sum(Point.outcome), 0).label("outcome"),
+            )
+            .select_from(User)
+            .join(Prediction, Prediction.tg_user_id == User.tg_user_id)
+            .outerjoin(Point, Point.tg_user_id == User.tg_user_id)
+            .group_by(User.tg_user_id)
+            .order_by(func.coalesce(func.sum(Point.points), 0).desc())
+        )
+
+        rows = []
+        for tg_user_id, username, full_name, total, exact, diff, outcome in q.all():
+            rows.append(
+                {
+                    "tg_user_id": tg_user_id,
+                    "name": format_user_name(username, full_name, tg_user_id),
+                    "total": int(total),
+                    "exact": int(exact),
+                    "diff": int(diff),
+                    "outcome": int(outcome),
+                }
+            )
+
+        return rows, participants
+
+
+async def build_round_leaderboard(round_number: int) -> tuple[list[dict], int]:
+    async with SessionLocal() as session:
+        participants_q = await session.execute(
+            select(func.count(func.distinct(Prediction.tg_user_id)))
+            .select_from(Prediction)
+            .join(Match, Match.id == Prediction.match_id)
+            .where(Match.round_number == round_number)
+        )
+        participants = int(participants_q.scalar_one())
+
+        q = await session.execute(
+            select(
+                User.tg_user_id,
+                User.username,
+                User.full_name,
+                func.coalesce(func.sum(Point.points), 0).label("total"),
+                func.coalesce(func.sum(Point.exact), 0).label("exact"),
+                func.coalesce(func.sum(Point.diff), 0).label("diff"),
+                func.coalesce(func.sum(Point.outcome), 0).label("outcome"),
+            )
+            .select_from(User)
+            .join(Prediction, Prediction.tg_user_id == User.tg_user_id)
+            .join(Match, Match.id == Prediction.match_id)
+            .outerjoin(Point, (Point.tg_user_id == User.tg_user_id) & (Point.match_id == Match.id))
+            .where(Match.round_number == round_number)
+            .group_by(User.tg_user_id)
+            .order_by(func.coalesce(func.sum(Point.points), 0).desc())
+        )
+
+        rows = []
+        for tg_user_id, username, full_name, total, exact, diff, outcome in q.all():
+            rows.append(
+                {
+                    "tg_user_id": tg_user_id,
+                    "name": format_user_name(username, full_name, tg_user_id),
+                    "total": int(total),
+                    "exact": int(exact),
+                    "diff": int(diff),
+                    "outcome": int(outcome),
+                }
+            )
+
+        return rows, participants
+
+
+def register_user_handlers(dp: Dispatcher):
 
     @dp.message(CommandStart())
     async def cmd_start(message: types.Message):
-        async with SessionLocal() as session:
-            created, display = await upsert_user_from_message(session, message)
-
         await message.answer(
-            (
-                f"✅ Ты зарегистрирован в турнире: {display}\n\n"
-                if created
-                else f"✅ Твои данные обновлены: {display}\n\n"
-            )
-            + "Привет! Я бот турнира прогнозов РПЛ ⚽️\n\n"
-            "⏰ Время матчей и дедлайны — по Москве (МСК).\n"
-            "⛔️ После начала матча прогноз ставить/менять нельзя.\n\n"
-            "Команды:\n"
+            "Привет! Это бот турнира прогнозов РПЛ.\n\n"
+            "Основные команды:\n"
             "/join — вступить в турнир\n"
-            "/round 1 — матчи тура\n"
-            "/predict 1 2:0 — прогноз на матч\n"
-            "/predict_round 1 — прогнозы на тур одним сообщением\n"
-            "/my 1 — мои прогнозы на тур\n"
-            "/table — общая таблица\n"
-            "/table_round 1 — таблица за тур\n"
-            "/stats — подробная статистика\n"
-            "/help — помощь"
+            "/round N — матчи тура\n"
+            "/predict <match_id> <счёт> — прогноз на матч\n"
+            "/predict_round N — прогнозы на тур (пакетом)\n"
+            "/my N — мои прогнозы на тур\n"
+            "/table — общая таблица лидеров\n"
+            "/table_round N — таблица лидеров тура\n"
+            "/stats — статистика\n"
+            "/ping — проверка связи\n\n"
+            "Очки:\n"
+            "🎯 точный счёт — 4\n"
+            "📏 разница + исход — 2\n"
+            "✅ только исход — 1\n"
+            "❌ мимо — 0\n\n"
+            "Время матчей и дедлайны — по Москве (МСК).\n"
+            "⛔️ После начала матча прогноз ставить/менять нельзя.\n"
+            "✅ Можно вводить счет как 2:0 или 2-0."
         )
-
-    @dp.message(Command("join"))
-    async def cmd_join(message: types.Message):
-        async with SessionLocal() as session:
-            created, display = await upsert_user_from_message(session, message)
-
-        if created:
-            await message.answer(f"✅ Добро пожаловать! Ты в турнире: {display}")
-        else:
-            await message.answer(f"✅ Уже в турнире. Данные обновлены: {display}")
 
     @dp.message(Command("help"))
     async def cmd_help(message: types.Message):
         await message.answer(
-            "📌 Команды:\n"
-            "/start — начать\n"
+            "Команды:\n"
             "/join — вступить в турнир\n"
-            "/help — помощь\n"
-            "/ping — проверка\n"
-            "/round N — матчи тура (пример: /round 1)\n"
-            "/predict <match_id> <счет> — прогноз (пример: /predict 1 2:0)\n"
-            "/predict_round N — прогнозы на тур одним сообщением (пример: /predict_round 1)\n"
-            "/my N — мои прогнозы на тур (пример: /my 1)\n"
+            "/round N — матчи тура\n"
+            "/predict <match_id> <счёт> — прогноз на матч\n"
+            "/predict_round N — прогнозы на тур (пакетом)\n"
+            "/my N — мои прогнозы на тур\n"
             "/table — общая таблица лидеров\n"
-            "/table_round N — таблица лидеров за тур\n"
-            "/stats — подробная статистика\n\n"
-            "Правила:\n"
-            "⏰ Время матчей и дедлайны — по Москве (МСК).\n"
-            "⛔️ После начала матча прогноз ставить/менять нельзя.\n"
-            "✅ Можно вводить счет как 2:0 или 2-0."
+            "/table_round N — таблица лидеров тура\n"
+            "/stats — статистика\n"
+            "/ping — проверка связи\n"
         )
 
     @dp.message(Command("ping"))
     async def cmd_ping(message: types.Message):
         await message.answer("pong ✅")
+
+    @dp.message(Command("join"))
+    async def cmd_join(message: types.Message):
+        async with SessionLocal() as session:
+            await upsert_user_from_message(session, message)
+        await message.answer("✅ Ты в турнире! Теперь можешь делать прогнозы.")
 
     @dp.message(Command("round"))
     async def cmd_round(message: types.Message):
@@ -327,7 +344,7 @@ def register_user_handlers(dp: Dispatcher) -> None:
                 f"{icon} #{m.id} — {m.home_team} — {m.away_team} | {m.kickoff_time.strftime('%Y-%m-%d %H:%M')} МСК{extra}"
             )
 
-        await message.answer("\n".join(lines))
+        await send_long(message, "\n".join(lines))
 
     @dp.message(Command("predict"))
     async def cmd_predict(message: types.Message):
@@ -355,28 +372,29 @@ def register_user_handlers(dp: Dispatcher) -> None:
         async with SessionLocal() as session:
             await upsert_user_from_message(session, message)
 
-            result = await session.execute(select(Match).where(Match.id == match_id))
-            match = result.scalar_one_or_none()
+            match_q = await session.execute(select(Match).where(Match.id == match_id))
+            match = match_q.scalar_one_or_none()
             if match is None:
-                await message.answer(f"Матч с id={match_id} не найден. Посмотри /round 1")
+                await message.answer("Матч не найден.")
                 return
 
             if match.kickoff_time <= now:
-                await message.answer(
-                    "⛔️ Матч уже начался. Ставить/менять прогноз нельзя.\n"
-                    f"Начало: {match.kickoff_time.strftime('%Y-%m-%d %H:%M')} МСК"
-                )
+                await message.answer("🔒 Прогнозы на этот матч уже закрыты (матч начался).")
                 return
 
-            result = await session.execute(
-                select(Prediction).where(Prediction.match_id == match_id, Prediction.tg_user_id == tg_user_id)
+            pred_q = await session.execute(
+                select(Prediction).where(Prediction.tg_user_id == tg_user_id, Prediction.match_id == match_id)
             )
-            pred = result.scalar_one_or_none()
+            pred = pred_q.scalar_one_or_none()
 
             if pred is None:
-                session.add(
-                    Prediction(match_id=match_id, tg_user_id=tg_user_id, pred_home=pred_home, pred_away=pred_away)
+                pred = Prediction(
+                    tg_user_id=tg_user_id,
+                    match_id=match_id,
+                    pred_home=pred_home,
+                    pred_away=pred_away,
                 )
+                session.add(pred)
             else:
                 pred.pred_home = pred_home
                 pred.pred_away = pred_away
@@ -398,121 +416,105 @@ def register_user_handlers(dp: Dispatcher) -> None:
             await message.answer("Номер тура должен быть числом. Пример: /predict_round 1")
             return
 
+        now = now_msk_naive()
+
         async with SessionLocal() as session:
             await upsert_user_from_message(session, message)
-            result = await session.execute(
+
+            q = await session.execute(
                 select(Match).where(Match.round_number == round_number).order_by(Match.kickoff_time.asc())
             )
-            matches = result.scalars().all()
+            matches = q.scalars().all()
 
         if not matches:
             await message.answer(f"В туре {round_number} пока нет матчей.")
             return
 
-        await state.update_data(round_number=round_number)
-        await state.set_state(PredictRoundStates.waiting_for_predictions_block)
+        open_matches = [m for m in matches if m.kickoff_time > now]
+        if not open_matches:
+            await message.answer("Все матчи тура уже закрыты. Нечего прогнозировать.")
+            return
 
-        lines = [f"📝 Ввод прогнозов на тур {round_number} (МСК) одним сообщением."]
-        lines.append("✅ Можно вводить счет как 2:0 или 2-0.")
-        lines.append("⛔️ После начала матча прогноз поставить/изменить нельзя (такие строки будут пропущены).")
-        lines.append("")
-        lines.append("Отправь следующим сообщением строки в формате:")
-        lines.append("match_id счет")
-        lines.append("Пример:")
-        lines.append("1 2:0")
-        lines.append("2 1-1")
-        lines.append("")
-        lines.append("Матчи тура:")
-        now = now_msk_naive()
-        for m in matches:
+        lines = [
+            f"🧾 Ввод прогнозов на тур {round_number}.\n"
+            "Отправь одним сообщением прогнозы в формате:\n"
+            "match_id счет\n"
+            "Пример:\n"
+            "1 2:0\n2 1:1\n\n"
+            "Открытые матчи:"
+        ]
+        for m in open_matches:
             icon = match_status_icon(m, now)
             lines.append(f"{icon} #{m.id} {m.home_team} — {m.away_team} ({m.kickoff_time.strftime('%Y-%m-%d %H:%M')} МСК)")
 
-        await message.answer("\n".join(lines))
+        await state.set_state(PredictRoundStates.waiting_for_predictions_block)
+        await state.update_data(round_number=round_number)
+
+        await send_long(message, "\n".join(lines))
 
     @dp.message(PredictRoundStates.waiting_for_predictions_block)
     async def handle_predictions_block(message: types.Message, state: FSMContext):
         data = await state.get_data()
         round_number = data.get("round_number")
-
-        if round_number is None:
-            await message.answer("Что-то пошло не так. Повтори /predict_round 1")
+        if not round_number:
             await state.clear()
+            await message.answer("⚠️ Сессия ввода сброшена. Начни заново: /predict_round N")
             return
 
+        tg_user_id = message.from_user.id
         now = now_msk_naive()
+
+        lines = [line.strip() for line in (message.text or "").splitlines() if line.strip()]
+        if not lines:
+            await message.answer("Пусто. Пришли строки формата: match_id счет")
+            return
+
+        saved = 0
+        skipped = 0
+        errors = 0
 
         async with SessionLocal() as session:
             await upsert_user_from_message(session, message)
 
-            res = await session.execute(select(Match).where(Match.round_number == round_number))
-            matches = res.scalars().all()
-
-            match_by_id = {m.id: m for m in matches}
-            allowed_match_ids = set(match_by_id.keys())
-
-            lines = [ln.strip() for ln in message.text.splitlines() if ln.strip()]
-
-            saved = 0
-            errors = 0
-            skipped = 0
-            skipped_details: list[str] = []
-            error_lines: list[str] = []
-
-            tg_user_id = message.from_user.id
-
-            for ln in lines:
-                parts = ln.split()
+            for line in lines:
+                parts = line.replace("-", ":").split()
                 if len(parts) != 2:
                     errors += 1
-                    error_lines.append(f"❌ '{ln}' (нужно: match_id счет)")
                     continue
-
-                match_id_str, score_str_raw = parts
-                match_id_str = match_id_str.lstrip("#")
-
                 try:
-                    match_id = int(match_id_str)
+                    match_id = int(parts[0])
                 except ValueError:
                     errors += 1
-                    error_lines.append(f"❌ '{ln}' (match_id должен быть числом)")
                     continue
 
-                if match_id not in allowed_match_ids:
-                    errors += 1
-                    error_lines.append(f"❌ '{ln}' (match_id не из тура {round_number})")
-                    continue
-
-                score_str = normalize_score(score_str_raw)
-                parsed = parse_score(score_str)
+                parsed = parse_score(parts[1])
                 if parsed is None:
                     errors += 1
-                    error_lines.append(f"❌ '{ln}' (счёт должен быть 2:0 или 2-0)")
                     continue
-
                 pred_home, pred_away = parsed
 
-                m = match_by_id.get(match_id)
-                if m is None:
-                    errors += 1
-                    error_lines.append(f"❌ '{ln}' (матч не найден)")
-                    continue
-
-                if m.kickoff_time <= now:
+                match_q = await session.execute(select(Match).where(Match.id == match_id, Match.round_number == round_number))
+                match = match_q.scalar_one_or_none()
+                if match is None:
                     skipped += 1
-                    skipped_details.append(
-                        f"🔒 #{m.id} {m.home_team}—{m.away_team} ({m.kickoff_time.strftime('%Y-%m-%d %H:%M')} МСК)"
-                    )
                     continue
 
-                res_pred = await session.execute(
-                    select(Prediction).where(Prediction.match_id == match_id, Prediction.tg_user_id == tg_user_id)
-                )
-                pred = res_pred.scalar_one_or_none()
+                if match.kickoff_time <= now:
+                    skipped += 1
+                    continue
 
+                pred_q = await session.execute(
+                    select(Prediction).where(Prediction.tg_user_id == tg_user_id, Prediction.match_id == match_id)
+                )
+                pred = pred_q.scalar_one_or_none()
                 if pred is None:
                     session.add(
-                        Prediction(match_id=match_id, tg_user_id=tg_user_id, pred_home=pred_home, pred_away=pred_away)
+                        Prediction(
+                            tg_user_id=tg_user_id,
+                            match_id=match_id,
+                            pred_home=pred_home,
+                            pred_away=pred_away,
+                        )
                     )
                 else:
                     pred.pred_home = pred_home
@@ -523,22 +525,7 @@ def register_user_handlers(dp: Dispatcher) -> None:
             await session.commit()
 
         await state.clear()
-
-        reply = [f"✅ Сохранено прогнозов: {saved}"]
-        if skipped:
-            reply.append(f"⛔️ Пропущено (матч уже начался): {skipped}")
-            reply.append("Пропущенные матчи:")
-            reply.extend(skipped_details[:10])
-            if len(skipped_details) > 10:
-                reply.append("…(ещё есть пропущенные, показываю первые 10)")
-        if errors:
-            reply.append(f"⚠️ Ошибок: {errors}")
-            reply.append("Проблемные строки:")
-            reply.extend(error_lines[:10])
-            if len(error_lines) > 10:
-                reply.append("…(ещё есть ошибки, показываю первые 10)")
-
-        await message.answer("\n".join(reply))
+        await message.answer(f"✅ Готово. Сохранено: {saved}. Пропущено (закрыто/не найдено): {skipped}. Ошибок формата: {errors}.")
 
     @dp.message(Command("my"))
     async def cmd_my(message: types.Message):
@@ -563,7 +550,7 @@ def register_user_handlers(dp: Dispatcher) -> None:
             total = await get_round_total_points_for_user(tg_user_id=tg_user_id, round_number=round_number)
             text = f"{text}\n\nИтого за тур: {total} очк."
 
-        await message.answer(text)
+        await send_long(message, text)
 
     @dp.message(Command("table"))
     async def cmd_table(message: types.Message):
@@ -577,10 +564,11 @@ def register_user_handlers(dp: Dispatcher) -> None:
         lines = ["🏆 Таблица лидеров (общая):"]
         lines.append(f"Участников с прогнозами: {participants}")
         lines.append(f"Матчей сыграно: {played} / {total}")
+
         for i, r in enumerate(rows[:20], start=1):
             lines.append(f"{i}. {r['name']} — {r['total']} очк. | 🎯{r['exact']} | 📏{r['diff']} | ✅{r['outcome']}")
 
-        await message.answer("\n".join(lines))
+        await send_long(message, "\n".join(lines))
 
     @dp.message(Command("table_round"))
     async def cmd_table_round(message: types.Message):
@@ -595,20 +583,20 @@ def register_user_handlers(dp: Dispatcher) -> None:
             await message.answer("Номер тура должен быть числом. Пример: /table_round 1")
             return
 
-        rows, participants = await build_leaderboard_for_round(round_number)
-
+        rows, participants = await build_round_leaderboard(round_number)
         if not rows:
-            await message.answer(f"Пока нет участников с прогнозами в туре {round_number}.")
+            await message.answer("Пока нет прогнозов на этот тур.")
             return
 
         lines = [f"🏁 Таблица тура {round_number}:"]
-        lines.append(f"Участников с прогнозами: {participants}")
+        lines.append(f"Участников с прогнозами в туре: {participants}")
+
         for i, r in enumerate(rows[:20], start=1):
             lines.append(f"{i}. {r['name']} — {r['total']} очк. | 🎯{r['exact']} | 📏{r['diff']} | ✅{r['outcome']}")
 
-        await message.answer("\n".join(lines))
+        await send_long(message, "\n".join(lines))
 
     @dp.message(Command("stats"))
     async def cmd_stats(message: types.Message):
         text = await build_stats_text()
-        await message.answer(text)
+        await send_long(message, text)
