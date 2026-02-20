@@ -22,14 +22,14 @@ class PredictRoundStates(StatesGroup):
 def build_main_menu_keyboard(default_round: int = ROUND_DEFAULT) -> types.ReplyKeyboardMarkup:
     return types.ReplyKeyboardMarkup(
         keyboard=[
-            [types.KeyboardButton(text="/join"), types.KeyboardButton(text=f"/round {default_round}")],
+            [types.KeyboardButton(text="✅ Вступить в турнир"), types.KeyboardButton(text="📅 Матчи тура")],
             [types.KeyboardButton(text="🎯 Поставить прогноз")],
-            [types.KeyboardButton(text=f"/predict_round {default_round}"), types.KeyboardButton(text=f"/my {default_round}")],
-            [types.KeyboardButton(text="/table"), types.KeyboardButton(text="/stats")],
-            [types.KeyboardButton(text="/profile"), types.KeyboardButton(text="/history")],
-            [types.KeyboardButton(text="/mvp_round"), types.KeyboardButton(text="/tops_round")],
+            [types.KeyboardButton(text="🧾 Прогнозы на тур"), types.KeyboardButton(text="🗂 Мои прогнозы")],
+            [types.KeyboardButton(text="🏆 Общая таблица"), types.KeyboardButton(text="📊 Статистика")],
+            [types.KeyboardButton(text="👤 Мой профиль"), types.KeyboardButton(text="🗓 История туров")],
+            [types.KeyboardButton(text="🥇 MVP тура"), types.KeyboardButton(text="⭐ Топы тура")],
             [types.KeyboardButton(text="📘 Правила")],
-            [types.KeyboardButton(text="/help")],
+            [types.KeyboardButton(text="❓ Помощь")],
         ],
         resize_keyboard=True,
         input_field_placeholder="Выберите действие из меню ниже",
@@ -475,6 +475,128 @@ async def build_round_tops_text(round_number: int) -> str:
 
 
 def register_user_handlers(dp: Dispatcher):
+    async def _send_help_text(message: types.Message) -> None:
+        default_round = await get_current_round_default()
+        await message.answer(
+            "📌 Команды:\n"
+            "/join - присоединиться к турниру\n"
+            "/round N - матчи тура\n"
+            "/predict <match_id> <счёт> - прогноз\n"
+            "/predict_round N - прогнозы на тур\n"
+            "/my N - мои прогнозы на тур\n"
+            "/table - общая таблица лидеров\n"
+            "/table_round N - таблица лидеров за тур\n"
+            "/history - история туров кнопками\n"
+            "/profile - мой профиль и мини-аналитика\n"
+            "/mvp_round N - MVP тура (N необязателен)\n"
+            "/tops_round N - топы тура по категориям\n"
+            "/stats - подробная статистика\n"
+            "/ping - проверка\n\n"
+            f"Сейчас для старта: тур {default_round}"
+        )
+
+    async def _open_predict_round(message: types.Message, state: FSMContext, round_number: int) -> None:
+        now = now_msk_naive()
+        async with SessionLocal() as session:
+            await upsert_user_from_message(session, message)
+            q = await session.execute(
+                select(Match).where(Match.round_number == round_number, Match.source == "manual").order_by(Match.kickoff_time.asc())
+            )
+            matches = q.scalars().all()
+
+        if not matches:
+            await message.answer(f"В туре {round_number} пока нет матчей.")
+            return
+
+        open_matches = [m for m in matches if m.kickoff_time > now]
+        if not open_matches:
+            await message.answer("Все матчи тура уже закрыты. Нечего прогнозировать.")
+            return
+
+        lines = [
+            f"🧾 Ввод прогнозов на тур {round_number}.\n"
+            "Отправь одним сообщением прогнозы в формате:\n"
+            "match_id счет\n"
+            "Пример:\n"
+            "1 2:0\n2 1:1\n\n"
+            "Открытые матчи:"
+        ]
+        for m in open_matches:
+            icon = match_status_icon(m, now)
+            lines.append(f"{icon} #{m.id} {m.home_team} — {m.away_team} ({m.kickoff_time.strftime('%Y-%m-%d %H:%M')} МСК)")
+
+        await state.set_state(PredictRoundStates.waiting_for_predictions_block)
+        await state.update_data(round_number=round_number)
+        await send_long(message, "\n".join(lines))
+
+    @dp.message(F.text == "✅ Вступить в турнир")
+    async def btn_join(message: types.Message):
+        async with SessionLocal() as session:
+            await upsert_user_from_message(session, message)
+        await message.answer("✅ Ты в турнире.")
+
+    @dp.message(F.text == "📅 Матчи тура")
+    async def btn_round(message: types.Message):
+        default_round = await get_current_round_default()
+        await send_long(message, await build_round_matches_text(default_round))
+
+    @dp.message(F.text == "🧾 Прогнозы на тур")
+    async def btn_predict_round(message: types.Message, state: FSMContext):
+        default_round = await get_current_round_default()
+        await _open_predict_round(message, state, default_round)
+
+    @dp.message(F.text == "🗂 Мои прогнозы")
+    async def btn_my(message: types.Message):
+        default_round = await get_current_round_default()
+        async with SessionLocal() as session:
+            await upsert_user_from_message(session, message)
+        tg_user_id = message.from_user.id
+        text = await build_my_round_text(tg_user_id=tg_user_id, round_number=default_round)
+        if await round_has_matches(default_round):
+            total = await get_round_total_points_for_user(tg_user_id=tg_user_id, round_number=default_round)
+            text = f"{text}\n\nИтого за тур: {total} очк."
+        await send_long(message, text)
+
+    @dp.message(F.text == "🏆 Общая таблица")
+    async def btn_table(message: types.Message):
+        played, total = await get_matches_played_stats()
+        rows, participants = await build_overall_leaderboard()
+        if not rows:
+            await message.answer("Пока нет участников с прогнозами. Сделай первый прогноз через /predict или /predict_round.")
+            return
+        lines = ["🏆 Таблица лидеров (общая):", f"Участников с прогнозами: {participants}", f"Матчей сыграно: {played} / {total}"]
+        for i, r in enumerate(rows[:20], start=1):
+            lines.append(f"{i}. {r['name']} — {r['total']} очк. | 🎯{r['exact']} | 📏{r['diff']} | ✅{r['outcome']}")
+        await send_long(message, "\n".join(lines))
+
+    @dp.message(F.text == "📊 Статистика")
+    async def btn_stats(message: types.Message):
+        await send_long(message, await build_stats_text())
+
+    @dp.message(F.text == "👤 Мой профиль")
+    async def btn_profile(message: types.Message):
+        async with SessionLocal() as session:
+            await upsert_user_from_message(session, message)
+        await message.answer(await build_profile_text(message.from_user.id))
+
+    @dp.message(F.text == "🗓 История туров")
+    async def btn_history(message: types.Message):
+        await message.answer("🗂 История туров: выбери тур", reply_markup=build_round_history_keyboard())
+
+    @dp.message(F.text == "🥇 MVP тура")
+    async def btn_mvp(message: types.Message):
+        default_round = await get_current_round_default()
+        await message.answer(await build_mvp_round_text(default_round))
+
+    @dp.message(F.text == "⭐ Топы тура")
+    async def btn_tops(message: types.Message):
+        default_round = await get_current_round_default()
+        await message.answer(await build_round_tops_text(default_round))
+
+    @dp.message(F.text == "❓ Помощь")
+    async def btn_help(message: types.Message):
+        await _send_help_text(message)
+
     @dp.message(Command("history"))
     async def cmd_history(message: types.Message):
         await message.answer("🗂 История туров: выбери тур", reply_markup=build_round_history_keyboard())
@@ -699,24 +821,7 @@ def register_user_handlers(dp: Dispatcher):
 
     @dp.message(Command("help"))
     async def cmd_help(message: types.Message):
-        default_round = await get_current_round_default()
-        await message.answer(
-            "📌 Команды:\n"
-            "/join - присоединиться к турниру\n"
-            "/round N - матчи тура\n"
-            "/predict <match_id> <счёт> - прогноз\n"
-            "/predict_round N - прогнозы на тур\n"
-            "/my N - мои прогнозы на тур\n"
-            "/table - общая таблица лидеров\n"
-            "/table_round N - таблица лидеров за тур\n"
-            "/history - история туров кнопками\n"
-            "/profile - мой профиль и мини-аналитика\n"
-            "/mvp_round N - MVP тура (N необязателен)\n"
-            "/tops_round N - топы тура по категориям\n"
-            "/stats - подробная статистика\n"
-            "/ping - проверка\n\n"
-            f"Сейчас для старта: тур {default_round}"
-        )
+        await _send_help_text(message)
 
     @dp.message(Command("ping"))
     async def cmd_ping(message: types.Message):
@@ -825,41 +930,7 @@ def register_user_handlers(dp: Dispatcher):
             )
             return
 
-        now = now_msk_naive()
-
-        async with SessionLocal() as session:
-            await upsert_user_from_message(session, message)
-
-            q = await session.execute(
-                select(Match).where(Match.round_number == round_number, Match.source == "manual").order_by(Match.kickoff_time.asc())
-            )
-            matches = q.scalars().all()
-
-        if not matches:
-            await message.answer(f"В туре {round_number} пока нет матчей.")
-            return
-
-        open_matches = [m for m in matches if m.kickoff_time > now]
-        if not open_matches:
-            await message.answer("Все матчи тура уже закрыты. Нечего прогнозировать.")
-            return
-
-        lines = [
-            f"🧾 Ввод прогнозов на тур {round_number}.\n"
-            "Отправь одним сообщением прогнозы в формате:\n"
-            "match_id счет\n"
-            "Пример:\n"
-            "1 2:0\n2 1:1\n\n"
-            "Открытые матчи:"
-        ]
-        for m in open_matches:
-            icon = match_status_icon(m, now)
-            lines.append(f"{icon} #{m.id} {m.home_team} — {m.away_team} ({m.kickoff_time.strftime('%Y-%m-%d %H:%M')} МСК)")
-
-        await state.set_state(PredictRoundStates.waiting_for_predictions_block)
-        await state.update_data(round_number=round_number)
-
-        await send_long(message, "\n".join(lines))
+        await _open_predict_round(message, state, round_number)
 
     @dp.message(PredictRoundStates.waiting_for_predictions_block)
     async def handle_predictions_block(message: types.Message, state: FSMContext):
