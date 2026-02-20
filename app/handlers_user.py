@@ -675,14 +675,14 @@ def register_user_handlers(dp: Dispatcher):
         lines = [
             f"🧾 Ввод прогнозов на тур {round_number}.\n"
             "Отправь одним сообщением прогнозы в формате:\n"
-            "match_id счет\n"
+            "ID счёт\n"
             "Пример:\n"
             "1 2:0\n2 1:1\n\n"
             "Открытые матчи:"
         ]
         for m in open_matches:
             icon = match_status_icon(m, now)
-            lines.append(f"{icon} #{m.id} {m.home_team} — {m.away_team} ({m.kickoff_time.strftime('%Y-%m-%d %H:%M')} МСК)")
+            lines.append(f"{icon} ID {m.id}: {m.home_team} — {m.away_team} ({m.kickoff_time.strftime('%Y-%m-%d %H:%M')} МСК)")
 
         await state.set_state(PredictRoundStates.waiting_for_predictions_block)
         await state.update_data(round_number=round_number)

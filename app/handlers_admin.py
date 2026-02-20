@@ -222,7 +222,7 @@ async def admin_set_result(message: types.Message):
         updates = await recalc_points_for_match_in_session(session, match_id)
 
     await message.answer(
-        f"✅ Результат сохранён для матча #{match_id}: {home_score}:{away_score}. "
+        f"✅ Результат сохранён: {match.home_team} — {match.away_team} | {home_score}:{away_score}. "
         f"Пересчитано очков: {updates}"
     )
 
