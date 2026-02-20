@@ -276,7 +276,7 @@ async def build_overall_leaderboard() -> tuple[list[dict], int]:
             .select_from(participants_subq)
             .join(User, User.tg_user_id == participants_subq.c.tg_user_id)
             .outerjoin(Point, Point.tg_user_id == User.tg_user_id)
-            .group_by(User.tg_user_id)
+            .group_by(User.tg_user_id, User.username, User.full_name)
             .order_by(func.coalesce(func.sum(Point.points), 0).desc())
         )
 
@@ -321,7 +321,7 @@ async def build_round_leaderboard(round_number: int) -> tuple[list[dict], int]:
             .join(Match, Match.id == Prediction.match_id)
             .outerjoin(Point, (Point.tg_user_id == User.tg_user_id) & (Point.match_id == Match.id))
             .where(Match.round_number == round_number, Match.source == "manual")
-            .group_by(User.tg_user_id)
+            .group_by(User.tg_user_id, User.username, User.full_name)
             .order_by(func.coalesce(func.sum(Point.points), 0).desc())
         )
 
