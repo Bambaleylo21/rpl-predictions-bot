@@ -2,10 +2,10 @@ from collections import defaultdict
 from sqlalchemy import select
 
 from app.db import SessionLocal
-from app.models import User, Point
+from app.models import Match, Point, User
 
 
-async def build_stats_text() -> str:
+async def build_stats_text(tournament_id: int | None = None) -> str:
     """
     Строит общий отчёт по всем участникам:
     - очки
@@ -16,7 +16,15 @@ async def build_stats_text() -> str:
         res_users = await session.execute(select(User))
         users = res_users.scalars().all()
 
-        res_points = await session.execute(select(Point))
+        points_q = select(Point)
+        if tournament_id is not None:
+            points_q = (
+                select(Point)
+                .join(Match, Match.id == Point.match_id)
+                .where(Match.tournament_id == tournament_id, Match.source == "manual")
+            )
+
+        res_points = await session.execute(points_q)
         points_rows = res_points.scalars().all()
 
     # Мапа tg_user_id -> имя

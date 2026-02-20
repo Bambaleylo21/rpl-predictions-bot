@@ -11,7 +11,6 @@ from app.db import SessionLocal
 from app.models import Match, Point, Prediction, Tournament, User, UserTournament
 from app.stats import build_stats_text
 from app.my_predictions import build_my_round_text
-from app.tournament import ROUND_DEFAULT, ROUND_MAX, ROUND_MIN, is_tournament_round
 
 
 class PredictRoundStates(StatesGroup):
@@ -19,9 +18,17 @@ class PredictRoundStates(StatesGroup):
     waiting_for_single_match_score = State()
 
 
-def build_main_menu_keyboard(default_round: int = ROUND_DEFAULT) -> types.ReplyKeyboardMarkup:
+DEFAULT_TOURNAMENT_CODE = "RPL"
+
+
+def _selected_tournament_key(tg_user_id: int) -> str:
+    return f"USER_SELECTED_TOURNAMENT_{tg_user_id}"
+
+
+def build_main_menu_keyboard(default_round: int) -> types.ReplyKeyboardMarkup:
     return types.ReplyKeyboardMarkup(
         keyboard=[
+            [types.KeyboardButton(text="🏆 РПЛ"), types.KeyboardButton(text="🏴 АПЛ")],
             [types.KeyboardButton(text="✅ Вступить в турнир"), types.KeyboardButton(text="📅 Матчи тура")],
             [types.KeyboardButton(text="🎯 Поставить прогноз")],
             [types.KeyboardButton(text="🗂 Мои прогнозы")],
@@ -41,23 +48,85 @@ def now_msk_naive() -> datetime:
     return (datetime.utcnow() + timedelta(hours=3)).replace(tzinfo=None)
 
 
-async def get_current_round_default() -> int:
+async def get_tournament_by_code(session, code: str) -> Tournament | None:
+    q = await session.execute(select(Tournament).where(Tournament.code == code))
+    return q.scalar_one_or_none()
+
+
+async def ensure_user_membership(session, tg_user_id: int, tournament_id: int) -> None:
+    q = await session.execute(
+        select(UserTournament).where(
+            UserTournament.tg_user_id == tg_user_id,
+            UserTournament.tournament_id == tournament_id,
+        )
+    )
+    row = q.scalar_one_or_none()
+    if row is None:
+        session.add(UserTournament(tg_user_id=tg_user_id, tournament_id=tournament_id))
+
+
+async def is_user_in_tournament(session, tg_user_id: int, tournament_id: int) -> bool:
+    q = await session.execute(
+        select(UserTournament).where(
+            UserTournament.tg_user_id == tg_user_id,
+            UserTournament.tournament_id == tournament_id,
+        )
+    )
+    return q.scalar_one_or_none() is not None
+
+
+async def get_selected_tournament_for_user(session, tg_user_id: int) -> Tournament:
+    from app.models import Setting  # local import to avoid circular usage patterns
+
+    key = _selected_tournament_key(tg_user_id)
+    st_q = await session.execute(select(Setting).where(Setting.key == key))
+    st = st_q.scalar_one_or_none()
+    code = (st.value if st else DEFAULT_TOURNAMENT_CODE).upper()
+
+    t = await get_tournament_by_code(session, code)
+    if t is None:
+        t = await get_tournament_by_code(session, DEFAULT_TOURNAMENT_CODE)
+    if t is None:
+        # fallback safety for corrupted DB
+        t = Tournament(code=DEFAULT_TOURNAMENT_CODE, name="Russian Premier League", round_min=19, round_max=30, is_active=1)
+        session.add(t)
+        await session.commit()
+        await session.refresh(t)
+    return t
+
+
+async def set_selected_tournament_for_user(session, tg_user_id: int, tournament_code: str) -> Tournament | None:
+    from app.models import Setting  # local import
+
+    t = await get_tournament_by_code(session, tournament_code.upper())
+    if t is None:
+        return None
+
+    key = _selected_tournament_key(tg_user_id)
+    st_q = await session.execute(select(Setting).where(Setting.key == key))
+    st = st_q.scalar_one_or_none()
+    if st is None:
+        session.add(Setting(key=key, value=t.code))
+    else:
+        st.value = t.code
+    await session.commit()
+    return t
+
+
+async def get_current_round_default(tournament_id: int, round_min: int, round_max: int) -> int:
     """
-    Автовыбор "текущего тура" по расписанию:
-    - если сейчас до окончания тура X -> тур X
-    - если все туры прошли -> последний доступный тур
-    - если матчей ещё нет -> ROUND_DEFAULT
+    Автовыбор "текущего тура" по расписанию в рамках выбранного турнира.
     """
     async with SessionLocal() as session:
         q = await session.execute(
             select(
                 Match.round_number,
-                func.min(Match.kickoff_time).label("starts_at"),
                 func.max(Match.kickoff_time).label("ends_at"),
             )
             .where(
-                Match.round_number >= ROUND_MIN,
-                Match.round_number <= ROUND_MAX,
+                Match.tournament_id == tournament_id,
+                Match.round_number >= round_min,
+                Match.round_number <= round_max,
                 Match.source == "manual",
             )
             .group_by(Match.round_number)
@@ -66,13 +135,12 @@ async def get_current_round_default() -> int:
         rows = q.all()
 
     if not rows:
-        return ROUND_DEFAULT
+        return round_min
 
     now = now_msk_naive()
-    for round_number, _starts_at, ends_at in rows:
+    for round_number, ends_at in rows:
         if now <= ends_at:
             return int(round_number)
-
     return int(rows[-1][0])
 
 
@@ -95,10 +163,10 @@ def build_open_matches_inline_keyboard(matches: list[Match]) -> types.InlineKeyb
     return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def build_round_history_keyboard() -> types.InlineKeyboardMarkup:
+def build_round_history_keyboard(round_min: int, round_max: int) -> types.InlineKeyboardMarkup:
     rows: list[list[types.InlineKeyboardButton]] = []
     row: list[types.InlineKeyboardButton] = []
-    for r in range(ROUND_MIN, ROUND_MAX + 1):
+    for r in range(round_min, round_max + 1):
         row.append(types.InlineKeyboardButton(text=str(r), callback_data=f"history_round:{r}"))
         if len(row) == 4:
             rows.append(row)
@@ -188,20 +256,6 @@ async def upsert_user_from_message(session, message: types.Message):
         user.username = username
         user.full_name = full_name
 
-    # Этап 1 мульти-турниров: по умолчанию добавляем пользователя в RPL.
-    rpl_q = await session.execute(select(Tournament).where(Tournament.code == "RPL"))
-    rpl = rpl_q.scalar_one_or_none()
-    if rpl is not None:
-        membership_q = await session.execute(
-            select(UserTournament).where(
-                UserTournament.tg_user_id == tg_user_id,
-                UserTournament.tournament_id == rpl.id,
-            )
-        )
-        membership = membership_q.scalar_one_or_none()
-        if membership is None:
-            session.add(UserTournament(tg_user_id=tg_user_id, tournament_id=rpl.id))
-
     await session.commit()
 
 
@@ -232,47 +286,70 @@ def match_status_icon(match: Match, now: datetime) -> str:
     return "🟢"
 
 
-async def round_has_matches(round_number: int) -> bool:
+async def round_has_matches(round_number: int, tournament_id: int) -> bool:
     async with SessionLocal() as session:
         result = await session.execute(
-            select(func.count(Match.id)).where(Match.round_number == round_number, Match.source == "manual")
+            select(func.count(Match.id)).where(
+                Match.round_number == round_number,
+                Match.source == "manual",
+                Match.tournament_id == tournament_id,
+            )
         )
         cnt = result.scalar_one()
         return cnt > 0
 
 
-async def get_round_total_points_for_user(tg_user_id: int, round_number: int) -> int:
+async def get_round_total_points_for_user(tg_user_id: int, round_number: int, tournament_id: int) -> int:
     async with SessionLocal() as session:
         q = await session.execute(
             select(func.coalesce(func.sum(Point.points), 0))
             .select_from(Point)
             .join(Match, Match.id == Point.match_id)
-            .where(Point.tg_user_id == tg_user_id, Match.round_number == round_number, Match.source == "manual")
+            .where(
+                Point.tg_user_id == tg_user_id,
+                Match.round_number == round_number,
+                Match.source == "manual",
+                Match.tournament_id == tournament_id,
+            )
         )
         return int(q.scalar_one())
 
 
-async def get_matches_played_stats() -> tuple[int, int]:
+async def get_matches_played_stats(tournament_id: int) -> tuple[int, int]:
     async with SessionLocal() as session:
-        total_q = await session.execute(select(func.count(Match.id)))
+        total_q = await session.execute(
+            select(func.count(Match.id)).where(Match.source == "manual", Match.tournament_id == tournament_id)
+        )
         total = int(total_q.scalar_one())
 
         played_q = await session.execute(
-            select(func.count(Match.id)).where(Match.home_score.isnot(None), Match.away_score.isnot(None))
+            select(func.count(Match.id)).where(
+                Match.home_score.isnot(None),
+                Match.away_score.isnot(None),
+                Match.source == "manual",
+                Match.tournament_id == tournament_id,
+            )
         )
         played = int(played_q.scalar_one())
 
     return played, total
 
 
-async def build_overall_leaderboard() -> tuple[list[dict], int]:
+async def build_overall_leaderboard(tournament_id: int) -> tuple[list[dict], int]:
     async with SessionLocal() as session:
         # Только участники, у которых есть хотя бы 1 прогноз (по сути — есть points или predictions)
-        participants_q = await session.execute(select(func.count(func.distinct(Prediction.tg_user_id))))
+        participants_q = await session.execute(
+            select(func.count(func.distinct(Prediction.tg_user_id)))
+            .select_from(Prediction)
+            .join(Match, Match.id == Prediction.match_id)
+            .where(Match.tournament_id == tournament_id, Match.source == "manual")
+        )
         participants = int(participants_q.scalar_one())
 
         participants_subq = (
             select(Prediction.tg_user_id.label("tg_user_id"))
+            .join(Match, Match.id == Prediction.match_id)
+            .where(Match.tournament_id == tournament_id, Match.source == "manual")
             .distinct()
             .subquery()
         )
@@ -290,6 +367,8 @@ async def build_overall_leaderboard() -> tuple[list[dict], int]:
             .select_from(participants_subq)
             .join(User, User.tg_user_id == participants_subq.c.tg_user_id)
             .outerjoin(Point, Point.tg_user_id == User.tg_user_id)
+            .outerjoin(Match, Match.id == Point.match_id)
+            .where((Match.id.is_(None)) | ((Match.tournament_id == tournament_id) & (Match.source == "manual")))
             .group_by(User.tg_user_id, User.username, User.full_name)
             .order_by(func.coalesce(func.sum(Point.points), 0).desc())
         )
@@ -310,13 +389,13 @@ async def build_overall_leaderboard() -> tuple[list[dict], int]:
         return rows, participants
 
 
-async def build_round_leaderboard(round_number: int) -> tuple[list[dict], int]:
+async def build_round_leaderboard(round_number: int, tournament_id: int) -> tuple[list[dict], int]:
     async with SessionLocal() as session:
         participants_q = await session.execute(
             select(func.count(func.distinct(Prediction.tg_user_id)))
             .select_from(Prediction)
             .join(Match, Match.id == Prediction.match_id)
-            .where(Match.round_number == round_number, Match.source == "manual")
+            .where(Match.round_number == round_number, Match.source == "manual", Match.tournament_id == tournament_id)
         )
         participants = int(participants_q.scalar_one())
 
@@ -334,7 +413,7 @@ async def build_round_leaderboard(round_number: int) -> tuple[list[dict], int]:
             .join(Prediction, Prediction.tg_user_id == User.tg_user_id)
             .join(Match, Match.id == Prediction.match_id)
             .outerjoin(Point, (Point.tg_user_id == User.tg_user_id) & (Point.match_id == Match.id))
-            .where(Match.round_number == round_number, Match.source == "manual")
+            .where(Match.round_number == round_number, Match.source == "manual", Match.tournament_id == tournament_id)
             .group_by(User.tg_user_id, User.username, User.full_name)
             .order_by(func.coalesce(func.sum(Point.points), 0).desc())
         )
@@ -355,20 +434,26 @@ async def build_round_leaderboard(round_number: int) -> tuple[list[dict], int]:
         return rows, participants
 
 
-async def build_round_matches_text(round_number: int, now: datetime | None = None) -> str:
+async def build_round_matches_text(round_number: int, tournament_id: int, tournament_name: str, now: datetime | None = None) -> str:
     if now is None:
         now = now_msk_naive()
 
     async with SessionLocal() as session:
         result = await session.execute(
-            select(Match).where(Match.round_number == round_number, Match.source == "manual").order_by(Match.kickoff_time.asc())
+            select(Match)
+            .where(
+                Match.round_number == round_number,
+                Match.source == "manual",
+                Match.tournament_id == tournament_id,
+            )
+            .order_by(Match.kickoff_time.asc())
         )
         matches = result.scalars().all()
 
     if not matches:
         return f"В туре {round_number} пока нет матчей."
 
-    lines = [f"📅 Тур {round_number} (МСК)"]
+    lines = [f"📅 {tournament_name} · Тур {round_number} (МСК)"]
     for m in matches:
         icon = match_status_icon(m, now)
         score = ""
@@ -380,7 +465,7 @@ async def build_round_matches_text(round_number: int, now: datetime | None = Non
     return "\n".join(lines)
 
 
-async def build_profile_text(tg_user_id: int) -> str:
+async def build_profile_text(tg_user_id: int, tournament_id: int, tournament_name: str) -> str:
     async with SessionLocal() as session:
         user_q = await session.execute(select(User).where(User.tg_user_id == tg_user_id))
         user = user_q.scalar_one_or_none()
@@ -398,7 +483,7 @@ async def build_profile_text(tg_user_id: int) -> str:
             .select_from(User)
             .outerjoin(Point, Point.tg_user_id == User.tg_user_id)
             .outerjoin(Match, Match.id == Point.match_id)
-            .where((Match.source == "manual") | (Match.id.is_(None)))
+            .where((Match.id.is_(None)) | ((Match.source == "manual") & (Match.tournament_id == tournament_id)))
             .group_by(User.tg_user_id)
             .order_by(func.coalesce(func.sum(Point.points), 0).desc(), User.tg_user_id.asc())
         )
@@ -421,7 +506,7 @@ async def build_profile_text(tg_user_id: int) -> str:
             select(func.count(Prediction.id))
             .select_from(Prediction)
             .join(Match, Match.id == Prediction.match_id)
-            .where(Prediction.tg_user_id == tg_user_id, Match.source == "manual")
+            .where(Prediction.tg_user_id == tg_user_id, Match.source == "manual", Match.tournament_id == tournament_id)
         )
         preds_count = int(preds_q.scalar_one() or 0)
 
@@ -432,7 +517,7 @@ async def build_profile_text(tg_user_id: int) -> str:
             )
             .select_from(Point)
             .join(Match, Match.id == Point.match_id)
-            .where(Point.tg_user_id == tg_user_id, Match.source == "manual")
+            .where(Point.tg_user_id == tg_user_id, Match.source == "manual", Match.tournament_id == tournament_id)
             .group_by(Match.round_number)
             .order_by(Match.round_number.desc())
         )
@@ -443,6 +528,7 @@ async def build_profile_text(tg_user_id: int) -> str:
     name = format_user_name(user.username, user.full_name, tg_user_id)
     return (
         f"👤 Профиль: {name}\n"
+        f"Турнир: {tournament_name}\n"
         f"Место в общем зачёте: {place}\n"
         f"Очки: {total}\n"
         f"Прогнозов: {preds_count}\n"
@@ -452,21 +538,21 @@ async def build_profile_text(tg_user_id: int) -> str:
     )
 
 
-async def build_mvp_round_text(round_number: int) -> str:
-    rows, participants = await build_round_leaderboard(round_number)
+async def build_mvp_round_text(round_number: int, tournament_id: int, tournament_name: str) -> str:
+    rows, participants = await build_round_leaderboard(round_number, tournament_id=tournament_id)
     if not rows:
         return f"В туре {round_number} пока нет данных для MVP."
     best = rows[0]["total"]
     winners = [r for r in rows if r["total"] == best]
-    lines = [f"🏅 MVP тура {round_number}"]
+    lines = [f"🏅 {tournament_name} · MVP тура {round_number}"]
     lines.append(f"Участников: {participants}")
     for w in winners[:5]:
         lines.append(f"{w['name']} — {w['total']} очк. | 🎯{w['exact']} | 📏{w['diff']} | ✅{w['outcome']}")
     return "\n".join(lines)
 
 
-async def build_round_tops_text(round_number: int) -> str:
-    rows, participants = await build_round_leaderboard(round_number)
+async def build_round_tops_text(round_number: int, tournament_id: int, tournament_name: str) -> str:
+    rows, participants = await build_round_leaderboard(round_number, tournament_id=tournament_id)
     if not rows:
         return f"В туре {round_number} пока нет данных для топов."
 
@@ -481,7 +567,7 @@ async def build_round_tops_text(round_number: int) -> str:
     def names(items: list[dict]) -> str:
         return ", ".join(i["name"] for i in items[:3]) if items else "—"
 
-    lines = [f"📊 Топы тура {round_number}", f"Участников: {participants}", ""]
+    lines = [f"📊 {tournament_name} · Топы тура {round_number}", f"Участников: {participants}", ""]
     lines.append(f"🎯 Точные: {names(exact_top)}")
     lines.append(f"📏 Разница+исход: {names(diff_top)}")
     lines.append(f"✅ Только исход: {names(outcome_top)}")
@@ -489,10 +575,58 @@ async def build_round_tops_text(round_number: int) -> str:
 
 
 def register_user_handlers(dp: Dispatcher):
+    async def _get_user_tournament_context(tg_user_id: int) -> tuple[Tournament, int]:
+        async with SessionLocal() as session:
+            tournament = await get_selected_tournament_for_user(session, tg_user_id)
+        default_round = await get_current_round_default(
+            tournament_id=tournament.id,
+            round_min=tournament.round_min,
+            round_max=tournament.round_max,
+        )
+        return tournament, default_round
+
+    def _round_in_tournament(round_number: int, tournament: Tournament) -> bool:
+        return tournament.round_min <= round_number <= tournament.round_max
+
+    async def _require_membership_or_hint(message: types.Message, tournament: Tournament) -> bool:
+        async with SessionLocal() as session:
+            ok = await is_user_in_tournament(session, message.from_user.id, tournament.id)
+        if ok:
+            return True
+        await message.answer(
+            f"Ты ещё не участвуешь в турнире {tournament.name}.\n"
+            "Нажми «✅ Вступить в турнир»."
+        )
+        return False
+
+    @dp.message(F.text == "🏆 РПЛ")
+    async def btn_switch_rpl(message: types.Message):
+        async with SessionLocal() as session:
+            await upsert_user_from_message(session, message)
+            t = await set_selected_tournament_for_user(session, message.from_user.id, "RPL")
+        if t is None:
+            await message.answer("Турнир РПЛ не найден в базе.")
+            return
+        default_round = await get_current_round_default(t.id, t.round_min, t.round_max)
+        await message.answer(f"Переключено на турнир: {t.name}\nТекущий тур: {default_round}")
+
+    @dp.message(F.text == "🏴 АПЛ")
+    async def btn_switch_epl(message: types.Message):
+        async with SessionLocal() as session:
+            await upsert_user_from_message(session, message)
+            t = await set_selected_tournament_for_user(session, message.from_user.id, "EPL")
+        if t is None:
+            await message.answer("Турнир АПЛ не найден в базе.")
+            return
+        default_round = await get_current_round_default(t.id, t.round_min, t.round_max)
+        await message.answer(f"Переключено на турнир: {t.name}\nТекущий тур: {default_round}")
+
     async def _send_help_text(message: types.Message) -> None:
-        default_round = await get_current_round_default()
+        tournament, default_round = await _get_user_tournament_context(message.from_user.id)
         await message.answer(
             "❓ Помощь\n\n"
+            f"Текущий турнир: {tournament.name}\n"
+            f"Туры: {tournament.round_min}..{tournament.round_max}\n\n"
             "Лучше пользоваться кнопками внизу:\n"
             "✅ Вступить в турнир\n"
             "📅 Матчи тура\n"
@@ -514,12 +648,18 @@ def register_user_handlers(dp: Dispatcher):
             f"Сейчас для старта: тур {default_round}"
         )
 
-    async def _open_predict_round(message: types.Message, state: FSMContext, round_number: int) -> None:
+    async def _open_predict_round(message: types.Message, state: FSMContext, round_number: int, tournament: Tournament) -> None:
         now = now_msk_naive()
         async with SessionLocal() as session:
             await upsert_user_from_message(session, message)
             q = await session.execute(
-                select(Match).where(Match.round_number == round_number, Match.source == "manual").order_by(Match.kickoff_time.asc())
+                select(Match)
+                .where(
+                    Match.round_number == round_number,
+                    Match.source == "manual",
+                    Match.tournament_id == tournament.id,
+                )
+                .order_by(Match.kickoff_time.asc())
             )
             matches = q.scalars().all()
 
@@ -552,60 +692,79 @@ def register_user_handlers(dp: Dispatcher):
     async def btn_join(message: types.Message):
         async with SessionLocal() as session:
             await upsert_user_from_message(session, message)
-        await message.answer("✅ Ты в турнире.")
+            tournament = await get_selected_tournament_for_user(session, message.from_user.id)
+            await ensure_user_membership(session, message.from_user.id, tournament.id)
+            await session.commit()
+        await message.answer(f"✅ Ты в турнире: {tournament.name}")
 
     @dp.message(F.text == "📅 Матчи тура")
     async def btn_round(message: types.Message):
-        default_round = await get_current_round_default()
-        await send_long(message, await build_round_matches_text(default_round))
+        tournament, default_round = await _get_user_tournament_context(message.from_user.id)
+        await send_long(
+            message,
+            await build_round_matches_text(default_round, tournament_id=tournament.id, tournament_name=tournament.name),
+        )
 
     @dp.message(F.text == "🗂 Мои прогнозы")
     async def btn_my(message: types.Message):
-        default_round = await get_current_round_default()
+        tournament, default_round = await _get_user_tournament_context(message.from_user.id)
+        if not await _require_membership_or_hint(message, tournament):
+            return
         async with SessionLocal() as session:
             await upsert_user_from_message(session, message)
         tg_user_id = message.from_user.id
-        text = await build_my_round_text(tg_user_id=tg_user_id, round_number=default_round)
-        if await round_has_matches(default_round):
-            total = await get_round_total_points_for_user(tg_user_id=tg_user_id, round_number=default_round)
+        text = await build_my_round_text(tg_user_id=tg_user_id, round_number=default_round, tournament_id=tournament.id)
+        if await round_has_matches(default_round, tournament_id=tournament.id):
+            total = await get_round_total_points_for_user(
+                tg_user_id=tg_user_id, round_number=default_round, tournament_id=tournament.id
+            )
             text = f"{text}\n\nИтого за тур: {total} очк."
         await send_long(message, text)
 
     @dp.message(F.text == "🏆 Общая таблица")
     async def btn_table(message: types.Message):
-        played, total = await get_matches_played_stats()
-        rows, participants = await build_overall_leaderboard()
+        tournament, _default_round = await _get_user_tournament_context(message.from_user.id)
+        played, total = await get_matches_played_stats(tournament_id=tournament.id)
+        rows, participants = await build_overall_leaderboard(tournament_id=tournament.id)
         if not rows:
             await message.answer("Пока нет участников с прогнозами. Сделай первый прогноз через /predict или /predict_round.")
             return
-        lines = ["🏆 Таблица лидеров (общая):", f"Участников с прогнозами: {participants}", f"Матчей сыграно: {played} / {total}"]
+        lines = [f"🏆 {tournament.name} · Таблица лидеров", f"Участников с прогнозами: {participants}", f"Матчей сыграно: {played} / {total}"]
         for i, r in enumerate(rows[:20], start=1):
             lines.append(f"{i}. {r['name']} — {r['total']} очк. | 🎯{r['exact']} | 📏{r['diff']} | ✅{r['outcome']}")
         await send_long(message, "\n".join(lines))
 
     @dp.message(F.text == "📊 Статистика")
     async def btn_stats(message: types.Message):
-        await send_long(message, await build_stats_text())
+        tournament, _default_round = await _get_user_tournament_context(message.from_user.id)
+        await send_long(message, await build_stats_text(tournament_id=tournament.id))
 
     @dp.message(F.text == "👤 Мой профиль")
     async def btn_profile(message: types.Message):
         async with SessionLocal() as session:
             await upsert_user_from_message(session, message)
-        await message.answer(await build_profile_text(message.from_user.id))
+        tournament, _default_round = await _get_user_tournament_context(message.from_user.id)
+        if not await _require_membership_or_hint(message, tournament):
+            return
+        await message.answer(await build_profile_text(message.from_user.id, tournament_id=tournament.id, tournament_name=tournament.name))
 
     @dp.message(F.text == "🗓 История туров")
     async def btn_history(message: types.Message):
-        await message.answer("🗂 История туров: выбери тур", reply_markup=build_round_history_keyboard())
+        tournament, _default_round = await _get_user_tournament_context(message.from_user.id)
+        await message.answer(
+            f"🗂 {tournament.name}: выбери тур",
+            reply_markup=build_round_history_keyboard(tournament.round_min, tournament.round_max),
+        )
 
     @dp.message(F.text == "🥇 MVP тура")
     async def btn_mvp(message: types.Message):
-        default_round = await get_current_round_default()
-        await message.answer(await build_mvp_round_text(default_round))
+        tournament, default_round = await _get_user_tournament_context(message.from_user.id)
+        await message.answer(await build_mvp_round_text(default_round, tournament_id=tournament.id, tournament_name=tournament.name))
 
     @dp.message(F.text == "⭐ Топы тура")
     async def btn_tops(message: types.Message):
-        default_round = await get_current_round_default()
-        await message.answer(await build_round_tops_text(default_round))
+        tournament, default_round = await _get_user_tournament_context(message.from_user.id)
+        await message.answer(await build_round_tops_text(default_round, tournament_id=tournament.id, tournament_name=tournament.name))
 
     @dp.message(F.text == "❓ Помощь")
     async def btn_help(message: types.Message):
@@ -613,7 +772,11 @@ def register_user_handlers(dp: Dispatcher):
 
     @dp.message(Command("history"))
     async def cmd_history(message: types.Message):
-        await message.answer("🗂 История туров: выбери тур", reply_markup=build_round_history_keyboard())
+        tournament, _default_round = await _get_user_tournament_context(message.from_user.id)
+        await message.answer(
+            f"🗂 {tournament.name}: выбери тур",
+            reply_markup=build_round_history_keyboard(tournament.round_min, tournament.round_max),
+        )
 
     @dp.callback_query(F.data.startswith("history_round:"))
     async def on_history_round(callback: types.CallbackQuery):
@@ -623,7 +786,11 @@ def register_user_handlers(dp: Dispatcher):
         except Exception:
             await callback.answer("Ошибка выбора тура", show_alert=True)
             return
-        text = await build_round_matches_text(round_number)
+        tournament, _default_round = await _get_user_tournament_context(callback.from_user.id)
+        if not _round_in_tournament(round_number, tournament):
+            await callback.answer("Тур вне диапазона выбранного турнира", show_alert=True)
+            return
+        text = await build_round_matches_text(round_number, tournament_id=tournament.id, tournament_name=tournament.name)
         await callback.message.answer(text)
         await callback.answer()
 
@@ -631,12 +798,15 @@ def register_user_handlers(dp: Dispatcher):
     async def cmd_profile(message: types.Message):
         async with SessionLocal() as session:
             await upsert_user_from_message(session, message)
-        text = await build_profile_text(message.from_user.id)
+        tournament, _default_round = await _get_user_tournament_context(message.from_user.id)
+        if not await _require_membership_or_hint(message, tournament):
+            return
+        text = await build_profile_text(message.from_user.id, tournament_id=tournament.id, tournament_name=tournament.name)
         await message.answer(text)
 
     @dp.message(Command("mvp_round"))
     async def cmd_mvp_round(message: types.Message):
-        default_round = await get_current_round_default()
+        tournament, default_round = await _get_user_tournament_context(message.from_user.id)
         parts = (message.text or "").strip().split()
         if len(parts) == 1:
             round_number = default_round
@@ -650,15 +820,17 @@ def register_user_handlers(dp: Dispatcher):
             await message.answer(f"Формат: /mvp_round {default_round}")
             return
 
-        if not is_tournament_round(round_number):
-            await message.answer(f"Можно использовать только туры {ROUND_MIN}..{ROUND_MAX}. Пример: /mvp_round {default_round}")
+        if not _round_in_tournament(round_number, tournament):
+            await message.answer(
+                f"Можно использовать только туры {tournament.round_min}..{tournament.round_max}. Пример: /mvp_round {default_round}"
+            )
             return
 
-        await message.answer(await build_mvp_round_text(round_number))
+        await message.answer(await build_mvp_round_text(round_number, tournament_id=tournament.id, tournament_name=tournament.name))
 
     @dp.message(Command("tops_round"))
     async def cmd_tops_round(message: types.Message):
-        default_round = await get_current_round_default()
+        tournament, default_round = await _get_user_tournament_context(message.from_user.id)
         parts = (message.text or "").strip().split()
         if len(parts) == 1:
             round_number = default_round
@@ -672,17 +844,21 @@ def register_user_handlers(dp: Dispatcher):
             await message.answer(f"Формат: /tops_round {default_round}")
             return
 
-        if not is_tournament_round(round_number):
-            await message.answer(f"Можно использовать только туры {ROUND_MIN}..{ROUND_MAX}. Пример: /tops_round {default_round}")
+        if not _round_in_tournament(round_number, tournament):
+            await message.answer(
+                f"Можно использовать только туры {tournament.round_min}..{tournament.round_max}. Пример: /tops_round {default_round}"
+            )
             return
 
-        await message.answer(await build_round_tops_text(round_number))
+        await message.answer(await build_round_tops_text(round_number, tournament_id=tournament.id, tournament_name=tournament.name))
 
     @dp.message(F.text == "📘 Правила")
     async def quick_rules(message: types.Message):
+        tournament, _default_round = await _get_user_tournament_context(message.from_user.id)
         await message.answer(
             "📘 Короткие правила турнира\n\n"
-            "Туры турнира: 19..30.\n"
+            f"Турнир: {tournament.name}\n"
+            f"Туры: {tournament.round_min}..{tournament.round_max}\n"
             "Очки:\n"
             "🎯 точный счёт — 4\n"
             "📏 разница + исход — 2\n"
@@ -694,7 +870,9 @@ def register_user_handlers(dp: Dispatcher):
 
     @dp.message(F.text == "🎯 Поставить прогноз")
     async def quick_predict_hint(message: types.Message):
-        default_round = await get_current_round_default()
+        tournament, default_round = await _get_user_tournament_context(message.from_user.id)
+        if not await _require_membership_or_hint(message, tournament):
+            return
         now = now_msk_naive()
         async with SessionLocal() as session:
             q = await session.execute(
@@ -702,6 +880,7 @@ def register_user_handlers(dp: Dispatcher):
                 .where(
                     Match.round_number == default_round,
                     Match.source == "manual",
+                    Match.tournament_id == tournament.id,
                     Match.kickoff_time > now,
                 )
                 .order_by(Match.kickoff_time.asc())
@@ -731,10 +910,12 @@ def register_user_handlers(dp: Dispatcher):
 
         now = now_msk_naive()
         async with SessionLocal() as session:
+            tournament = await get_selected_tournament_for_user(session, callback.from_user.id)
             q = await session.execute(
                 select(Match).where(
                     Match.id == match_id,
                     Match.source == "manual",
+                    Match.tournament_id == tournament.id,
                 )
             )
             match = q.scalar_one_or_none()
@@ -774,9 +955,10 @@ def register_user_handlers(dp: Dispatcher):
         now = now_msk_naive()
         async with SessionLocal() as session:
             await upsert_user_from_message(session, message)
+            tournament = await get_selected_tournament_for_user(session, message.from_user.id)
 
             q = await session.execute(
-                select(Match).where(Match.id == int(match_id), Match.source == "manual")
+                select(Match).where(Match.id == int(match_id), Match.source == "manual", Match.tournament_id == tournament.id)
             )
             match = q.scalar_one_or_none()
             if match is None:
@@ -813,9 +995,9 @@ def register_user_handlers(dp: Dispatcher):
 
     @dp.message(CommandStart())
     async def cmd_start(message: types.Message):
-        default_round = await get_current_round_default()
+        tournament, default_round = await _get_user_tournament_context(message.from_user.id)
         await message.answer(
-            "🏆 Добро пожаловать в бот прогнозов РПЛ.\n\n"
+            f"🏆 Добро пожаловать в бот прогнозов ({tournament.name}).\n\n"
             "Как начать (3 шага):\n"
             "1) Нажми «✅ Вступить в турнир»\n"
             "2) Открой «📅 Матчи тура»\n"
@@ -845,11 +1027,14 @@ def register_user_handlers(dp: Dispatcher):
     async def cmd_join(message: types.Message):
         async with SessionLocal() as session:
             await upsert_user_from_message(session, message)
-        await message.answer("✅ Ты в турнире.")
+            tournament = await get_selected_tournament_for_user(session, message.from_user.id)
+            await ensure_user_membership(session, message.from_user.id, tournament.id)
+            await session.commit()
+        await message.answer(f"✅ Ты в турнире: {tournament.name}")
 
     @dp.message(Command("round"))
     async def cmd_round(message: types.Message):
-        default_round = await get_current_round_default()
+        tournament, default_round = await _get_user_tournament_context(message.from_user.id)
         parts = message.text.strip().split()
         if len(parts) != 2:
             await message.answer(f"Неверный формат. Пример: /round {default_round}")
@@ -861,11 +1046,13 @@ def register_user_handlers(dp: Dispatcher):
             await message.answer(f"Номер тура должен быть числом. Пример: /round {default_round}")
             return
 
-        if not is_tournament_round(round_number):
-            await message.answer(f"Можно использовать только туры {ROUND_MIN}..{ROUND_MAX}. Пример: /round {default_round}")
+        if not _round_in_tournament(round_number, tournament):
+            await message.answer(
+                f"Можно использовать только туры {tournament.round_min}..{tournament.round_max}. Пример: /round {default_round}"
+            )
             return
 
-        await send_long(message, await build_round_matches_text(round_number))
+        await send_long(message, await build_round_matches_text(round_number, tournament_id=tournament.id, tournament_name=tournament.name))
 
     @dp.message(Command("predict"))
     async def cmd_predict(message: types.Message):
@@ -892,8 +1079,12 @@ def register_user_handlers(dp: Dispatcher):
 
         async with SessionLocal() as session:
             await upsert_user_from_message(session, message)
+            tournament = await get_selected_tournament_for_user(session, message.from_user.id)
+            if not await is_user_in_tournament(session, message.from_user.id, tournament.id):
+                await message.answer(f"Сначала вступи в {tournament.name}: кнопка «✅ Вступить в турнир».")
+                return
 
-            match_q = await session.execute(select(Match).where(Match.id == match_id))
+            match_q = await session.execute(select(Match).where(Match.id == match_id, Match.tournament_id == tournament.id))
             match = match_q.scalar_one_or_none()
             if match is None:
                 await message.answer("Матч не найден.")
@@ -922,11 +1113,13 @@ def register_user_handlers(dp: Dispatcher):
 
             await session.commit()
 
-        await message.answer(f"✅ Прогноз #{match_id}: {pred_home}:{pred_away}")
+        await message.answer(f"✅ Прогноз: {match.home_team} — {match.away_team} | {pred_home}:{pred_away}")
 
     @dp.message(Command("predict_round"))
     async def cmd_predict_round(message: types.Message, state: FSMContext):
-        default_round = await get_current_round_default()
+        tournament, default_round = await _get_user_tournament_context(message.from_user.id)
+        if not await _require_membership_or_hint(message, tournament):
+            return
         parts = message.text.strip().split()
         if len(parts) != 2:
             await message.answer(f"Неверный формат. Пример: /predict_round {default_round}")
@@ -938,13 +1131,13 @@ def register_user_handlers(dp: Dispatcher):
             await message.answer(f"Номер тура должен быть числом. Пример: /predict_round {default_round}")
             return
 
-        if not is_tournament_round(round_number):
+        if not _round_in_tournament(round_number, tournament):
             await message.answer(
-                f"Можно использовать только туры {ROUND_MIN}..{ROUND_MAX}. Пример: /predict_round {default_round}"
+                f"Можно использовать только туры {tournament.round_min}..{tournament.round_max}. Пример: /predict_round {default_round}"
             )
             return
 
-        await _open_predict_round(message, state, round_number)
+        await _open_predict_round(message, state, round_number, tournament)
 
     @dp.message(PredictRoundStates.waiting_for_predictions_block)
     async def handle_predictions_block(message: types.Message, state: FSMContext):
@@ -969,6 +1162,7 @@ def register_user_handlers(dp: Dispatcher):
 
         async with SessionLocal() as session:
             await upsert_user_from_message(session, message)
+            tournament = await get_selected_tournament_for_user(session, message.from_user.id)
 
             for line in lines:
                 parts = line.replace("-", ":").split()
@@ -988,7 +1182,12 @@ def register_user_handlers(dp: Dispatcher):
                 pred_home, pred_away = parsed
 
                 match_q = await session.execute(
-                    select(Match).where(Match.id == match_id, Match.round_number == round_number, Match.source == "manual")
+                    select(Match).where(
+                        Match.id == match_id,
+                        Match.round_number == round_number,
+                        Match.source == "manual",
+                        Match.tournament_id == tournament.id,
+                    )
                 )
                 match = match_q.scalar_one_or_none()
                 if match is None:
@@ -1025,7 +1224,9 @@ def register_user_handlers(dp: Dispatcher):
 
     @dp.message(Command("my"))
     async def cmd_my(message: types.Message):
-        default_round = await get_current_round_default()
+        tournament, default_round = await _get_user_tournament_context(message.from_user.id)
+        if not await _require_membership_or_hint(message, tournament):
+            return
         parts = message.text.strip().split()
         if len(parts) != 2:
             await message.answer(f"Неверный формат. Пример: /my {default_round}")
@@ -1037,32 +1238,37 @@ def register_user_handlers(dp: Dispatcher):
             await message.answer(f"Номер тура должен быть числом. Пример: /my {default_round}")
             return
 
-        if not is_tournament_round(round_number):
-            await message.answer(f"Можно использовать только туры {ROUND_MIN}..{ROUND_MAX}. Пример: /my {default_round}")
+        if not _round_in_tournament(round_number, tournament):
+            await message.answer(
+                f"Можно использовать только туры {tournament.round_min}..{tournament.round_max}. Пример: /my {default_round}"
+            )
             return
 
         async with SessionLocal() as session:
             await upsert_user_from_message(session, message)
 
         tg_user_id = message.from_user.id
-        text = await build_my_round_text(tg_user_id=tg_user_id, round_number=round_number)
+        text = await build_my_round_text(tg_user_id=tg_user_id, round_number=round_number, tournament_id=tournament.id)
 
-        if await round_has_matches(round_number):
-            total = await get_round_total_points_for_user(tg_user_id=tg_user_id, round_number=round_number)
+        if await round_has_matches(round_number, tournament_id=tournament.id):
+            total = await get_round_total_points_for_user(
+                tg_user_id=tg_user_id, round_number=round_number, tournament_id=tournament.id
+            )
             text = f"{text}\n\nИтого за тур: {total} очк."
 
         await send_long(message, text)
 
     @dp.message(Command("table"))
     async def cmd_table(message: types.Message):
-        played, total = await get_matches_played_stats()
-        rows, participants = await build_overall_leaderboard()
+        tournament, _default_round = await _get_user_tournament_context(message.from_user.id)
+        played, total = await get_matches_played_stats(tournament_id=tournament.id)
+        rows, participants = await build_overall_leaderboard(tournament_id=tournament.id)
 
         if not rows:
             await message.answer("Пока нет участников с прогнозами. Сделай первый прогноз через /predict или /predict_round.")
             return
 
-        lines = ["🏆 Таблица лидеров (общая):"]
+        lines = [f"🏆 {tournament.name} · Таблица лидеров"]
         lines.append(f"Участников с прогнозами: {participants}")
         lines.append(f"Матчей сыграно: {played} / {total}")
 
@@ -1073,7 +1279,7 @@ def register_user_handlers(dp: Dispatcher):
 
     @dp.message(Command("table_round"))
     async def cmd_table_round(message: types.Message):
-        default_round = await get_current_round_default()
+        tournament, default_round = await _get_user_tournament_context(message.from_user.id)
         parts = message.text.strip().split()
         if len(parts) != 2:
             await message.answer(f"Неверный формат. Пример: /table_round {default_round}")
@@ -1085,18 +1291,18 @@ def register_user_handlers(dp: Dispatcher):
             await message.answer(f"Номер тура должен быть числом. Пример: /table_round {default_round}")
             return
 
-        if not is_tournament_round(round_number):
+        if not _round_in_tournament(round_number, tournament):
             await message.answer(
-                f"Можно использовать только туры {ROUND_MIN}..{ROUND_MAX}. Пример: /table_round {default_round}"
+                f"Можно использовать только туры {tournament.round_min}..{tournament.round_max}. Пример: /table_round {default_round}"
             )
             return
 
-        rows, participants = await build_round_leaderboard(round_number)
+        rows, participants = await build_round_leaderboard(round_number, tournament_id=tournament.id)
         if not rows:
             await message.answer("Пока нет прогнозов на этот тур.")
             return
 
-        lines = [f"🏁 Таблица тура {round_number}:"]
+        lines = [f"🏁 {tournament.name} · Таблица тура {round_number}:"]
         lines.append(f"Участников с прогнозами в туре: {participants}")
 
         for i, r in enumerate(rows[:20], start=1):
@@ -1106,5 +1312,6 @@ def register_user_handlers(dp: Dispatcher):
 
     @dp.message(Command("stats"))
     async def cmd_stats(message: types.Message):
-        text = await build_stats_text()
+        tournament, _default_round = await _get_user_tournament_context(message.from_user.id)
+        text = await build_stats_text(tournament_id=tournament.id)
         await send_long(message, text)

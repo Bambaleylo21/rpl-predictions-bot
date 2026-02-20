@@ -4,11 +4,12 @@ from app.db import SessionLocal
 from app.models import Match, Prediction, Point
 
 
-async def build_my_round_text(tg_user_id: int, round_number: int) -> str:
+async def build_my_round_text(tg_user_id: int, round_number: int, tournament_id: int | None = None) -> str:
     async with SessionLocal() as session:
-        res_matches = await session.execute(
-            select(Match).where(Match.round_number == round_number, Match.source == "manual").order_by(Match.kickoff_time.asc())
-        )
+        q = select(Match).where(Match.round_number == round_number, Match.source == "manual")
+        if tournament_id is not None:
+            q = q.where(Match.tournament_id == tournament_id)
+        res_matches = await session.execute(q.order_by(Match.kickoff_time.asc()))
         matches = res_matches.scalars().all()
 
         if not matches:
