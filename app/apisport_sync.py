@@ -16,6 +16,17 @@ logger = logging.getLogger(__name__)
 UTC = timezone.utc
 
 
+def _to_naive_utc(dt: datetime) -> datetime:
+    """
+    Приводим любой datetime к UTC и убираем tzinfo.
+    Это нужно, потому что в Postgres у нас TIMESTAMP WITHOUT TIME ZONE.
+    """
+    if dt.tzinfo is None:
+        # если tz нет — считаем, что это уже UTC
+        return dt
+    return dt.astimezone(UTC).replace(tzinfo=None)
+
+
 def _safe_int(x: Any) -> Optional[int]:
     try:
         if x is None:
@@ -26,20 +37,28 @@ def _safe_int(x: Any) -> Optional[int]:
 
 
 def _parse_dt(value: Any) -> Optional[datetime]:
-    """ISO-строка или epoch -> aware datetime UTC"""
+    """
+    ISO-строка или epoch -> datetime (НАИВНЫЙ UTC, без tzinfo).
+    """
     if value is None:
         return None
+
+    # epoch seconds
     if isinstance(value, (int, float)):
-        return datetime.fromtimestamp(value, tz=UTC)
+        dt = datetime.fromtimestamp(value, tz=UTC)
+        return _to_naive_utc(dt)
+
     if isinstance(value, str):
         s = value.strip().replace("Z", "+00:00")
         try:
             dt = datetime.fromisoformat(s)
+            # если tz не дали — считаем UTC
             if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=UTC)
-            return dt.astimezone(UTC)
+                return dt
+            return _to_naive_utc(dt)
         except Exception:
             return None
+
     return None
 
 
@@ -80,7 +99,7 @@ def _extract_round_number(m: dict[str, Any]) -> Optional[int]:
     return None
 
 
-def _extract_kickoff_utc(m: dict[str, Any]) -> Optional[datetime]:
+def _extract_kickoff_naive_utc(m: dict[str, Any]) -> Optional[datetime]:
     for key in ("dateTime", "kickoff", "startTime", "startAt", "scheduledAt", "date"):
         dt = _parse_dt(m.get(key))
         if dt:
@@ -174,7 +193,6 @@ async def get_setting(session: AsyncSession, key: str) -> Optional[str]:
 
 
 async def get_tournament_window(session: AsyncSession) -> tuple[date, date]:
-    """Окно турнира: берём из settings, если нет — из env."""
     s = await get_setting(session, "TOURNAMENT_START_DATE")
     e = await get_setting(session, "TOURNAMENT_END_DATE")
 
@@ -214,12 +232,15 @@ async def upsert_fixtures_for_dates(
                 continue
 
             home, away = _extract_teams(m)
-            kickoff_utc = _extract_kickoff_utc(m)
+            kickoff = _extract_kickoff_naive_utc(m)
             round_number = _extract_round_number(m)
 
-            # round_number обязателен для твоих /round, /predict_round и т.д.
             if round_number is None:
                 continue
+
+            if kickoff is None:
+                # если API не дал время — ставим 00:00 UTC (без tzinfo)
+                kickoff = datetime.combine(cur, datetime.min.time())
 
             q = await session.execute(select(Match).where(Match.api_fixture_id == ext_id))
             row = q.scalar_one_or_none()
@@ -229,7 +250,7 @@ async def upsert_fixtures_for_dates(
                     round_number=round_number,
                     home_team=home,
                     away_team=away,
-                    kickoff_time=kickoff_utc or datetime.combine(cur, datetime.min.time()).replace(tzinfo=UTC),
+                    kickoff_time=kickoff,          # НАИВНЫЙ UTC
                     api_fixture_id=ext_id,
                     source="apisport",
                 )
@@ -240,7 +261,7 @@ async def upsert_fixtures_for_dates(
                 if row.source != "apisport":
                     row.source = "apisport"
                     changed = True
-                if round_number and row.round_number != round_number:
+                if row.round_number != round_number:
                     row.round_number = round_number
                     changed = True
                 if home and row.home_team != home:
@@ -249,8 +270,8 @@ async def upsert_fixtures_for_dates(
                 if away and row.away_team != away:
                     row.away_team = away
                     changed = True
-                if kickoff_utc and row.kickoff_time != kickoff_utc:
-                    row.kickoff_time = kickoff_utc
+                if kickoff and row.kickoff_time != kickoff:
+                    row.kickoff_time = kickoff
                     changed = True
 
                 if changed:
@@ -271,15 +292,19 @@ async def sync_finished_results(
     updated = 0
 
     start_date, end_date = await get_tournament_window(session)
-    now_utc = datetime.now(tz=UTC)
+
+    # Все границы времени делаем НАИВНЫМИ UTC
+    start_dt = datetime.combine(start_date, datetime.min.time())
+    end_dt = datetime.combine(end_date, datetime.max.time())
+    now_dt = datetime.utcnow()  # наивный UTC
 
     q = await session.execute(
         select(Match).where(
             Match.source == "apisport",
             Match.api_fixture_id.isnot(None),
-            Match.kickoff_time >= datetime.combine(start_date, datetime.min.time()).replace(tzinfo=UTC),
-            Match.kickoff_time <= datetime.combine(end_date, datetime.max.time()).replace(tzinfo=UTC),
-            Match.kickoff_time < now_utc,
+            Match.kickoff_time >= start_dt,
+            Match.kickoff_time <= end_dt,
+            Match.kickoff_time < now_dt,
         )
     )
     matches = q.scalars().all()
@@ -307,13 +332,6 @@ async def sync_finished_results(
 
 
 async def run_sync_loops(session_factory, recalc_points_for_match_in_session) -> None:
-    """
-    Запускает 2 бесконечных задачи:
-    - fixtures loop: подтягивает календарь
-    - results loop: подтягивает результаты и пересчитывает очки
-
-    session_factory: callable -> AsyncSession (например SessionLocal)
-    """
     cfg = load_sync_config()
     client = ApiSportClient.from_env()
 
