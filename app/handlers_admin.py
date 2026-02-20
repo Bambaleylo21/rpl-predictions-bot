@@ -10,8 +10,40 @@ from app.config import load_admin_ids
 from app.db import SessionLocal
 from app.models import Match, Prediction, Point, User, Setting
 from app.scoring import calculate_points
+from app.tournament import ROUND_DEFAULT, ROUND_MAX, ROUND_MIN, is_tournament_round
 
 ADMIN_IDS = load_admin_ids()
+
+
+def _parse_admin_kickoff_datetime(raw: str) -> datetime | None:
+    """
+    Надёжный парсинг даты/времени для /admin_add_match.
+    Поддерживает:
+    - YYYY-MM-DD HH:MM
+    - YYYY-MM-DDTHH:MM
+    - YYYY-MM-DD HH:MM:SS
+    """
+    s = (raw or "").strip()
+    if not s:
+        return None
+
+    # Нормализуем частые "кривые" символы из мессенджеров/клавиатур.
+    s = s.replace("—", "-").replace("–", "-").replace("−", "-")
+    s = " ".join(s.split())
+    if "T" in s:
+        s = s.replace("T", " ")
+
+    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            pass
+
+    # Последний шанс: fromisoformat (иногда принимает то, что strptime не берёт)
+    try:
+        return datetime.fromisoformat(s)
+    except Exception:
+        return None
 
 
 async def recalc_points_for_match_in_session(session, match_id: int) -> int:
@@ -30,12 +62,14 @@ async def recalc_points_for_match_in_session(session, match_id: int) -> int:
     preds = res_preds.scalars().all()
 
     for p in preds:
-        pts, cat = calculate_points(
+        calc = calculate_points(
             pred_home=p.pred_home,
             pred_away=p.pred_away,
-            actual_home=match.home_score,
-            actual_away=match.away_score,
+            real_home=match.home_score,
+            real_away=match.away_score,
         )
+        pts = calc.points
+        cat = calc.category
 
         res_point = await session.execute(
             select(Point).where(Point.match_id == match_id, Point.tg_user_id == p.tg_user_id)
@@ -94,7 +128,7 @@ def register_admin_handlers(dp: Dispatcher) -> None:
 
 async def admin_add_match(message: types.Message):
     """
-    /admin_add_match 1 | TeamA | TeamB | YYYY-MM-DD HH:MM
+    /admin_add_match 19 | TeamA | TeamB | YYYY-MM-DD HH:MM
     Время — как и раньше в проекте: МСК считаем просто "как введено" (UTC+3 без zoneinfo).
     """
     if message.from_user.id not in ADMIN_IDS:
@@ -104,22 +138,28 @@ async def admin_add_match(message: types.Message):
     text = (message.text or "").strip()
     parts = [p.strip() for p in text.split("|")]
     if len(parts) != 4:
-        await message.answer("Формат: /admin_add_match 1 | TeamA | TeamB | YYYY-MM-DD HH:MM")
+        await message.answer(f"Формат: /admin_add_match {ROUND_DEFAULT} | TeamA | TeamB | YYYY-MM-DD HH:MM")
         return
 
     try:
         round_number = int(parts[0].split(maxsplit=1)[1])
     except Exception:
-        await message.answer("Не смог прочитать номер тура. Пример: /admin_add_match 1 | ...")
+        await message.answer(f"Не смог прочитать номер тура. Пример: /admin_add_match {ROUND_DEFAULT} | ...")
+        return
+
+    if not is_tournament_round(round_number):
+        await message.answer(
+            f"Можно добавлять матчи только для туров {ROUND_MIN}..{ROUND_MAX}. "
+            f"Пример: /admin_add_match {ROUND_DEFAULT} | TeamA | TeamB | YYYY-MM-DD HH:MM"
+        )
         return
 
     home = parts[1]
     away = parts[2]
     dt_str = parts[3]
 
-    try:
-        kickoff = datetime.fromisoformat(dt_str)
-    except Exception:
+    kickoff = _parse_admin_kickoff_datetime(dt_str)
+    if kickoff is None:
         await message.answer("Не смог прочитать дату. Формат: YYYY-MM-DD HH:MM (пример: 2026-03-01 19:00)")
         return
 

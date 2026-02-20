@@ -4,18 +4,9 @@ import logging
 
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import Message
 
-from app.db import init_db, SessionLocal
+from app.db import init_db
 from app.handlers import register_handlers
-from app.handlers_admin import recalc_points_for_match_in_session
-
-# Если файл apisport_sync.py у тебя есть — импорт сработает.
-# Если ты его удалял — бот всё равно запустится, синк просто отключится.
-try:
-    from app.apisport_sync import run_sync_loops
-except Exception:
-    run_sync_loops = None
 
 
 logging.basicConfig(level=logging.INFO)
@@ -64,33 +55,13 @@ async def main():
     bot = Bot(token=bot_token.strip())
     dp = Dispatcher(storage=MemoryStorage())
 
-    # 3) ВАЖНО: временный отладочный логгер всех входящих сообщений
-    # Чтобы в Render Logs было видно, что бот получает команды
-    @dp.message()
-    async def _debug_all_messages(message: Message):
-        logging.info(
-            "INCOMING: chat=%s user=%s text=%r",
-            message.chat.id,
-            message.from_user.id if message.from_user else None,
-            message.text,
-        )
-
-    # 4) Подключаем твои хендлеры (твоя логика)
+    # 3) Подключаем твои хендлеры (твоя логика)
     register_handlers(dp)
 
-    # 5) Меню команд
+    # 4) Меню команд
     await _setup_commands(bot)
 
-    # 6) Синхронизация API-Sport (если есть ключ и модуль)
-    # Сейчас ты удалил APISPORT_API_KEY — синк будет отключен.
-    try:
-        if run_sync_loops is None:
-            raise RuntimeError("apisport sync module is not available")
-        await run_sync_loops(SessionLocal, recalc_points_for_match_in_session)
-    except Exception as e:
-        print("APISPORT SYNC DISABLED:", repr(e), flush=True)
-
-    # 7) Polling
+    # 5) Polling (жёсткий ручной режим: без фоновой синхронизации API)
     await dp.start_polling(bot)
 
 

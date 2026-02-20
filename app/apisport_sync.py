@@ -14,17 +14,19 @@ from app.models import Match, Setting
 logger = logging.getLogger(__name__)
 
 UTC = timezone.utc
+MSK = timezone(timedelta(hours=3))
 
 
-def _to_naive_utc(dt: datetime) -> datetime:
+def _to_naive_msk(dt: datetime) -> datetime:
     """
-    Приводим любой datetime к UTC и убираем tzinfo.
-    Это нужно, потому что в Postgres у нас TIMESTAMP WITHOUT TIME ZONE.
+    Приводим любой datetime к МСК и убираем tzinfo.
+    В БД храним наивное московское время, чтобы дедлайны прогнозов
+    и отображение матчей были единообразными во всём боте.
     """
     if dt.tzinfo is None:
-        # если tz нет — считаем, что это уже UTC
+        # если tz нет — считаем, что это уже МСК
         return dt
-    return dt.astimezone(UTC).replace(tzinfo=None)
+    return dt.astimezone(MSK).replace(tzinfo=None)
 
 
 def _safe_int(x: Any) -> Optional[int]:
@@ -38,7 +40,7 @@ def _safe_int(x: Any) -> Optional[int]:
 
 def _parse_dt(value: Any) -> Optional[datetime]:
     """
-    ISO-строка или epoch -> datetime (НАИВНЫЙ UTC, без tzinfo).
+    ISO-строка или epoch -> datetime (НАИВНЫЙ МСК, без tzinfo).
     """
     if value is None:
         return None
@@ -46,16 +48,16 @@ def _parse_dt(value: Any) -> Optional[datetime]:
     # epoch seconds
     if isinstance(value, (int, float)):
         dt = datetime.fromtimestamp(value, tz=UTC)
-        return _to_naive_utc(dt)
+        return _to_naive_msk(dt)
 
     if isinstance(value, str):
         s = value.strip().replace("Z", "+00:00")
         try:
             dt = datetime.fromisoformat(s)
-            # если tz не дали — считаем UTC
+            # если tz не дали — считаем, что это уже МСК
             if dt.tzinfo is None:
                 return dt
-            return _to_naive_utc(dt)
+            return _to_naive_msk(dt)
         except Exception:
             return None
 
@@ -99,7 +101,7 @@ def _extract_round_number(m: dict[str, Any]) -> Optional[int]:
     return None
 
 
-def _extract_kickoff_naive_utc(m: dict[str, Any]) -> Optional[datetime]:
+def _extract_kickoff_naive_msk(m: dict[str, Any]) -> Optional[datetime]:
     for key in ("dateTime", "kickoff", "startTime", "startAt", "scheduledAt", "date"):
         dt = _parse_dt(m.get(key))
         if dt:
@@ -232,7 +234,7 @@ async def upsert_fixtures_for_dates(
                 continue
 
             home, away = _extract_teams(m)
-            kickoff = _extract_kickoff_naive_utc(m)
+            kickoff = _extract_kickoff_naive_msk(m)
             round_number = _extract_round_number(m)
 
             if round_number is None:
@@ -250,7 +252,7 @@ async def upsert_fixtures_for_dates(
                     round_number=round_number,
                     home_team=home,
                     away_team=away,
-                    kickoff_time=kickoff,          # НАИВНЫЙ UTC
+                    kickoff_time=kickoff,          # НАИВНЫЙ МСК
                     api_fixture_id=ext_id,
                     source="apisport",
                 )
@@ -293,10 +295,10 @@ async def sync_finished_results(
 
     start_date, end_date = await get_tournament_window(session)
 
-    # Все границы времени делаем НАИВНЫМИ UTC
+    # Все границы времени делаем НАИВНЫМИ МСК
     start_dt = datetime.combine(start_date, datetime.min.time())
     end_dt = datetime.combine(end_date, datetime.max.time())
-    now_dt = datetime.utcnow()  # наивный UTC
+    now_dt = (datetime.utcnow() + timedelta(hours=3)).replace(tzinfo=None)  # наивный МСК
 
     q = await session.execute(
         select(Match).where(
@@ -341,7 +343,7 @@ async def run_sync_loops(session_factory, recalc_points_for_match_in_session) ->
                 async with session_factory() as session:
                     start_date, end_date = await get_tournament_window(session)
 
-                    today = date.today()
+                    today = (datetime.utcnow() + timedelta(hours=3)).date()
                     day_from = max(start_date, today - timedelta(days=cfg.lookback_days))
                     day_to = min(end_date, today + timedelta(days=cfg.lookahead_days))
 

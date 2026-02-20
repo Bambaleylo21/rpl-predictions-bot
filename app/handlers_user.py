@@ -1,9 +1,9 @@
-from aiogram import Dispatcher, types
+from aiogram import Dispatcher, F, types
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-from sqlalchemy import select, func
+from sqlalchemy import case, func, select
 
 from datetime import datetime, timedelta
 
@@ -11,15 +11,62 @@ from app.db import SessionLocal
 from app.models import User, Match, Prediction, Point
 from app.stats import build_stats_text
 from app.my_predictions import build_my_round_text
+from app.tournament import ROUND_DEFAULT, ROUND_MAX, ROUND_MIN, is_tournament_round
 
 
 class PredictRoundStates(StatesGroup):
     waiting_for_predictions_block = State()
 
 
+def build_main_menu_keyboard(default_round: int = ROUND_DEFAULT) -> types.ReplyKeyboardMarkup:
+    return types.ReplyKeyboardMarkup(
+        keyboard=[
+            [types.KeyboardButton(text="/join"), types.KeyboardButton(text=f"/round {default_round}")],
+            [types.KeyboardButton(text="🎯 Поставить прогноз")],
+            [types.KeyboardButton(text=f"/predict_round {default_round}"), types.KeyboardButton(text=f"/my {default_round}")],
+            [types.KeyboardButton(text="/table"), types.KeyboardButton(text="/stats")],
+            [types.KeyboardButton(text="📘 Правила")],
+            [types.KeyboardButton(text="/help")],
+        ],
+        resize_keyboard=True,
+        input_field_placeholder="Выберите действие из меню ниже",
+    )
+
+
 # Надёжно для любого сервера: МСК = UTC+3 (без tzdata)
 def now_msk_naive() -> datetime:
     return (datetime.utcnow() + timedelta(hours=3)).replace(tzinfo=None)
+
+
+async def get_current_round_default() -> int:
+    """
+    Автовыбор "текущего тура" по расписанию:
+    - если сейчас до окончания тура X -> тур X
+    - если все туры прошли -> последний доступный тур
+    - если матчей ещё нет -> ROUND_DEFAULT
+    """
+    async with SessionLocal() as session:
+        q = await session.execute(
+            select(
+                Match.round_number,
+                func.min(Match.kickoff_time).label("starts_at"),
+                func.max(Match.kickoff_time).label("ends_at"),
+            )
+            .where(Match.round_number >= ROUND_MIN, Match.round_number <= ROUND_MAX)
+            .group_by(Match.round_number)
+            .order_by(Match.round_number.asc())
+        )
+        rows = q.all()
+
+    if not rows:
+        return ROUND_DEFAULT
+
+    now = now_msk_naive()
+    for round_number, _starts_at, ends_at in rows:
+        if now <= ends_at:
+            return int(round_number)
+
+    return int(rows[-1][0])
 
 
 def format_user_name(username: str | None, full_name: str | None, tg_user_id: int) -> str:
@@ -169,18 +216,24 @@ async def build_overall_leaderboard() -> tuple[list[dict], int]:
         participants_q = await session.execute(select(func.count(func.distinct(Prediction.tg_user_id))))
         participants = int(participants_q.scalar_one())
 
+        participants_subq = (
+            select(Prediction.tg_user_id.label("tg_user_id"))
+            .distinct()
+            .subquery()
+        )
+
         q = await session.execute(
             select(
                 User.tg_user_id,
                 User.username,
                 User.full_name,
                 func.coalesce(func.sum(Point.points), 0).label("total"),
-                func.coalesce(func.sum(Point.exact), 0).label("exact"),
-                func.coalesce(func.sum(Point.diff), 0).label("diff"),
-                func.coalesce(func.sum(Point.outcome), 0).label("outcome"),
+                func.coalesce(func.sum(case((Point.category == "exact", 1), else_=0)), 0).label("exact"),
+                func.coalesce(func.sum(case((Point.category == "diff", 1), else_=0)), 0).label("diff"),
+                func.coalesce(func.sum(case((Point.category == "outcome", 1), else_=0)), 0).label("outcome"),
             )
-            .select_from(User)
-            .join(Prediction, Prediction.tg_user_id == User.tg_user_id)
+            .select_from(participants_subq)
+            .join(User, User.tg_user_id == participants_subq.c.tg_user_id)
             .outerjoin(Point, Point.tg_user_id == User.tg_user_id)
             .group_by(User.tg_user_id)
             .order_by(func.coalesce(func.sum(Point.points), 0).desc())
@@ -218,9 +271,9 @@ async def build_round_leaderboard(round_number: int) -> tuple[list[dict], int]:
                 User.username,
                 User.full_name,
                 func.coalesce(func.sum(Point.points), 0).label("total"),
-                func.coalesce(func.sum(Point.exact), 0).label("exact"),
-                func.coalesce(func.sum(Point.diff), 0).label("diff"),
-                func.coalesce(func.sum(Point.outcome), 0).label("outcome"),
+                func.coalesce(func.sum(case((Point.category == "exact", 1), else_=0)), 0).label("exact"),
+                func.coalesce(func.sum(case((Point.category == "diff", 1), else_=0)), 0).label("diff"),
+                func.coalesce(func.sum(case((Point.category == "outcome", 1), else_=0)), 0).label("outcome"),
             )
             .select_from(User)
             .join(Prediction, Prediction.tg_user_id == User.tg_user_id)
@@ -248,21 +301,41 @@ async def build_round_leaderboard(round_number: int) -> tuple[list[dict], int]:
 
 
 def register_user_handlers(dp: Dispatcher):
+    @dp.message(F.text == "📘 Правила")
+    async def quick_rules(message: types.Message):
+        await message.answer(
+            "📘 Короткие правила турнира\n\n"
+            "Туры турнира: 19..30.\n"
+            "Очки:\n"
+            "🎯 точный счёт — 4\n"
+            "📏 разница + исход — 2\n"
+            "✅ только исход — 1\n"
+            "❌ мимо — 0\n\n"
+            "⛔️ После начала матча прогноз ставить/менять нельзя.\n"
+            "🕒 Время матчей и дедлайны — по Москве (МСК)."
+        )
+
+    @dp.message(F.text == "🎯 Поставить прогноз")
+    async def quick_predict_hint(message: types.Message):
+        default_round = await get_current_round_default()
+        await message.answer(
+            f"Открой матчи: /round {default_round}\n"
+            "Отправь прогноз:\n"
+            "/predict <match_id> 2:1\n\n"
+            "Пример: /predict 1 2:1"
+        )
 
     @dp.message(CommandStart())
     async def cmd_start(message: types.Message):
+        default_round = await get_current_round_default()
         await message.answer(
-            "Привет! Это бот турнира прогнозов РПЛ.\n\n"
-            "Основные команды:\n"
-            "/join — вступить в турнир\n"
-            "/round N — матчи тура\n"
-            "/predict <match_id> <счёт> — прогноз на матч\n"
-            "/predict_round N — прогнозы на тур (пакетом)\n"
-            "/my N — мои прогнозы на тур\n"
-            "/table — общая таблица лидеров\n"
-            "/table_round N — таблица лидеров тура\n"
-            "/stats — статистика\n"
-            "/ping — проверка связи\n\n"
+            "🏆 Добро пожаловать в бот прогнозов РПЛ.\n\n"
+            "Как начать (3 шага):\n"
+            "1) Нажми /join\n"
+            f"2) Открой матчи тура: /round {default_round}\n"
+            "3) Поставь прогноз: /predict <match_id> <счёт>\n\n"
+            f"Текущий тур для старта: {default_round}\n"
+            "Можно использовать кнопки снизу — так проще и быстрее.\n\n"
             "Очки:\n"
             "🎯 точный счёт — 4\n"
             "📏 разница + исход — 2\n"
@@ -270,22 +343,25 @@ def register_user_handlers(dp: Dispatcher):
             "❌ мимо — 0\n\n"
             "Время матчей и дедлайны — по Москве (МСК).\n"
             "⛔️ После начала матча прогноз ставить/менять нельзя.\n"
-            "✅ Можно вводить счет как 2:0 или 2-0."
+            "✅ Можно вводить счет как 2:0 или 2-0.",
+            reply_markup=build_main_menu_keyboard(default_round=default_round),
         )
 
     @dp.message(Command("help"))
     async def cmd_help(message: types.Message):
+        default_round = await get_current_round_default()
         await message.answer(
-            "Команды:\n"
-            "/join — вступить в турнир\n"
-            "/round N — матчи тура\n"
-            "/predict <match_id> <счёт> — прогноз на матч\n"
-            "/predict_round N — прогнозы на тур (пакетом)\n"
-            "/my N — мои прогнозы на тур\n"
-            "/table — общая таблица лидеров\n"
-            "/table_round N — таблица лидеров тура\n"
-            "/stats — статистика\n"
-            "/ping — проверка связи\n"
+            "📌 Команды:\n"
+            "/join - присоединиться к турниру\n"
+            "/round N - матчи тура\n"
+            "/predict <match_id> <счёт> - прогноз\n"
+            "/predict_round N - прогнозы на тур\n"
+            "/my N - мои прогнозы на тур\n"
+            "/table - общая таблица лидеров\n"
+            "/table_round N - таблица лидеров за тур\n"
+            "/stats - подробная статистика\n"
+            "/ping - проверка\n\n"
+            f"Сейчас для старта: тур {default_round}"
         )
 
     @dp.message(Command("ping"))
@@ -296,19 +372,24 @@ def register_user_handlers(dp: Dispatcher):
     async def cmd_join(message: types.Message):
         async with SessionLocal() as session:
             await upsert_user_from_message(session, message)
-        await message.answer("✅ Ты в турнире! Теперь можешь делать прогнозы.")
+        await message.answer("✅ Ты в турнире.")
 
     @dp.message(Command("round"))
     async def cmd_round(message: types.Message):
+        default_round = await get_current_round_default()
         parts = message.text.strip().split()
         if len(parts) != 2:
-            await message.answer("Неверный формат. Пример: /round 1")
+            await message.answer(f"Неверный формат. Пример: /round {default_round}")
             return
 
         try:
             round_number = int(parts[1])
         except ValueError:
-            await message.answer("Номер тура должен быть числом. Пример: /round 1")
+            await message.answer(f"Номер тура должен быть числом. Пример: /round {default_round}")
+            return
+
+        if not is_tournament_round(round_number):
+            await message.answer(f"Можно использовать только туры {ROUND_MIN}..{ROUND_MAX}. Пример: /round {default_round}")
             return
 
         now = now_msk_naive()
@@ -323,26 +404,18 @@ def register_user_handlers(dp: Dispatcher):
             await message.answer(f"В туре {round_number} пока нет матчей.")
             return
 
-        lines = [f"📅 Тур {round_number} (МСК):", "Легенда: 🟢 прогноз открыт · 🔒 прогноз закрыт · ✅ есть итог"]
+        lines = [f"📅 Тур {round_number} (МСК)"]
         for m in matches:
             icon = match_status_icon(m, now)
-
-            extra = ""
+            score = ""
             if m.home_score is not None and m.away_score is not None:
-                extra = f" | итог: {m.home_score}:{m.away_score}"
-            elif m.kickoff_time > now:
-                delta = m.kickoff_time - now
-                minutes = int(delta.total_seconds() // 60)
-                if minutes >= 60:
-                    extra = f" | старт через ~{minutes // 60}ч {minutes % 60}м"
-                else:
-                    extra = f" | старт через ~{minutes}м"
-            else:
-                extra = " | матч начался"
+                score = f" | {m.home_score}:{m.away_score}"
 
             lines.append(
-                f"{icon} #{m.id} — {m.home_team} — {m.away_team} | {m.kickoff_time.strftime('%Y-%m-%d %H:%M')} МСК{extra}"
+                f"{icon} #{m.id} {m.home_team} — {m.away_team} | {m.kickoff_time.strftime('%d.%m %H:%M')}{score}"
             )
+        lines.append("")
+        lines.append("🟢 прогноз открыт · 🔒 прогноз закрыт · ✅ есть итог")
 
         await send_long(message, "\n".join(lines))
 
@@ -401,19 +474,26 @@ def register_user_handlers(dp: Dispatcher):
 
             await session.commit()
 
-        await message.answer(f"✅ Прогноз сохранён для матча #{match_id}: {pred_home}:{pred_away}")
+        await message.answer(f"✅ Прогноз #{match_id}: {pred_home}:{pred_away}")
 
     @dp.message(Command("predict_round"))
     async def cmd_predict_round(message: types.Message, state: FSMContext):
+        default_round = await get_current_round_default()
         parts = message.text.strip().split()
         if len(parts) != 2:
-            await message.answer("Неверный формат. Пример: /predict_round 1")
+            await message.answer(f"Неверный формат. Пример: /predict_round {default_round}")
             return
 
         try:
             round_number = int(parts[1])
         except ValueError:
-            await message.answer("Номер тура должен быть числом. Пример: /predict_round 1")
+            await message.answer(f"Номер тура должен быть числом. Пример: /predict_round {default_round}")
+            return
+
+        if not is_tournament_round(round_number):
+            await message.answer(
+                f"Можно использовать только туры {ROUND_MIN}..{ROUND_MAX}. Пример: /predict_round {default_round}"
+            )
             return
 
         now = now_msk_naive()
@@ -525,19 +605,24 @@ def register_user_handlers(dp: Dispatcher):
             await session.commit()
 
         await state.clear()
-        await message.answer(f"✅ Готово. Сохранено: {saved}. Пропущено (закрыто/не найдено): {skipped}. Ошибок формата: {errors}.")
+        await message.answer(f"✅ Сохранено: {saved} | Пропущено: {skipped} | Ошибок: {errors}")
 
     @dp.message(Command("my"))
     async def cmd_my(message: types.Message):
+        default_round = await get_current_round_default()
         parts = message.text.strip().split()
         if len(parts) != 2:
-            await message.answer("Неверный формат. Пример: /my 1")
+            await message.answer(f"Неверный формат. Пример: /my {default_round}")
             return
 
         try:
             round_number = int(parts[1])
         except ValueError:
-            await message.answer("Номер тура должен быть числом. Пример: /my 1")
+            await message.answer(f"Номер тура должен быть числом. Пример: /my {default_round}")
+            return
+
+        if not is_tournament_round(round_number):
+            await message.answer(f"Можно использовать только туры {ROUND_MIN}..{ROUND_MAX}. Пример: /my {default_round}")
             return
 
         async with SessionLocal() as session:
@@ -572,15 +657,22 @@ def register_user_handlers(dp: Dispatcher):
 
     @dp.message(Command("table_round"))
     async def cmd_table_round(message: types.Message):
+        default_round = await get_current_round_default()
         parts = message.text.strip().split()
         if len(parts) != 2:
-            await message.answer("Неверный формат. Пример: /table_round 1")
+            await message.answer(f"Неверный формат. Пример: /table_round {default_round}")
             return
 
         try:
             round_number = int(parts[1])
         except ValueError:
-            await message.answer("Номер тура должен быть числом. Пример: /table_round 1")
+            await message.answer(f"Номер тура должен быть числом. Пример: /table_round {default_round}")
+            return
+
+        if not is_tournament_round(round_number):
+            await message.answer(
+                f"Можно использовать только туры {ROUND_MIN}..{ROUND_MAX}. Пример: /table_round {default_round}"
+            )
             return
 
         rows, participants = await build_round_leaderboard(round_number)
