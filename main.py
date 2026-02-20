@@ -4,8 +4,10 @@ import os
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from app.db import init_db
+from app.db import init_db, SessionLocal
 from app.handlers import register_handlers
+from app.handlers_admin import recalc_points_for_match_in_session
+from app.apisport_sync import run_sync_loops
 
 
 async def _setup_commands(bot: Bot) -> None:
@@ -45,6 +47,13 @@ async def main():
     register_handlers(dp)
 
     await _setup_commands(bot)
+
+    # ✅ Авто-синхронизация матчей/результатов через API-Sport.ru (в фоне, внутри polling процесса)
+    # Если env не настроен, в логах будет ошибка, но бот при этом продолжит работать.
+    try:
+        await run_sync_loops(SessionLocal, recalc_points_for_match_in_session)
+    except Exception as e:
+        print("APISPORT SYNC DISABLED:", repr(e))
 
     await dp.start_polling(bot)
 

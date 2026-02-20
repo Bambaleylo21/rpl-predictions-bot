@@ -1,379 +1,284 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-import os
-
+from datetime import datetime
 from aiogram import Dispatcher, types
 from aiogram.filters import Command
 
-from sqlalchemy import select, func
+from sqlalchemy import delete, select, func
 
 from app.config import load_admin_ids
 from app.db import SessionLocal
-from app.models import Match, Prediction, Point, User
+from app.models import Match, Prediction, Point, User, Setting
 from app.scoring import calculate_points
-
-from app.rpl_api import fetch_rpl_round, fetch_api_status  # <-- NEW
 
 ADMIN_IDS = load_admin_ids()
 
 
-async def recalc_points_for_match(match_id: int) -> int:
+async def recalc_points_for_match_in_session(session, match_id: int) -> int:
+    """Пересчитать очки за один матч (использует переданную DB-сессию)."""
     updates = 0
 
-    async with SessionLocal() as session:
-        res_match = await session.execute(select(Match).where(Match.id == match_id))
-        match = res_match.scalar_one_or_none()
-        if match is None:
-            return 0
+    res_match = await session.execute(select(Match).where(Match.id == match_id))
+    match = res_match.scalar_one_or_none()
+    if match is None:
+        return 0
 
-        if match.home_score is None or match.away_score is None:
-            return 0
+    if match.home_score is None or match.away_score is None:
+        return 0
 
-        res_preds = await session.execute(select(Prediction).where(Prediction.match_id == match_id))
-        preds = res_preds.scalars().all()
+    res_preds = await session.execute(select(Prediction).where(Prediction.match_id == match_id))
+    preds = res_preds.scalars().all()
 
-        for p in preds:
-            calc = calculate_points(p.pred_home, p.pred_away, match.home_score, match.away_score)
+    for p in preds:
+        pts, cat = calculate_points(
+            pred_home=p.pred_home,
+            pred_away=p.pred_away,
+            actual_home=match.home_score,
+            actual_away=match.away_score,
+        )
 
-            res_point = await session.execute(
-                select(Point).where(Point.match_id == match_id, Point.tg_user_id == p.tg_user_id)
-            )
-            point = res_point.scalar_one_or_none()
-
-            if point is None:
-                session.add(
-                    Point(
-                        match_id=match_id,
-                        tg_user_id=p.tg_user_id,
-                        points=calc.points,
-                        category=calc.category,
-                    )
-                )
-            else:
-                point.points = calc.points
-                point.category = calc.category
-
+        res_point = await session.execute(
+            select(Point).where(Point.match_id == match_id, Point.tg_user_id == p.tg_user_id)
+        )
+        point = res_point.scalar_one_or_none()
+        if point is None:
+            session.add(Point(match_id=match_id, tg_user_id=p.tg_user_id, points=pts, category=cat))
             updates += 1
+        else:
+            if point.points != pts or point.category != cat:
+                point.points = pts
+                point.category = cat
+                updates += 1
 
-        await session.commit()
-
+    await session.commit()
     return updates
 
 
-def _db_mode_text() -> str:
-    if os.getenv("DATABASE_URL"):
-        return "Postgres (DATABASE_URL)"
-    return "SQLite fallback (⚠️ так быть не должно на Render)"
+async def recalc_points_for_match(match_id: int) -> int:
+    """Пересчитать очки за один матч (открывает свою DB-сессию)."""
+    async with SessionLocal() as session:
+        return await recalc_points_for_match_in_session(session, match_id)
 
 
-def _short_err(e: Exception, limit: int = 600) -> str:
-    msg = str(e) if str(e) else repr(e)
-    if len(msg) > limit:
-        msg = msg[:limit] + "…"
-    return msg
+def _parse_score(score_str: str) -> tuple[int, int] | None:
+    s = score_str.strip().replace("-", ":")
+    if ":" not in s:
+        return None
+    a, b = s.split(":", 1)
+    try:
+        return int(a), int(b)
+    except ValueError:
+        return None
+
+
+async def _set_setting(session, key: str, value: str) -> None:
+    res = await session.execute(select(Setting).where(Setting.key == key))
+    obj = res.scalar_one_or_none()
+    if obj:
+        obj.value = value
+    else:
+        session.add(Setting(key=key, value=value))
+    await session.commit()
 
 
 def register_admin_handlers(dp: Dispatcher) -> None:
-    @dp.message(Command("admin_add_match"))
-    async def cmd_admin_add_match(message: types.Message):
-        if message.from_user.id not in ADMIN_IDS:
-            await message.answer("⛔️ У вас нет прав на эту команду.")
-            return
+    dp.message.register(admin_add_match, Command("admin_add_match"))
+    dp.message.register(admin_set_result, Command("admin_set_result"))
+    dp.message.register(admin_recalc, Command("admin_recalc"))
+    dp.message.register(admin_health, Command("admin_health"))
 
-        raw = message.text.replace("/admin_add_match", "", 1).strip()
+    # Новое: управление окном турнира и удаление участников
+    dp.message.register(admin_set_window, Command("admin_set_window"))
+    dp.message.register(admin_remove_user, Command("admin_remove_user"))
 
-        if "|" not in raw:
-            await message.answer(
-                "Неверный формат.\n"
-                "Пример:\n"
-                "/admin_add_match 1 | Zenit | Spartak | 2026-03-01 18:30"
-            )
-            return
 
-        parts = [p.strip() for p in raw.split("|")]
-        if len(parts) != 4:
-            await message.answer(
-                "Неверный формат. Нужно 4 части через | \n"
-                "Пример:\n"
-                "/admin_add_match 1 | Zenit | Spartak | 2026-03-01 18:30"
-            )
-            return
+async def admin_add_match(message: types.Message):
+    """
+    /admin_add_match 1 | TeamA | TeamB | YYYY-MM-DD HH:MM
+    Время — как и раньше в проекте: МСК считаем просто "как введено" (UTC+3 без zoneinfo).
+    """
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("⛔️ У вас нет прав на эту команду.")
+        return
 
-        round_str, home_team, away_team, dt_str = parts
+    text = (message.text or "").strip()
+    parts = [p.strip() for p in text.split("|")]
+    if len(parts) != 4:
+        await message.answer("Формат: /admin_add_match 1 | TeamA | TeamB | YYYY-MM-DD HH:MM")
+        return
 
-        try:
-            round_number = int(round_str)
-        except ValueError:
-            await message.answer("Тур должен быть числом. Пример: 1")
-            return
+    try:
+        round_number = int(parts[0].split(maxsplit=1)[1])
+    except Exception:
+        await message.answer("Не смог прочитать номер тура. Пример: /admin_add_match 1 | ...")
+        return
 
-        try:
-            kickoff_time = datetime.strptime(dt_str, "%Y-%m-%d %H:%M")
-        except ValueError:
-            await message.answer("Дата/время должны быть в формате YYYY-MM-DD HH:MM (например 2026-03-01 18:30)")
-            return
+    home = parts[1]
+    away = parts[2]
+    dt_str = parts[3]
 
-        async with SessionLocal() as session:
-            session.add(
-                Match(
-                    round_number=round_number,
-                    home_team=home_team,
-                    away_team=away_team,
-                    kickoff_time=kickoff_time,
-                )
-            )
-            await session.commit()
+    try:
+        kickoff = datetime.fromisoformat(dt_str)
+    except Exception:
+        await message.answer("Не смог прочитать дату. Формат: YYYY-MM-DD HH:MM (пример: 2026-03-01 19:00)")
+        return
 
-        await message.answer(
-            f"✅ Матч добавлен:\n"
-            f"Тур {round_number}: {home_team} — {away_team}\n"
-            f"Начало: {kickoff_time.strftime('%Y-%m-%d %H:%M')}"
+    async with SessionLocal() as session:
+        m = Match(
+            round_number=round_number,
+            home_team=home,
+            away_team=away,
+            kickoff_time=kickoff,
+            source="manual",
         )
+        session.add(m)
+        await session.commit()
 
-    @dp.message(Command("admin_set_result"))
-    async def cmd_admin_set_result(message: types.Message):
-        if message.from_user.id not in ADMIN_IDS:
-            await message.answer("⛔️ У вас нет прав на эту команду.")
+        await message.answer(f"✅ Матч добавлен: #{m.id} | тур {round_number} | {home} — {away} | {dt_str} (МСК)")
+
+
+async def admin_set_result(message: types.Message):
+    """
+    /admin_set_result <match_id> <score>
+    score: 2:0 или 2-0
+    """
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("⛔️ У вас нет прав на эту команду.")
+        return
+
+    parts = (message.text or "").strip().split()
+    if len(parts) != 3:
+        await message.answer("Формат: /admin_set_result <match_id> <score> (пример: /admin_set_result 12 2:0)")
+        return
+
+    try:
+        match_id = int(parts[1])
+    except ValueError:
+        await message.answer("match_id должен быть числом.")
+        return
+
+    parsed = _parse_score(parts[2])
+    if not parsed:
+        await message.answer("Счёт должен быть формата 2:0 или 2-0")
+        return
+    home_score, away_score = parsed
+
+    async with SessionLocal() as session:
+        res = await session.execute(select(Match).where(Match.id == match_id))
+        match = res.scalar_one_or_none()
+        if not match:
+            await message.answer("Матч не найден.")
             return
 
-        parts = message.text.strip().split()
-        if len(parts) != 3:
-            await message.answer("Неверный формат. Пример: /admin_set_result 1 2:1")
-            return
+        match.home_score = home_score
+        match.away_score = away_score
+        await session.commit()
 
-        try:
-            match_id = int(parts[1])
-        except ValueError:
-            await message.answer("match_id должен быть числом. Пример: /admin_set_result 1 2:1")
-            return
+        updates = await recalc_points_for_match_in_session(session, match_id)
 
-        score_str = parts[2].strip().replace("-", ":")
-        if ":" not in score_str:
-            await message.answer("Счёт должен быть в формате 2:1")
-            return
+    await message.answer(
+        f"✅ Результат сохранён для матча #{match_id}: {home_score}:{away_score}. "
+        f"Пересчитано очков: {updates}"
+    )
 
-        try:
-            home_s, away_s = score_str.split(":")
-            home_score = int(home_s)
-            away_score = int(away_s)
-        except ValueError:
-            await message.answer("Счёт должен быть числом, пример: 2:1")
-            return
 
-        async with SessionLocal() as session:
-            result = await session.execute(select(Match).where(Match.id == match_id))
-            match = result.scalar_one_or_none()
+async def admin_recalc(message: types.Message):
+    """/admin_recalc — пересчитать всё"""
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("⛔️ У вас нет прав на эту команду.")
+        return
 
-            if match is None:
-                await message.answer(f"Матч с id={match_id} не найден.")
-                return
+    total_updates = 0
+    async with SessionLocal() as session:
+        res = await session.execute(select(Match))
+        matches = res.scalars().all()
 
-            match.home_score = home_score
-            match.away_score = away_score
-            await session.commit()
+        for m in matches:
+            if m.home_score is None or m.away_score is None:
+                continue
+            total_updates += await recalc_points_for_match_in_session(session, m.id)
 
-        updates = await recalc_points_for_match(match_id)
+    await message.answer(f"✅ Пересчёт завершён. Обновлений: {total_updates}")
 
-        await message.answer(
-            f"✅ Результат сохранён для матча #{match_id}: {home_score}:{away_score}\n"
-            f"🧮 Начислений пересчитано: {updates}"
-        )
 
-    @dp.message(Command("admin_recalc"))
-    async def cmd_admin_recalc(message: types.Message):
-        if message.from_user.id not in ADMIN_IDS:
-            await message.answer("⛔️ У вас нет прав на эту команду.")
-            return
+async def admin_health(message: types.Message):
+    """/admin_health — диагностика БД"""
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("⛔️ У вас нет прав на эту команду.")
+        return
 
-        updates = 0
+    async with SessionLocal() as session:
+        users = (await session.execute(select(func.count(User.id)))).scalar() or 0
+        matches = (await session.execute(select(func.count(Match.id)))).scalar() or 0
+        preds = (await session.execute(select(func.count(Prediction.id)))).scalar() or 0
+        points = (await session.execute(select(func.count(Point.id)))).scalar() or 0
 
-        async with SessionLocal() as session:
-            res_matches = await session.execute(
-                select(Match).where(Match.home_score.is_not(None), Match.away_score.is_not(None))
-            )
-            matches = res_matches.scalars().all()
+    await message.answer(
+        "🩺 DB health\n"
+        f"users: {users}\n"
+        f"matches: {matches}\n"
+        f"predictions: {preds}\n"
+        f"points: {points}"
+    )
 
-            for m in matches:
-                res_preds = await session.execute(select(Prediction).where(Prediction.match_id == m.id))
-                preds = res_preds.scalars().all()
 
-                for p in preds:
-                    calc = calculate_points(p.pred_home, p.pred_away, m.home_score, m.away_score)
+async def admin_set_window(message: types.Message):
+    """
+    /admin_set_window YYYY-MM-DD YYYY-MM-DD
+    Сохраняем окно турнира в таблицу settings:
+    - TOURNAMENT_START_DATE
+    - TOURNAMENT_END_DATE
+    """
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("⛔️ У вас нет прав на эту команду.")
+        return
 
-                    res_point = await session.execute(
-                        select(Point).where(Point.match_id == m.id, Point.tg_user_id == p.tg_user_id)
-                    )
-                    point = res_point.scalar_one_or_none()
+    parts = (message.text or "").strip().split()
+    if len(parts) != 3:
+        await message.answer("Формат: /admin_set_window 2026-03-01 2026-05-31")
+        return
 
-                    if point is None:
-                        session.add(
-                            Point(
-                                match_id=m.id,
-                                tg_user_id=p.tg_user_id,
-                                points=calc.points,
-                                category=calc.category,
-                            )
-                        )
-                    else:
-                        point.points = calc.points
-                        point.category = calc.category
+    start_s = parts[1].strip()
+    end_s = parts[2].strip()
 
-                    updates += 1
+    try:
+        _ = datetime.fromisoformat(start_s).date()
+        _ = datetime.fromisoformat(end_s).date()
+    except Exception:
+        await message.answer("Даты должны быть формата YYYY-MM-DD (пример: 2026-03-01)")
+        return
 
-            await session.commit()
+    async with SessionLocal() as session:
+        await _set_setting(session, "TOURNAMENT_START_DATE", start_s)
+        await _set_setting(session, "TOURNAMENT_END_DATE", end_s)
 
-        await message.answer(f"✅ Пересчитано начислений: {updates}")
+    await message.answer(f"✅ Окно турнира установлено: {start_s} .. {end_s}")
 
-    @dp.message(Command("admin_health"))
-    async def cmd_admin_health(message: types.Message):
-        if message.from_user.id not in ADMIN_IDS:
-            await message.answer("⛔️ У вас нет прав на эту команду.")
-            return
 
-        async with SessionLocal() as session:
-            users_cnt = int((await session.execute(select(func.count(User.id)))).scalar_one() or 0)
-            matches_cnt = int((await session.execute(select(func.count(Match.id)))).scalar_one() or 0)
-            preds_cnt = int((await session.execute(select(func.count(Prediction.id)))).scalar_one() or 0)
-            points_cnt = int((await session.execute(select(func.count(Point.id)))).scalar_one() or 0)
+async def admin_remove_user(message: types.Message):
+    """
+    /admin_remove_user <tg_user_id>
+    Удаляет пользователя из users и чистит его predictions/points (по tg_user_id).
+    """
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("⛔️ У вас нет прав на эту команду.")
+        return
 
-            played_cnt = int(
-                (await session.execute(
-                    select(func.count(Match.id)).where(Match.home_score.is_not(None), Match.away_score.is_not(None))
-                )).scalar_one() or 0
-            )
+    parts = (message.text or "").strip().split()
+    if len(parts) != 2:
+        await message.answer("Формат: /admin_remove_user 210477579")
+        return
 
-            active_users_cnt = int(
-                (await session.execute(select(func.count(func.distinct(Prediction.tg_user_id))))).scalar_one() or 0
-            )
+    try:
+        tg_user_id = int(parts[1])
+    except ValueError:
+        await message.answer("tg_user_id должен быть числом.")
+        return
 
-        text = (
-            "🩺 admin_health\n"
-            f"DB: {_db_mode_text()}\n"
-            f"users (registered): {users_cnt}\n"
-            f"users (active): {active_users_cnt}\n"
-            f"matches: {matches_cnt}\n"
-            f"played matches: {played_cnt}\n"
-            f"predictions: {preds_cnt}\n"
-            f"points: {points_cnt}"
-        )
-        await message.answer(text)
+    async with SessionLocal() as session:
+        await session.execute(delete(Prediction).where(Prediction.tg_user_id == tg_user_id))
+        await session.execute(delete(Point).where(Point.tg_user_id == tg_user_id))
+        await session.execute(delete(User).where(User.tg_user_id == tg_user_id))
+        await session.commit()
 
-    @dp.message(Command("admin_api_status"))
-    async def cmd_admin_api_status(message: types.Message):
-        """
-        Показывает статус API-Football (план/лимиты/запросы).
-        """
-        if message.from_user.id not in ADMIN_IDS:
-            await message.answer("⛔️ У вас нет прав на эту команду.")
-            return
-
-        try:
-            data = await fetch_api_status()
-        except Exception as e:
-            print("API STATUS ERROR:", repr(e))
-            await message.answer(f"⚠️ Ошибка API: {type(e).__name__}: {_short_err(e)}")
-            return
-
-        resp = data.get("response") or {}
-        # resp обычно содержит account/subscription/requests
-        await message.answer(f"📡 API status\n{resp}")
-
-    @dp.message(Command("admin_api_debug"))
-    async def cmd_admin_api_debug(message: types.Message):
-        if message.from_user.id not in ADMIN_IDS:
-            await message.answer("⛔️ У вас нет прав на эту команду.")
-            return
-
-        try:
-            _, dbg = await fetch_rpl_round(1)
-        except Exception as e:
-            print("API DEBUG ERROR:", repr(e))
-            await message.answer(f"⚠️ Ошибка API: {type(e).__name__}: {_short_err(e)}")
-            return
-
-        text = (
-            "🔎 API debug\n"
-            f"league_id: {dbg.get('league_id')}\n"
-            f"season_year: {dbg.get('season_year')}\n"
-            f"rounds_count: {dbg.get('rounds_count')}\n"
-            f"target_round_for_1: {dbg.get('target_round')}\n"
-            f"rounds_head: {dbg.get('rounds_head')}\n"
-            f"rounds_tail: {dbg.get('rounds_tail')}\n"
-            f"fallback_discovered_rounds_count: {dbg.get('fallback_discovered_rounds_count')}\n"
-            f"fallback_discovered_rounds_head: {dbg.get('fallback_discovered_rounds_head')}\n"
-        )
-        await message.answer(text)
-
-    @dp.message(Command("admin_sync_round"))
-    async def cmd_admin_sync_round(message: types.Message):
-        if message.from_user.id not in ADMIN_IDS:
-            await message.answer("⛔️ У вас нет прав на эту команду.")
-            return
-
-        parts = message.text.strip().split()
-        if len(parts) != 2:
-            await message.answer("Неверный формат. Пример: /admin_sync_round 1")
-            return
-
-        try:
-            round_number = int(parts[1])
-        except ValueError:
-            await message.answer("N должен быть числом. Пример: /admin_sync_round 1")
-            return
-
-        try:
-            fixtures, dbg = await fetch_rpl_round(round_number)
-        except Exception as e:
-            print("API SYNC ERROR:", repr(e))
-            await message.answer(f"⚠️ Ошибка API: {type(e).__name__}: {_short_err(e)}")
-            return
-
-        if not fixtures:
-            await message.answer(
-                "Матчи тура не найдены (API вернул пусто).\n"
-                f"season_year: {dbg.get('season_year')}\n"
-                f"rounds_count: {dbg.get('rounds_count')}\n"
-                f"fallback_discovered_rounds_count: {dbg.get('fallback_discovered_rounds_count')}\n"
-                f"fallback_discovered_rounds_head: {dbg.get('fallback_discovered_rounds_head')}\n"
-            )
-            return
-
-        created = 0
-        updated = 0
-
-        async with SessionLocal() as session:
-            for fx in fixtures:
-                res = await session.execute(select(Match).where(Match.api_fixture_id == fx.api_fixture_id))
-                existing = res.scalar_one_or_none()
-
-                kickoff_utc_naive = fx.start_time_utc.astimezone(timezone.utc).replace(tzinfo=None)
-
-                if existing is None:
-                    created += 1
-                    session.add(
-                        Match(
-                            round_number=round_number,
-                            home_team=fx.home_team,
-                            away_team=fx.away_team,
-                            kickoff_time=kickoff_utc_naive,
-                            api_fixture_id=fx.api_fixture_id,
-                        )
-                    )
-                else:
-                    updated += 1
-                    existing.round_number = round_number
-                    existing.home_team = fx.home_team
-                    existing.away_team = fx.away_team
-                    existing.kickoff_time = kickoff_utc_naive
-
-            await session.commit()
-
-        await message.answer(
-            "✅ Синхронизация завершена.\n"
-            f"Тур: {round_number}\n"
-            f"API round example: {fixtures[0].round_str}\n"
-            f"Матчей из API: {len(fixtures)}\n"
-            f"Создано: {created}\n"
-            f"Обновлено: {updated}"
-        )
+    await message.answer(f"✅ Пользователь {tg_user_id} удалён (users + predictions + points).")
