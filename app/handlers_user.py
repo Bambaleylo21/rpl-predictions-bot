@@ -28,7 +28,7 @@ def _selected_tournament_key(tg_user_id: int) -> str:
 def build_main_menu_keyboard(default_round: int) -> types.ReplyKeyboardMarkup:
     return types.ReplyKeyboardMarkup(
         keyboard=[
-            [types.KeyboardButton(text="🏆 РПЛ"), types.KeyboardButton(text="🏴 АПЛ")],
+            [types.KeyboardButton(text="🇷🇺 РПЛ"), types.KeyboardButton(text="🇬🇧 АПЛ")],
             [types.KeyboardButton(text="✅ Вступить в турнир"), types.KeyboardButton(text="📅 Матчи тура")],
             [types.KeyboardButton(text="🎯 Поставить прогноз")],
             [types.KeyboardButton(text="🗂 Мои прогнозы")],
@@ -599,7 +599,7 @@ def register_user_handlers(dp: Dispatcher):
         )
         return False
 
-    @dp.message(F.text == "🏆 РПЛ")
+    @dp.message(F.text == "🇷🇺 РПЛ")
     async def btn_switch_rpl(message: types.Message):
         async with SessionLocal() as session:
             await upsert_user_from_message(session, message)
@@ -610,7 +610,7 @@ def register_user_handlers(dp: Dispatcher):
         default_round = await get_current_round_default(t.id, t.round_min, t.round_max)
         await message.answer(f"Переключено на турнир: {t.name}\nТекущий тур: {default_round}")
 
-    @dp.message(F.text == "🏴 АПЛ")
+    @dp.message(F.text == "🇬🇧 АПЛ")
     async def btn_switch_epl(message: types.Message):
         async with SessionLocal() as session:
             await upsert_user_from_message(session, message)
