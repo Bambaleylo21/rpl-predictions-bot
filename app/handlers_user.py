@@ -79,7 +79,7 @@ def build_open_matches_inline_keyboard(matches: list[Match]) -> types.InlineKeyb
     current_row: list[types.InlineKeyboardButton] = []
     for m in matches:
         btn = types.InlineKeyboardButton(
-            text=f"#{m.id} {m.home_team} — {m.away_team}",
+            text=f"{m.home_team} — {m.away_team}",
             callback_data=f"pick_match:{m.id}",
         )
         current_row.append(btn)
@@ -399,7 +399,7 @@ def register_user_handlers(dp: Dispatcher):
         await state.set_state(PredictRoundStates.waiting_for_single_match_score)
         await state.update_data(single_match_id=match.id)
         await callback.message.answer(
-            f"Матч выбран: #{match.id} {match.home_team} — {match.away_team}\n"
+            f"Матч выбран: {match.home_team} — {match.away_team}\n"
             "Отправь только счёт: 2:1"
         )
         await callback.answer()
@@ -458,7 +458,7 @@ def register_user_handlers(dp: Dispatcher):
             await session.commit()
 
         await state.clear()
-        await message.answer(f"✅ Прогноз #{match_id}: {pred_home}:{pred_away}")
+        await message.answer(f"✅ Прогноз: {match.home_team} — {match.away_team} | {pred_home}:{pred_away}")
 
     @dp.message(CommandStart())
     async def cmd_start(message: types.Message):
