@@ -1,0 +1,114 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+from collections import defaultdict
+from datetime import datetime, timedelta
+
+from sqlalchemy import select
+
+from app.models import Match, Setting, User
+from app.tournament import ROUND_MAX, ROUND_MIN
+
+logger = logging.getLogger(__name__)
+
+
+def _now_msk_naive() -> datetime:
+    return (datetime.utcnow() + timedelta(hours=3)).replace(tzinfo=None)
+
+
+def _reminder_key(kickoff: datetime) -> str:
+    return f"RMD30_{kickoff.strftime('%Y%m%d%H%M')}"
+
+
+async def _setting_exists(session, key: str) -> bool:
+    q = await session.execute(select(Setting).where(Setting.key == key))
+    return q.scalar_one_or_none() is not None
+
+
+async def _mark_setting(session, key: str, value: str = "1") -> None:
+    q = await session.execute(select(Setting).where(Setting.key == key))
+    row = q.scalar_one_or_none()
+    if row is None:
+        session.add(Setting(key=key, value=value))
+    else:
+        row.value = value
+
+
+def _build_reminder_text(kickoff: datetime, matches: list[Match]) -> str:
+    lines = [
+        "⏰ До начала матчей 30 минут",
+        f"Старт: {kickoff.strftime('%d.%m %H:%M')} МСК",
+        "",
+    ]
+    for m in matches:
+        lines.append(f"• {m.home_team} — {m.away_team}")
+    lines.append("")
+    lines.append("Ставка: нажми «🎯 Поставить прогноз»")
+    return "\n".join(lines)
+
+
+async def _process_reminders_once(bot, session_factory) -> int:
+    sent_batches = 0
+    now = _now_msk_naive()
+
+    # Небольшое окно вокруг отметки "за 30 минут", чтобы не зависеть от дрейфа цикла.
+    window_start = now + timedelta(minutes=29, seconds=30)
+    window_end = now + timedelta(minutes=30, seconds=30)
+
+    async with session_factory() as session:
+        matches_q = await session.execute(
+            select(Match)
+            .where(
+                Match.source == "manual",
+                Match.round_number >= ROUND_MIN,
+                Match.round_number <= ROUND_MAX,
+                Match.kickoff_time >= window_start,
+                Match.kickoff_time < window_end,
+            )
+            .order_by(Match.kickoff_time.asc(), Match.id.asc())
+        )
+        matches = matches_q.scalars().all()
+        if not matches:
+            return 0
+
+        users_q = await session.execute(select(User.tg_user_id))
+        user_ids = [int(x[0]) for x in users_q.all()]
+        if not user_ids:
+            return 0
+
+        by_kickoff: dict[datetime, list[Match]] = defaultdict(list)
+        for m in matches:
+            by_kickoff[m.kickoff_time].append(m)
+
+        for kickoff, kickoff_matches in by_kickoff.items():
+            key = _reminder_key(kickoff)
+            if await _setting_exists(session, key):
+                continue
+
+            text = _build_reminder_text(kickoff, kickoff_matches)
+            for tg_user_id in user_ids:
+                try:
+                    await bot.send_message(chat_id=tg_user_id, text=text)
+                except Exception:
+                    # Пользователь мог заблокировать бота и т.п.; продолжаем для остальных.
+                    logger.exception("[reminder] send failed for user=%s", tg_user_id)
+
+            await _mark_setting(session, key, "1")
+            await session.commit()
+            sent_batches += 1
+
+    return sent_batches
+
+
+async def run_match_reminders_loop(bot, session_factory) -> None:
+    logger.info("[reminder] loop started")
+    while True:
+        try:
+            sent = await _process_reminders_once(bot, session_factory)
+            if sent:
+                logger.info("[reminder] sent batches=%s", sent)
+        except Exception:
+            logger.exception("[reminder] loop iteration failed")
+
+        await asyncio.sleep(30)

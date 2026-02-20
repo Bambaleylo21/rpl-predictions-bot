@@ -5,8 +5,13 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from app.db import init_db
+from app.db import SessionLocal, init_db
 from app.handlers import register_handlers
+
+try:
+    from app.reminders import run_match_reminders_loop
+except Exception:
+    run_match_reminders_loop = None
 
 
 logging.basicConfig(level=logging.INFO)
@@ -61,7 +66,11 @@ async def main():
     # 4) Меню команд
     await _setup_commands(bot)
 
-    # 5) Polling (жёсткий ручной режим: без фоновой синхронизации API)
+    # 5) Фоновый цикл напоминаний за 30 минут до матчей
+    if run_match_reminders_loop is not None:
+        asyncio.create_task(run_match_reminders_loop(bot, SessionLocal))
+
+    # 6) Polling (жёсткий ручной режим: без фоновой синхронизации API)
     await dp.start_polling(bot)
 
 
