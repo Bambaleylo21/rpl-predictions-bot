@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import select
 
-from app.models import Match, Setting, User
+from app.models import Match, Prediction, Setting, User
 from app.tournament import ROUND_MAX, ROUND_MIN
 
 logger = logging.getLogger(__name__)
@@ -86,8 +86,23 @@ async def _process_reminders_once(bot, session_factory) -> int:
             if await _setting_exists(session, key):
                 continue
 
-            text = _build_reminder_text(kickoff, kickoff_matches)
+            kickoff_match_ids = [m.id for m in kickoff_matches]
+            preds_q = await session.execute(
+                select(Prediction.tg_user_id, Prediction.match_id).where(Prediction.match_id.in_(kickoff_match_ids))
+            )
+            preds_rows = preds_q.all()
+
+            user_predicted_ids: dict[int, set[int]] = defaultdict(set)
+            for tg_user_id, match_id in preds_rows:
+                user_predicted_ids[int(tg_user_id)].add(int(match_id))
+
             for tg_user_id in user_ids:
+                predicted_ids = user_predicted_ids.get(tg_user_id, set())
+                missing_matches = [m for m in kickoff_matches if m.id not in predicted_ids]
+                if not missing_matches:
+                    continue
+
+                text = _build_reminder_text(kickoff, missing_matches)
                 try:
                     await bot.send_message(chat_id=tg_user_id, text=text)
                 except Exception:
