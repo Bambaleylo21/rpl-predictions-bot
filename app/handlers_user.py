@@ -16,6 +16,7 @@ from app.tournament import ROUND_DEFAULT, ROUND_MAX, ROUND_MIN, is_tournament_ro
 
 class PredictRoundStates(StatesGroup):
     waiting_for_predictions_block = State()
+    waiting_for_single_match_score = State()
 
 
 def build_main_menu_keyboard(default_round: int = ROUND_DEFAULT) -> types.ReplyKeyboardMarkup:
@@ -71,6 +72,25 @@ async def get_current_round_default() -> int:
             return int(round_number)
 
     return int(rows[-1][0])
+
+
+def build_open_matches_inline_keyboard(matches: list[Match]) -> types.InlineKeyboardMarkup:
+    rows: list[list[types.InlineKeyboardButton]] = []
+    current_row: list[types.InlineKeyboardButton] = []
+    for m in matches:
+        btn = types.InlineKeyboardButton(
+            text=f"#{m.id} {m.home_team} — {m.away_team}",
+            callback_data=f"pick_match:{m.id}",
+        )
+        current_row.append(btn)
+        if len(current_row) == 1:
+            rows.append(current_row)
+            current_row = []
+
+    if current_row:
+        rows.append(current_row)
+
+    return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def format_user_name(username: str | None, full_name: str | None, tg_user_id: int) -> str:
@@ -324,12 +344,121 @@ def register_user_handlers(dp: Dispatcher):
     @dp.message(F.text == "🎯 Поставить прогноз")
     async def quick_predict_hint(message: types.Message):
         default_round = await get_current_round_default()
+        now = now_msk_naive()
+        async with SessionLocal() as session:
+            q = await session.execute(
+                select(Match)
+                .where(
+                    Match.round_number == default_round,
+                    Match.source == "manual",
+                    Match.kickoff_time > now,
+                )
+                .order_by(Match.kickoff_time.asc())
+            )
+            open_matches = q.scalars().all()
+
+        if not open_matches:
+            await message.answer(
+                f"На тур {default_round} открытых матчей нет.\n"
+                f"Посмотри следующий тур через /round {default_round + 1}."
+            )
+            return
+
         await message.answer(
-            f"Открой матчи: /round {default_round}\n"
-            "Отправь прогноз:\n"
-            "/predict <match_id> 2:1\n\n"
-            "Пример: /predict 1 2:1"
+            f"Выбери матч тура {default_round}, затем просто отправь счёт (например: 2:1).",
+            reply_markup=build_open_matches_inline_keyboard(open_matches),
         )
+
+    @dp.callback_query(F.data.startswith("pick_match:"))
+    async def on_pick_match(callback: types.CallbackQuery, state: FSMContext):
+        data = callback.data or ""
+        try:
+            match_id = int(data.split(":", 1)[1])
+        except Exception:
+            await callback.answer("Не удалось выбрать матч", show_alert=True)
+            return
+
+        now = now_msk_naive()
+        async with SessionLocal() as session:
+            q = await session.execute(
+                select(Match).where(
+                    Match.id == match_id,
+                    Match.source == "manual",
+                )
+            )
+            match = q.scalar_one_or_none()
+
+        if match is None:
+            await callback.answer("Матч не найден", show_alert=True)
+            return
+
+        if match.kickoff_time <= now:
+            await callback.answer("Прогноз уже закрыт", show_alert=True)
+            return
+
+        await state.set_state(PredictRoundStates.waiting_for_single_match_score)
+        await state.update_data(single_match_id=match.id)
+        await callback.message.answer(
+            f"Матч выбран: #{match.id} {match.home_team} — {match.away_team}\n"
+            "Отправь только счёт: 2:1"
+        )
+        await callback.answer()
+
+    @dp.message(PredictRoundStates.waiting_for_single_match_score)
+    async def on_single_match_score(message: types.Message, state: FSMContext):
+        data = await state.get_data()
+        match_id = data.get("single_match_id")
+        if not match_id:
+            await state.clear()
+            await message.answer("Сессия сброшена. Нажми кнопку «🎯 Поставить прогноз» ещё раз.")
+            return
+
+        parsed = parse_score(normalize_score(message.text or ""))
+        if parsed is None:
+            await message.answer("Неверный формат. Отправь только счёт: 2:1")
+            return
+        pred_home, pred_away = parsed
+
+        tg_user_id = message.from_user.id
+        now = now_msk_naive()
+        async with SessionLocal() as session:
+            await upsert_user_from_message(session, message)
+
+            q = await session.execute(
+                select(Match).where(Match.id == int(match_id), Match.source == "manual")
+            )
+            match = q.scalar_one_or_none()
+            if match is None:
+                await state.clear()
+                await message.answer("Матч не найден.")
+                return
+
+            if match.kickoff_time <= now:
+                await state.clear()
+                await message.answer("🔒 Прогнозы на этот матч уже закрыты.")
+                return
+
+            pred_q = await session.execute(
+                select(Prediction).where(Prediction.tg_user_id == tg_user_id, Prediction.match_id == match.id)
+            )
+            pred = pred_q.scalar_one_or_none()
+            if pred is None:
+                session.add(
+                    Prediction(
+                        tg_user_id=tg_user_id,
+                        match_id=match.id,
+                        pred_home=pred_home,
+                        pred_away=pred_away,
+                    )
+                )
+            else:
+                pred.pred_home = pred_home
+                pred.pred_away = pred_away
+
+            await session.commit()
+
+        await state.clear()
+        await message.answer(f"✅ Прогноз #{match_id}: {pred_home}:{pred_away}")
 
     @dp.message(CommandStart())
     async def cmd_start(message: types.Message):
