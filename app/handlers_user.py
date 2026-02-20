@@ -478,6 +478,19 @@ def register_user_handlers(dp: Dispatcher):
     async def _send_help_text(message: types.Message) -> None:
         default_round = await get_current_round_default()
         await message.answer(
+            "🔘 Кнопки:\n"
+            "✅ Вступить в турнир\n"
+            "📅 Матчи тура\n"
+            "🎯 Поставить прогноз\n"
+            "🗂 Мои прогнозы\n"
+            "🏆 Общая таблица\n"
+            "📊 Статистика\n"
+            "👤 Мой профиль\n"
+            "🗓 История туров\n"
+            "🥇 MVP тура\n"
+            "⭐ Топы тура\n"
+            "📘 Правила\n"
+            "❓ Помощь\n\n"
             "📌 Команды:\n"
             "/join - присоединиться к турниру\n"
             "/round N - матчи тура\n"
@@ -798,9 +811,9 @@ def register_user_handlers(dp: Dispatcher):
         await message.answer(
             "🏆 Добро пожаловать в бот прогнозов РПЛ.\n\n"
             "Как начать (3 шага):\n"
-            "1) Нажми /join\n"
-            f"2) Открой матчи тура: /round {default_round}\n"
-            "3) Поставь прогноз: /predict <match_id> <счёт>\n\n"
+            "1) Нажми «✅ Вступить в турнир»\n"
+            "2) Открой «📅 Матчи тура»\n"
+            "3) Нажми «🎯 Поставить прогноз», выбери матч и отправь счёт (например: 2:1)\n\n"
             f"Текущий тур для старта: {default_round}\n"
             "Можно использовать кнопки снизу — так проще и быстрее.\n\n"
             "Очки:\n"
