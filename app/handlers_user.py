@@ -691,10 +691,19 @@ async def build_mvp_round_text(round_number: int, tournament_id: int, tournament
         )
     best = rows[0]["total"]
     winners = [r for r in rows if r["total"] == best]
-    lines = [f"🏅 {tournament_name} · MVP тура {round_number}"]
-    lines.append(f"Участников: {participants}")
-    for w in winners[:5]:
-        lines.append(f"{w['name']} — {w['total']} очк. | 🎯{w['exact']} | 📏{w['diff']} | ✅{w['outcome']}")
+    lines = [f"🏅 MVP тура {round_number} ({tournament_name})", ""]
+    lines.append(f"Лучший результат тура: {best} очк.")
+    if len(winners) == 1:
+        lines.append(f"MVP: {winners[0]['name']}")
+    else:
+        lines.append("MVP разделили:")
+        for w in winners[:3]:
+            lines.append(f"• {w['name']}")
+    lines.append("")
+    lines.append("Топ-3 тура:")
+    for i, r in enumerate(rows[:3], start=1):
+        lines.append(f"{i}. {r['name']} — {r['total']} очк.")
+    lines.append(f"Участников в туре: {participants}")
     lines.append("")
     lines.append("Хочешь попасть сюда? Жми «🎯 Поставить прогноз».")
     return "\n".join(lines)
@@ -719,12 +728,80 @@ async def build_round_tops_text(round_number: int, tournament_id: int, tournamen
     def names(items: list[dict]) -> str:
         return ", ".join(i["name"] for i in items[:3]) if items else "—"
 
-    lines = [f"📊 {tournament_name} · Топы тура {round_number}", f"Участников: {participants}", ""]
-    lines.append(f"🎯 Точные: {names(exact_top)}")
-    lines.append(f"📏 Разница+исход: {names(diff_top)}")
-    lines.append(f"✅ Только исход: {names(outcome_top)}")
+    breakthrough_line = "—"
+    prev_rows, _prev_participants = await build_round_leaderboard(round_number - 1, tournament_id=tournament_id)
+    prev_map = {int(r["tg_user_id"]): int(r["total"]) for r in prev_rows}
+    deltas: list[tuple[int, int, str]] = []  # (delta, total, name)
+    for r in rows:
+        uid = int(r["tg_user_id"])
+        if uid in prev_map:
+            delta = int(r["total"]) - int(prev_map[uid])
+            deltas.append((delta, int(r["total"]), r["name"]))
+    if deltas:
+        deltas.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        best_delta, best_total, best_name = deltas[0]
+        if best_delta > 0:
+            breakthrough_line = f"{best_name} — +{best_delta} к прошлому туру ({best_total} очк.)"
+        else:
+            breakthrough_line = f"{rows[0]['name']} — {rows[0]['total']} очк. (лучший результат тура)"
+    elif rows:
+        breakthrough_line = f"{rows[0]['name']} — {rows[0]['total']} очк. (лучший результат тура)"
+
+    lines = [f"⭐ Топы тура {round_number} ({tournament_name})", f"Участников: {participants}", ""]
+    lines.append(f"🎯 Снайпер тура: {names(exact_top)}")
+    lines.append(f"📏 Мастер разницы: {names(diff_top)}")
+    lines.append(f"✅ Король исходов: {names(outcome_top)}")
+    lines.append(f"🚀 Прорыв тура: {breakthrough_line}")
     lines.append("")
     lines.append("Хочешь залететь в топы? Вперёд в «🎯 Поставить прогноз».")
+    return "\n".join(lines)
+
+
+async def build_round_digest_text(round_number: int, tournament_id: int, tournament_name: str) -> str:
+    rows, participants = await build_round_leaderboard(round_number, tournament_id=tournament_id)
+    if not rows:
+        return (
+            f"В туре {round_number} пока нет данных для итогов.\n"
+            "Как только появятся результаты и очки, соберу красивую сводку."
+        )
+
+    def top_by(key: str) -> list[dict]:
+        mx = max(int(r[key]) for r in rows)
+        return [r for r in rows if int(r[key]) == mx and mx > 0]
+
+    exact_top = top_by("exact")
+    diff_top = top_by("diff")
+    outcome_top = top_by("outcome")
+
+    def names(items: list[dict]) -> str:
+        return ", ".join(i["name"] for i in items[:3]) if items else "—"
+
+    best = int(rows[0]["total"])
+    mvp_names = ", ".join(r["name"] for r in rows if int(r["total"]) == best)
+    prev_rows, _ = await build_round_leaderboard(round_number - 1, tournament_id=tournament_id)
+    prev_map = {int(r["tg_user_id"]): int(r["total"]) for r in prev_rows}
+    breakthrough_line = f"{rows[0]['name']} — {rows[0]['total']} очк."
+    deltas: list[tuple[int, int, str]] = []
+    for r in rows:
+        uid = int(r["tg_user_id"])
+        if uid in prev_map:
+            delta = int(r["total"]) - int(prev_map[uid])
+            deltas.append((delta, int(r["total"]), r["name"]))
+    if deltas:
+        deltas.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        d, t, n = deltas[0]
+        if d > 0:
+            breakthrough_line = f"{n} — +{d} к прошлому туру ({t} очк.)"
+
+    lines = [f"🏁 Итоги тура {round_number} ({tournament_name})", ""]
+    lines.append(f"🏅 MVP: {mvp_names} — {best} очк.")
+    lines.append(f"🎯 Топ точных: {names(exact_top)}")
+    lines.append(f"📏 Топ разницы: {names(diff_top)}")
+    lines.append(f"✅ Топ исходов: {names(outcome_top)}")
+    lines.append(f"🚀 Прорыв тура: {breakthrough_line}")
+    lines.append("")
+    lines.append(f"Участников в туре: {participants}")
+    lines.append("Следующий тур открыт. Время ставить прогнозы: «🎯 Поставить прогноз».")
     return "\n".join(lines)
 
 
@@ -797,6 +874,7 @@ def register_user_handlers(dp: Dispatcher):
             "/history\n"
             "/mvp_round N\n"
             "/tops_round N\n\n"
+            "/round_digest N\n\n"
             f"Стартовый тур сейчас: {default_round}\n"
             "Если что-то не получается, просто напиши команду ещё раз — подскажу формат."
         )
@@ -1106,6 +1184,32 @@ def register_user_handlers(dp: Dispatcher):
             return
 
         await message.answer(await build_round_tops_text(round_number, tournament_id=tournament.id, tournament_name=tournament.name))
+        await message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_info"))
+
+    @dp.message(Command("round_digest"))
+    async def cmd_round_digest(message: types.Message):
+        tournament, default_round = await _get_user_tournament_context(message.from_user.id)
+        parts = (message.text or "").strip().split()
+        if len(parts) == 1:
+            round_number = default_round
+        elif len(parts) == 2:
+            try:
+                round_number = int(parts[1])
+            except ValueError:
+                await message.answer(f"Номер тура нужен числом. Пример: /round_digest {default_round}")
+                return
+        else:
+            await message.answer(f"Формат: /round_digest {default_round}")
+            return
+
+        if not _round_in_tournament(round_number, tournament):
+            await message.answer(
+                f"В этом турнире доступны только туры {tournament.round_min}..{tournament.round_max}.\n"
+                f"Попробуй: /round_digest {default_round}"
+            )
+            return
+
+        await message.answer(await build_round_digest_text(round_number, tournament_id=tournament.id, tournament_name=tournament.name))
         await message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_info"))
 
     @dp.message(F.text == "📘 Правила")

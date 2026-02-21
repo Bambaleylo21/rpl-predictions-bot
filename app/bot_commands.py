@@ -15,6 +15,7 @@ def get_bot_commands() -> list[types.BotCommand]:
         types.BotCommand(command="profile", description="Мой профиль"),
         types.BotCommand(command="mvp_round", description="MVP тура: /mvp_round 19"),
         types.BotCommand(command="tops_round", description="Топы тура: /tops_round 19"),
+        types.BotCommand(command="round_digest", description="Итоги тура: /round_digest 19"),
         types.BotCommand(command="stats", description="Подробная статистика"),
         types.BotCommand(command="admin_add_match", description="Админ: добавить матч"),
         types.BotCommand(command="admin_set_result", description="Админ: поставить результат"),
