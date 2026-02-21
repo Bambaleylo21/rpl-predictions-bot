@@ -51,6 +51,7 @@ class UserTournament(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     tg_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
     tournament_id: Mapped[int] = mapped_column(ForeignKey("tournaments.id", ondelete="CASCADE"), nullable=False, index=True)
+    display_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime,

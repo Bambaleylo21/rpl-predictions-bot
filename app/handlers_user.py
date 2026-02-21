@@ -54,7 +54,12 @@ async def get_tournament_by_code(session, code: str) -> Tournament | None:
     return q.scalar_one_or_none()
 
 
-async def ensure_user_membership(session, tg_user_id: int, tournament_id: int) -> None:
+async def ensure_user_membership(
+    session,
+    tg_user_id: int,
+    tournament_id: int,
+    display_name: str | None = None,
+) -> UserTournament:
     q = await session.execute(
         select(UserTournament).where(
             UserTournament.tg_user_id == tg_user_id,
@@ -63,7 +68,11 @@ async def ensure_user_membership(session, tg_user_id: int, tournament_id: int) -
     )
     row = q.scalar_one_or_none()
     if row is None:
-        session.add(UserTournament(tg_user_id=tg_user_id, tournament_id=tournament_id))
+        row = UserTournament(tg_user_id=tg_user_id, tournament_id=tournament_id, display_name=display_name)
+        session.add(row)
+    elif display_name is not None:
+        row.display_name = display_name
+    return row
 
 
 async def is_user_in_tournament(session, tg_user_id: int, tournament_id: int) -> bool:
@@ -177,9 +186,17 @@ def build_round_history_keyboard(round_min: int, round_max: int) -> types.Inline
     return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def format_user_name(display_name: str | None, username: str | None, full_name: str | None, tg_user_id: int) -> str:
-    if display_name:
-        return display_name
+def format_user_name(
+    tournament_display_name: str | None,
+    user_display_name: str | None,
+    username: str | None,
+    full_name: str | None,
+    tg_user_id: int,
+) -> str:
+    if tournament_display_name:
+        return tournament_display_name
+    if user_display_name:
+        return user_display_name
     if username:
         return f"@{username}"
     if full_name:
@@ -367,6 +384,7 @@ async def build_overall_leaderboard(tournament_id: int) -> tuple[list[dict], int
         q = await session.execute(
             select(
                 User.tg_user_id,
+                UserTournament.display_name,
                 User.display_name,
                 User.username,
                 User.full_name,
@@ -377,19 +395,23 @@ async def build_overall_leaderboard(tournament_id: int) -> tuple[list[dict], int
             )
             .select_from(participants_subq)
             .join(User, User.tg_user_id == participants_subq.c.tg_user_id)
+            .outerjoin(
+                UserTournament,
+                (UserTournament.tg_user_id == User.tg_user_id) & (UserTournament.tournament_id == tournament_id),
+            )
             .outerjoin(Point, Point.tg_user_id == User.tg_user_id)
             .outerjoin(Match, Match.id == Point.match_id)
             .where((Match.id.is_(None)) | ((Match.tournament_id == tournament_id) & (Match.source == "manual")))
-            .group_by(User.tg_user_id, User.display_name, User.username, User.full_name)
+            .group_by(User.tg_user_id, UserTournament.display_name, User.display_name, User.username, User.full_name)
             .order_by(func.coalesce(func.sum(Point.points), 0).desc())
         )
 
         rows = []
-        for tg_user_id, display_name, username, full_name, total, exact, diff, outcome in q.all():
+        for tg_user_id, tournament_display_name, user_display_name, username, full_name, total, exact, diff, outcome in q.all():
             rows.append(
                 {
                     "tg_user_id": tg_user_id,
-                    "name": format_user_name(display_name, username, full_name, tg_user_id),
+                    "name": format_user_name(tournament_display_name, user_display_name, username, full_name, tg_user_id),
                     "total": int(total),
                     "exact": int(exact),
                     "diff": int(diff),
@@ -413,6 +435,7 @@ async def build_round_leaderboard(round_number: int, tournament_id: int) -> tupl
         q = await session.execute(
             select(
                 User.tg_user_id,
+                UserTournament.display_name,
                 User.display_name,
                 User.username,
                 User.full_name,
@@ -424,18 +447,22 @@ async def build_round_leaderboard(round_number: int, tournament_id: int) -> tupl
             .select_from(User)
             .join(Prediction, Prediction.tg_user_id == User.tg_user_id)
             .join(Match, Match.id == Prediction.match_id)
+            .outerjoin(
+                UserTournament,
+                (UserTournament.tg_user_id == User.tg_user_id) & (UserTournament.tournament_id == tournament_id),
+            )
             .outerjoin(Point, (Point.tg_user_id == User.tg_user_id) & (Point.match_id == Match.id))
             .where(Match.round_number == round_number, Match.source == "manual", Match.tournament_id == tournament_id)
-            .group_by(User.tg_user_id, User.display_name, User.username, User.full_name)
+            .group_by(User.tg_user_id, UserTournament.display_name, User.display_name, User.username, User.full_name)
             .order_by(func.coalesce(func.sum(Point.points), 0).desc())
         )
 
         rows = []
-        for tg_user_id, display_name, username, full_name, total, exact, diff, outcome in q.all():
+        for tg_user_id, tournament_display_name, user_display_name, username, full_name, total, exact, diff, outcome in q.all():
             rows.append(
                 {
                     "tg_user_id": tg_user_id,
-                    "name": format_user_name(display_name, username, full_name, tg_user_id),
+                    "name": format_user_name(tournament_display_name, user_display_name, username, full_name, tg_user_id),
                     "total": int(total),
                     "exact": int(exact),
                     "diff": int(diff),
@@ -535,9 +562,18 @@ async def build_profile_text(tg_user_id: int, tournament_id: int, tournament_nam
         )
         rounds = rounds_q.all()
 
+        ut_q = await session.execute(
+            select(UserTournament).where(
+                UserTournament.tg_user_id == tg_user_id,
+                UserTournament.tournament_id == tournament_id,
+            )
+        )
+        ut = ut_q.scalar_one_or_none()
+
     avg_per_round = round((total / len(rounds)), 2) if rounds else 0.0
     form = " | ".join([f"Т{int(r[0])}:{int(r[1])}" for r in rounds[:3]]) if rounds else "нет данных"
-    name = format_user_name(user.display_name, user.username, user.full_name, tg_user_id)
+    tournament_display_name = ut.display_name if ut is not None else None
+    name = format_user_name(tournament_display_name, user.display_name, user.username, user.full_name, tg_user_id)
     return (
         f"👤 Профиль: {name}\n"
         f"Турнир: {tournament_name}\n"
@@ -1032,7 +1068,6 @@ def register_user_handlers(dp: Dispatcher):
                 await state.clear()
                 await message.answer("Не удалось обновить профиль. Попробуй /join ещё раз.")
                 return
-            user.display_name = display_name
 
             tournament = None
             if tournament_id > 0:
@@ -1041,7 +1076,12 @@ def register_user_handlers(dp: Dispatcher):
             if tournament is None:
                 tournament = await get_selected_tournament_for_user(session, message.from_user.id)
 
-            await ensure_user_membership(session, message.from_user.id, tournament.id)
+            await ensure_user_membership(
+                session,
+                message.from_user.id,
+                tournament.id,
+                display_name=display_name,
+            )
             await session.commit()
 
         await state.clear()

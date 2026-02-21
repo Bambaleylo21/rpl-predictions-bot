@@ -33,7 +33,10 @@ async def build_my_round_text(tg_user_id: int, round_number: int, tournament_id:
     lines = [f"🧾 Мои прогнозы — тур {round_number}:"]
     for m in matches:
         pred = preds_map.get(m.id)
-        pred_txt = "—" if pred is None else f"{pred.pred_home}:{pred.pred_away}"
+        if pred is None:
+            match_line = f"{m.home_team} — {m.away_team}"
+        else:
+            match_line = f"{m.home_team} {pred.pred_home}:{pred.pred_away} {m.away_team}"
 
         result_txt = ""
         if m.home_score is not None and m.away_score is not None:
@@ -42,6 +45,6 @@ async def build_my_round_text(tg_user_id: int, round_number: int, tournament_id:
             if pt is not None:
                 result_txt += f" | очки {pt.points} ({pt.category})"
 
-        lines.append(f"{m.home_team} — {m.away_team} | прогноз: {pred_txt}{result_txt}")
+        lines.append(f"{match_line}{result_txt}")
 
     return "\n".join(lines)

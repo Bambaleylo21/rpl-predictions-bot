@@ -2,7 +2,7 @@ from collections import defaultdict
 from sqlalchemy import select
 
 from app.db import SessionLocal
-from app.models import Match, Point, User
+from app.models import Match, Point, User, UserTournament
 
 
 async def build_stats_text(tournament_id: int | None = None) -> str:
@@ -15,6 +15,10 @@ async def build_stats_text(tournament_id: int | None = None) -> str:
     async with SessionLocal() as session:
         res_users = await session.execute(select(User))
         users = res_users.scalars().all()
+        user_tournament_rows = []
+        if tournament_id is not None:
+            ut_q = await session.execute(select(UserTournament).where(UserTournament.tournament_id == tournament_id))
+            user_tournament_rows = ut_q.scalars().all()
 
         points_q = select(Point)
         if tournament_id is not None:
@@ -28,9 +32,12 @@ async def build_stats_text(tournament_id: int | None = None) -> str:
         points_rows = res_points.scalars().all()
 
     # Мапа tg_user_id -> имя
+    tournament_names = {u.tg_user_id: u.display_name for u in user_tournament_rows if u.display_name}
     names = {}
     for u in users:
-        if u.display_name:
+        if u.tg_user_id in tournament_names:
+            names[u.tg_user_id] = tournament_names[u.tg_user_id]
+        elif u.display_name:
             names[u.tg_user_id] = u.display_name
         elif u.username:
             names[u.tg_user_id] = f"@{u.username}"

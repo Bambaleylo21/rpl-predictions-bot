@@ -43,9 +43,10 @@ async def _apply_postgres_schema_fixes(conn) -> None:
         "INSERT INTO tournaments (code, name, round_min, round_max, is_active) VALUES ('EPL', 'English Premier League', 27, 38, 1) ON CONFLICT (code) DO NOTHING",
 
         # user_tournaments
-        "CREATE TABLE IF NOT EXISTS user_tournaments (id SERIAL PRIMARY KEY, tg_user_id BIGINT NOT NULL, tournament_id INTEGER NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE, created_at TIMESTAMP NOT NULL DEFAULT NOW(), CONSTRAINT uq_user_tournaments_user_tournament UNIQUE (tg_user_id, tournament_id))",
+        "CREATE TABLE IF NOT EXISTS user_tournaments (id SERIAL PRIMARY KEY, tg_user_id BIGINT NOT NULL, tournament_id INTEGER NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE, display_name VARCHAR(64), created_at TIMESTAMP NOT NULL DEFAULT NOW(), CONSTRAINT uq_user_tournaments_user_tournament UNIQUE (tg_user_id, tournament_id))",
         "CREATE INDEX IF NOT EXISTS ix_user_tournaments_tg_user_id ON user_tournaments (tg_user_id)",
         "CREATE INDEX IF NOT EXISTS ix_user_tournaments_tournament_id ON user_tournaments (tournament_id)",
+        "ALTER TABLE user_tournaments ADD COLUMN IF NOT EXISTS display_name VARCHAR(64)",
 
         # users
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT NOW()",
@@ -105,9 +106,10 @@ async def _apply_sqlite_schema_fixes(conn) -> None:
         "INSERT OR IGNORE INTO tournaments (code, name, round_min, round_max, is_active) VALUES ('EPL', 'English Premier League', 27, 38, 1)",
 
         # user_tournaments
-        "CREATE TABLE IF NOT EXISTS user_tournaments (id INTEGER PRIMARY KEY AUTOINCREMENT, tg_user_id BIGINT NOT NULL, tournament_id INTEGER NOT NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT uq_user_tournaments_user_tournament UNIQUE (tg_user_id, tournament_id))",
+        "CREATE TABLE IF NOT EXISTS user_tournaments (id INTEGER PRIMARY KEY AUTOINCREMENT, tg_user_id BIGINT NOT NULL, tournament_id INTEGER NOT NULL, display_name VARCHAR(64), created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT uq_user_tournaments_user_tournament UNIQUE (tg_user_id, tournament_id))",
         "CREATE INDEX IF NOT EXISTS ix_user_tournaments_tg_user_id ON user_tournaments (tg_user_id)",
         "CREATE INDEX IF NOT EXISTS ix_user_tournaments_tournament_id ON user_tournaments (tournament_id)",
+        "ALTER TABLE user_tournaments ADD COLUMN display_name VARCHAR(64)",
 
         # matches.tournament_id
         "ALTER TABLE matches ADD COLUMN tournament_id INTEGER",
