@@ -1416,6 +1416,16 @@ def register_user_handlers(dp: Dispatcher):
     async def cmd_ping(message: types.Message):
         await message.answer("pong ✅ На связи!")
 
+    @dp.message(Command("chatid"))
+    async def cmd_chatid(message: types.Message):
+        chat = message.chat
+        title = getattr(chat, "title", None) or getattr(chat, "full_name", None) or "private"
+        await message.answer(
+            f"chat_id: {chat.id}\n"
+            f"type: {chat.type}\n"
+            f"title: {title}"
+        )
+
     @dp.message(Command("join"))
     async def cmd_join(message: types.Message, state: FSMContext):
         async with SessionLocal() as session:
