@@ -6,11 +6,11 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-from sqlalchemy import delete, select, func
+from sqlalchemy import case, delete, select, func
 
 from app.config import load_admin_ids
 from app.db import SessionLocal
-from app.models import Match, Prediction, Point, User, Setting, Tournament
+from app.models import Match, Prediction, Point, User, Setting, Tournament, UserTournament
 from app.scoring import calculate_points
 from app.tournament import ROUND_DEFAULT, ROUND_MAX, ROUND_MIN, is_tournament_round
 
@@ -123,6 +123,126 @@ async def _set_setting(session, key: str, value: str) -> None:
     else:
         session.add(Setting(key=key, value=value))
     await session.commit()
+
+
+async def _get_setting(session, key: str) -> str | None:
+    res = await session.execute(select(Setting).where(Setting.key == key))
+    row = res.scalar_one_or_none()
+    return row.value if row else None
+
+
+async def _maybe_send_round_closed_summary(bot, tournament_id: int, round_number: int) -> None:
+    """
+    Шлём один сводный пуш после закрытия тура:
+    - только один раз на тур (через settings key)
+    - только когда у всех матчей тура есть итог
+    """
+    key = f"ROUND_SUMMARY_SENT_T{int(tournament_id)}_R{int(round_number)}"
+
+    async with SessionLocal() as session:
+        already_sent = await _get_setting(session, key)
+        if already_sent:
+            return
+
+        counts_q = await session.execute(
+            select(
+                func.count(Match.id).label("total"),
+                func.sum(
+                    case(
+                        (
+                            (Match.home_score.isnot(None) & Match.away_score.isnot(None)),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ).label("done"),
+            ).where(
+                Match.tournament_id == tournament_id,
+                Match.round_number == round_number,
+                Match.source == "manual",
+            )
+        )
+        total, done = counts_q.one()
+        total = int(total or 0)
+        done = int(done or 0)
+        if total == 0 or done < total:
+            return
+
+        t_q = await session.execute(select(Tournament).where(Tournament.id == tournament_id))
+        tournament = t_q.scalar_one_or_none()
+        tournament_name = tournament.name if tournament else f"турнир #{tournament_id}"
+
+        members_q = await session.execute(
+            select(UserTournament.tg_user_id).where(UserTournament.tournament_id == tournament_id)
+        )
+        member_ids = [int(x[0]) for x in members_q.all()]
+
+        leaderboard_q = await session.execute(
+            select(
+                Prediction.tg_user_id,
+                func.coalesce(func.sum(Point.points), 0).label("total"),
+                func.coalesce(func.sum(case((Point.category == "exact", 1), else_=0)), 0).label("exact"),
+                func.coalesce(func.sum(case((Point.category == "diff", 1), else_=0)), 0).label("diff"),
+                func.coalesce(func.sum(case((Point.category == "outcome", 1), else_=0)), 0).label("outcome"),
+            )
+            .select_from(Prediction)
+            .join(Match, Match.id == Prediction.match_id)
+            .outerjoin(
+                Point,
+                (Point.tg_user_id == Prediction.tg_user_id) & (Point.match_id == Prediction.match_id),
+            )
+            .where(
+                Match.tournament_id == tournament_id,
+                Match.round_number == round_number,
+                Match.source == "manual",
+            )
+            .group_by(Prediction.tg_user_id)
+            .order_by(
+                func.coalesce(func.sum(Point.points), 0).desc(),
+                func.coalesce(func.sum(case((Point.category == "exact", 1), else_=0)), 0).desc(),
+                func.coalesce(func.sum(case((Point.category == "diff", 1), else_=0)), 0).desc(),
+                func.coalesce(func.sum(case((Point.category == "outcome", 1), else_=0)), 0).desc(),
+                Prediction.tg_user_id.asc(),
+            )
+        )
+        leaderboard_rows = leaderboard_q.all()
+        places: dict[int, int] = {}
+        stats: dict[int, tuple[int, int, int, int]] = {}
+        for i, (tg_user_id, total_pts, exact, diff, outcome) in enumerate(leaderboard_rows, start=1):
+            uid = int(tg_user_id)
+            places[uid] = i
+            stats[uid] = (
+                int(total_pts or 0),
+                int(exact or 0),
+                int(diff or 0),
+                int(outcome or 0),
+            )
+        participants = len(leaderboard_rows)
+
+        for tg_user_id in member_ids:
+            if tg_user_id in stats:
+                total_pts, exact, diff, outcome = stats[tg_user_id]
+                place = places[tg_user_id]
+                text = (
+                    f"🏁 Тур {round_number} завершён ({tournament_name})\n"
+                    f"Твои очки за тур: {total_pts}\n"
+                    f"🎯{exact} | 📏{diff} | ✅{outcome}\n"
+                    f"Место в туре: {place}/{participants}\n\n"
+                    "Следующий тур уже рядом — жми «🎯 Поставить прогноз»."
+                )
+            else:
+                text = (
+                    f"🏁 Тур {round_number} завершён ({tournament_name})\n"
+                    "В этом туре у тебя не было прогнозов.\n\n"
+                    "В следующем туре врываемся — жми «🎯 Поставить прогноз»."
+                )
+
+            try:
+                await bot.send_message(chat_id=tg_user_id, text=text)
+            except Exception:
+                continue
+
+        await _set_setting(session, key, "1")
 
 
 def register_admin_handlers(dp: Dispatcher) -> None:
@@ -245,6 +365,7 @@ async def admin_set_result(message: types.Message):
         f"✅ Результат сохранён: {match.home_team} — {match.away_team} | {home_score}:{away_score}. "
         f"Пересчитано очков: {updates}"
     )
+    await _maybe_send_round_closed_summary(message.bot, tournament_id=match.tournament_id, round_number=match.round_number)
 
 
 async def _admin_set_result_open_tournament_picker(message: types.Message) -> None:
@@ -418,6 +539,7 @@ async def admin_set_result_score_input(message: types.Message, state: FSMContext
         f"✅ Результат сохранён: {match.home_team} — {match.away_team} | {home_score}:{away_score}. "
         f"Пересчитано очков: {updates}"
     )
+    await _maybe_send_round_closed_summary(message.bot, tournament_id=match.tournament_id, round_number=match.round_number)
 
 
 async def admin_recalc(message: types.Message):
