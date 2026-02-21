@@ -13,7 +13,10 @@ async def build_my_round_text(tg_user_id: int, round_number: int, tournament_id:
         matches = res_matches.scalars().all()
 
         if not matches:
-            return f"В туре {round_number} пока нет матчей."
+            return (
+                f"В туре {round_number} пока нет матчей.\n"
+                "Проверь соседний тур или загляни чуть позже."
+            )
 
         # прогнозы пользователя на матчи тура
         match_ids = [m.id for m in matches]

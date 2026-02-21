@@ -239,6 +239,16 @@ def build_quick_nav_keyboard(kind: str) -> types.InlineKeyboardMarkup:
         ]
         return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
+    if kind == "after_info":
+        rows = [
+            [
+                types.InlineKeyboardButton(text="📅 Матчи тура", callback_data="qnav:round"),
+                types.InlineKeyboardButton(text="🎯 Поставить прогноз", callback_data="qnav:predict"),
+            ],
+            [types.InlineKeyboardButton(text="🗂 Мои прогнозы", callback_data="qnav:my")],
+        ]
+        return types.InlineKeyboardMarkup(inline_keyboard=rows)
+
     return types.InlineKeyboardMarkup(inline_keyboard=[])
 
 
@@ -546,7 +556,10 @@ async def build_round_matches_text(round_number: int, tournament_id: int, tourna
         matches = result.scalars().all()
 
     if not matches:
-        return f"В туре {round_number} пока нет матчей."
+        return (
+            f"В туре {round_number} пока нет матчей.\n"
+            "Проверь соседний тур или загляни позже — расписание может обновиться."
+        )
 
     lines = [f"📅 {tournament_name} · Тур {round_number} (МСК)"]
     for m in matches:
@@ -646,20 +659,28 @@ async def build_profile_text(tg_user_id: int, tournament_id: int, tournament_nam
 async def build_mvp_round_text(round_number: int, tournament_id: int, tournament_name: str) -> str:
     rows, participants = await build_round_leaderboard(round_number, tournament_id=tournament_id)
     if not rows:
-        return f"В туре {round_number} пока нет данных для MVP."
+        return (
+            f"В туре {round_number} пока нет данных для MVP.\n"
+            "Как только появятся результаты и очки, сразу покажу лучших."
+        )
     best = rows[0]["total"]
     winners = [r for r in rows if r["total"] == best]
     lines = [f"🏅 {tournament_name} · MVP тура {round_number}"]
     lines.append(f"Участников: {participants}")
     for w in winners[:5]:
         lines.append(f"{w['name']} — {w['total']} очк. | 🎯{w['exact']} | 📏{w['diff']} | ✅{w['outcome']}")
+    lines.append("")
+    lines.append("Хочешь попасть сюда? Жми «🎯 Поставить прогноз».")
     return "\n".join(lines)
 
 
 async def build_round_tops_text(round_number: int, tournament_id: int, tournament_name: str) -> str:
     rows, participants = await build_round_leaderboard(round_number, tournament_id=tournament_id)
     if not rows:
-        return f"В туре {round_number} пока нет данных для топов."
+        return (
+            f"В туре {round_number} пока нет данных для топов.\n"
+            "Сначала нужны прогнозы и результаты матчей."
+        )
 
     def top_by(key: str) -> list[dict]:
         mx = max(int(r[key]) for r in rows)
@@ -676,6 +697,8 @@ async def build_round_tops_text(round_number: int, tournament_id: int, tournamen
     lines.append(f"🎯 Точные: {names(exact_top)}")
     lines.append(f"📏 Разница+исход: {names(diff_top)}")
     lines.append(f"✅ Только исход: {names(outcome_top)}")
+    lines.append("")
+    lines.append("Хочешь залететь в топы? Вперёд в «🎯 Поставить прогноз».")
     return "\n".join(lines)
 
 
@@ -699,8 +722,8 @@ def register_user_handlers(dp: Dispatcher):
         if ok:
             return True
         await message.answer(
-            f"Ты ещё не участвуешь в турнире {tournament.name}.\n"
-            "Нажми «✅ Вступить в турнир»."
+            f"Ты пока не в турнире {tournament.name}.\n"
+            "Нажми «✅ Вступить в турнир» — и можно сразу ставить прогнозы."
         )
         return False
 
@@ -937,6 +960,7 @@ def register_user_handlers(dp: Dispatcher):
     async def btn_stats(message: types.Message):
         tournament, _default_round = await _get_user_tournament_context(message.from_user.id)
         await send_long(message, await build_stats_text(tournament_id=tournament.id))
+        await message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_info"))
 
     @dp.message(F.text == "👤 Мой профиль")
     async def btn_profile(message: types.Message):
@@ -946,6 +970,7 @@ def register_user_handlers(dp: Dispatcher):
         if not await _require_membership_or_hint(message, tournament):
             return
         await message.answer(await build_profile_text(message.from_user.id, tournament_id=tournament.id, tournament_name=tournament.name))
+        await message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_info"))
 
     @dp.message(F.text == "🗓 История туров")
     async def btn_history(message: types.Message):
@@ -959,11 +984,13 @@ def register_user_handlers(dp: Dispatcher):
     async def btn_mvp(message: types.Message):
         tournament, default_round = await _get_user_tournament_context(message.from_user.id)
         await message.answer(await build_mvp_round_text(default_round, tournament_id=tournament.id, tournament_name=tournament.name))
+        await message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_info"))
 
     @dp.message(F.text == "⭐ Топы тура")
     async def btn_tops(message: types.Message):
         tournament, default_round = await _get_user_tournament_context(message.from_user.id)
         await message.answer(await build_round_tops_text(default_round, tournament_id=tournament.id, tournament_name=tournament.name))
+        await message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_info"))
 
     @dp.message(F.text == "❓ Помощь")
     async def btn_help(message: types.Message):
@@ -991,6 +1018,7 @@ def register_user_handlers(dp: Dispatcher):
             return
         text = await build_round_matches_text(round_number, tournament_id=tournament.id, tournament_name=tournament.name)
         await callback.message.answer(text)
+        await callback.message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_info"))
         await callback.answer()
 
     @dp.message(Command("profile"))
@@ -1002,6 +1030,7 @@ def register_user_handlers(dp: Dispatcher):
             return
         text = await build_profile_text(message.from_user.id, tournament_id=tournament.id, tournament_name=tournament.name)
         await message.answer(text)
+        await message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_info"))
 
     @dp.message(Command("mvp_round"))
     async def cmd_mvp_round(message: types.Message):
@@ -1026,6 +1055,7 @@ def register_user_handlers(dp: Dispatcher):
             return
 
         await message.answer(await build_mvp_round_text(round_number, tournament_id=tournament.id, tournament_name=tournament.name))
+        await message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_info"))
 
     @dp.message(Command("tops_round"))
     async def cmd_tops_round(message: types.Message):
@@ -1050,6 +1080,7 @@ def register_user_handlers(dp: Dispatcher):
             return
 
         await message.answer(await build_round_tops_text(round_number, tournament_id=tournament.id, tournament_name=tournament.name))
+        await message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_info"))
 
     @dp.message(F.text == "📘 Правила")
     async def quick_rules(message: types.Message):
@@ -1067,6 +1098,7 @@ def register_user_handlers(dp: Dispatcher):
             "🕒 Время матчей и дедлайны — по Москве (МСК).\n\n"
             "Дальше проще всего так: «📅 Матчи тура» → «🎯 Поставить прогноз»."
         )
+        await message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_info"))
 
     @dp.message(F.text == "🎯 Поставить прогноз")
     async def quick_predict_hint(message: types.Message):
@@ -1570,3 +1602,4 @@ def register_user_handlers(dp: Dispatcher):
         tournament, _default_round = await _get_user_tournament_context(message.from_user.id)
         text = await build_stats_text(tournament_id=tournament.id)
         await send_long(message, text)
+        await message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_info"))
