@@ -446,6 +446,16 @@ async def build_overall_leaderboard(tournament_id: int) -> tuple[list[dict], int
             .distinct()
             .subquery()
         )
+        tournament_points_subq = (
+            select(
+                Point.tg_user_id.label("tg_user_id"),
+                Point.points.label("points"),
+                Point.category.label("category"),
+            )
+            .join(Match, Match.id == Point.match_id)
+            .where(Match.tournament_id == tournament_id, Match.source == "manual")
+            .subquery()
+        )
 
         q = await session.execute(
             select(
@@ -454,10 +464,10 @@ async def build_overall_leaderboard(tournament_id: int) -> tuple[list[dict], int
                 User.display_name,
                 User.username,
                 User.full_name,
-                func.coalesce(func.sum(Point.points), 0).label("total"),
-                func.coalesce(func.sum(case((Point.category == "exact", 1), else_=0)), 0).label("exact"),
-                func.coalesce(func.sum(case((Point.category == "diff", 1), else_=0)), 0).label("diff"),
-                func.coalesce(func.sum(case((Point.category == "outcome", 1), else_=0)), 0).label("outcome"),
+                func.coalesce(func.sum(tournament_points_subq.c.points), 0).label("total"),
+                func.coalesce(func.sum(case((tournament_points_subq.c.category == "exact", 1), else_=0)), 0).label("exact"),
+                func.coalesce(func.sum(case((tournament_points_subq.c.category == "diff", 1), else_=0)), 0).label("diff"),
+                func.coalesce(func.sum(case((tournament_points_subq.c.category == "outcome", 1), else_=0)), 0).label("outcome"),
             )
             .select_from(participants_subq)
             .join(User, User.tg_user_id == participants_subq.c.tg_user_id)
@@ -465,11 +475,12 @@ async def build_overall_leaderboard(tournament_id: int) -> tuple[list[dict], int
                 UserTournament,
                 (UserTournament.tg_user_id == User.tg_user_id) & (UserTournament.tournament_id == tournament_id),
             )
-            .outerjoin(Point, Point.tg_user_id == User.tg_user_id)
-            .outerjoin(Match, Match.id == Point.match_id)
-            .where((Match.id.is_(None)) | ((Match.tournament_id == tournament_id) & (Match.source == "manual")))
+            .outerjoin(tournament_points_subq, tournament_points_subq.c.tg_user_id == User.tg_user_id)
             .group_by(User.tg_user_id, UserTournament.display_name, User.display_name, User.username, User.full_name)
-            .order_by(func.coalesce(func.sum(Point.points), 0).desc())
+            .order_by(
+                func.coalesce(func.sum(tournament_points_subq.c.points), 0).desc(),
+                User.tg_user_id.asc(),
+            )
         )
 
         rows = []
@@ -580,36 +591,6 @@ async def build_profile_text(tg_user_id: int, tournament_id: int, tournament_nam
         if user is None:
             return "Похоже, ты ещё не в турнире. Нажми «✅ Вступить в турнир», и поехали."
 
-        rank_q = await session.execute(
-            select(
-                User.tg_user_id,
-                func.coalesce(func.sum(Point.points), 0).label("total"),
-                func.coalesce(func.sum(case((Point.category == "exact", 1), else_=0)), 0).label("exact"),
-                func.coalesce(func.sum(case((Point.category == "diff", 1), else_=0)), 0).label("diff"),
-                func.coalesce(func.sum(case((Point.category == "outcome", 1), else_=0)), 0).label("outcome"),
-            )
-            .select_from(User)
-            .outerjoin(Point, Point.tg_user_id == User.tg_user_id)
-            .outerjoin(Match, Match.id == Point.match_id)
-            .where((Match.id.is_(None)) | ((Match.source == "manual") & (Match.tournament_id == tournament_id)))
-            .group_by(User.tg_user_id)
-            .order_by(func.coalesce(func.sum(Point.points), 0).desc(), User.tg_user_id.asc())
-        )
-        ranking = rank_q.all()
-
-        place = None
-        total = exact = diff = outcome = 0
-        for i, row in enumerate(ranking, start=1):
-            if int(row[0]) == tg_user_id:
-                place = i
-                total = int(row[1] or 0)
-                exact = int(row[2] or 0)
-                diff = int(row[3] or 0)
-                outcome = int(row[4] or 0)
-                break
-        if place is None:
-            place = len(ranking) + 1
-
         preds_q = await session.execute(
             select(func.count(Prediction.id))
             .select_from(Prediction)
@@ -651,6 +632,20 @@ async def build_profile_text(tg_user_id: int, tournament_id: int, tournament_nam
             )
         )
         ut = ut_q.scalar_one_or_none()
+
+    leaderboard_rows, _participants = await build_overall_leaderboard(tournament_id=tournament_id)
+    place = None
+    total = exact = diff = outcome = 0
+    for i, row in enumerate(leaderboard_rows, start=1):
+        if int(row["tg_user_id"]) == int(tg_user_id):
+            place = i
+            total = int(row["total"])
+            exact = int(row["exact"])
+            diff = int(row["diff"])
+            outcome = int(row["outcome"])
+            break
+    if place is None:
+        place = "—"
 
     avg_per_round = round((total / len(rounds)), 2) if rounds else 0.0
     form = " | ".join([f"Т{int(r[0])}:{int(r[1])}" for r in rounds[:3]]) if rounds else "нет данных"
