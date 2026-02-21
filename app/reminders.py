@@ -7,8 +7,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import select
 
-from app.models import Match, Prediction, Setting, User
-from app.tournament import ROUND_MAX, ROUND_MIN
+from app.models import Match, Prediction, Setting, UserTournament
 
 logger = logging.getLogger(__name__)
 
@@ -17,8 +16,8 @@ def _now_msk_naive() -> datetime:
     return (datetime.utcnow() + timedelta(hours=3)).replace(tzinfo=None)
 
 
-def _reminder_key(kickoff: datetime) -> str:
-    return f"RMD30_{kickoff.strftime('%Y%m%d%H%M')}"
+def _reminder_key(tournament_id: int, kickoff: datetime) -> str:
+    return f"RMD30_T{tournament_id}_{kickoff.strftime('%Y%m%d%H%M')}"
 
 
 async def _setting_exists(session, key: str) -> bool:
@@ -61,34 +60,40 @@ async def _process_reminders_once(bot, session_factory) -> int:
             select(Match)
             .where(
                 Match.source == "manual",
-                Match.round_number >= ROUND_MIN,
-                Match.round_number <= ROUND_MAX,
                 Match.kickoff_time >= window_start,
                 Match.kickoff_time < window_end,
             )
-            .order_by(Match.kickoff_time.asc(), Match.id.asc())
+            .order_by(Match.tournament_id.asc(), Match.kickoff_time.asc(), Match.id.asc())
         )
         matches = matches_q.scalars().all()
         if not matches:
             return 0
 
-        users_q = await session.execute(select(User.tg_user_id))
-        user_ids = [int(x[0]) for x in users_q.all()]
-        if not user_ids:
-            return 0
-
-        by_kickoff: dict[datetime, list[Match]] = defaultdict(list)
+        by_group: dict[tuple[int, datetime], list[Match]] = defaultdict(list)
         for m in matches:
-            by_kickoff[m.kickoff_time].append(m)
+            by_group[(int(m.tournament_id), m.kickoff_time)].append(m)
 
-        for kickoff, kickoff_matches in by_kickoff.items():
-            key = _reminder_key(kickoff)
+        for (tournament_id, kickoff), kickoff_matches in by_group.items():
+            key = _reminder_key(tournament_id, kickoff)
             if await _setting_exists(session, key):
+                continue
+
+            participants_q = await session.execute(
+                select(UserTournament.tg_user_id).where(UserTournament.tournament_id == tournament_id)
+            )
+            user_ids = [int(x[0]) for x in participants_q.all()]
+            if not user_ids:
+                await _mark_setting(session, key, "1")
+                await session.commit()
+                sent_batches += 1
                 continue
 
             kickoff_match_ids = [m.id for m in kickoff_matches]
             preds_q = await session.execute(
-                select(Prediction.tg_user_id, Prediction.match_id).where(Prediction.match_id.in_(kickoff_match_ids))
+                select(Prediction.tg_user_id, Prediction.match_id).where(
+                    Prediction.match_id.in_(kickoff_match_ids),
+                    Prediction.tg_user_id.in_(user_ids),
+                )
             )
             preds_rows = preds_q.all()
 
