@@ -219,21 +219,72 @@ async def _maybe_send_round_closed_summary(bot, tournament_id: int, round_number
             )
         participants = len(leaderboard_rows)
 
+        streak_rows_q = await session.execute(
+            select(Point.tg_user_id, Match.kickoff_time, Point.points, Match.id)
+            .select_from(Point)
+            .join(Match, Match.id == Point.match_id)
+            .where(
+                Match.tournament_id == tournament_id,
+                Match.source == "manual",
+            )
+            .order_by(Point.tg_user_id.asc(), Match.kickoff_time.asc(), Match.id.asc())
+        )
+        streak_rows = streak_rows_q.all()
+        streak_map: dict[int, tuple[int, int]] = {}
+        curr_uid: int | None = None
+        current_streak = 0
+        best_streak = 0
+        for tg_user_id, _kickoff, pts, _match_id in streak_rows:
+            uid = int(tg_user_id)
+            if curr_uid is None:
+                curr_uid = uid
+            if uid != curr_uid:
+                streak_map[curr_uid] = (current_streak, best_streak)
+                curr_uid = uid
+                current_streak = 0
+                best_streak = 0
+
+            if int(pts or 0) > 0:
+                current_streak += 1
+                if current_streak > best_streak:
+                    best_streak = current_streak
+            else:
+                current_streak = 0
+        if curr_uid is not None:
+            streak_map[curr_uid] = (current_streak, best_streak)
+
         for tg_user_id in member_ids:
+            current_streak, best_streak = streak_map.get(int(tg_user_id), (0, 0))
             if tg_user_id in stats:
                 total_pts, exact, diff, outcome = stats[tg_user_id]
                 place = places[tg_user_id]
+                place_mark = "🏆" if place == 1 else ("🥈" if place == 2 else ("🥉" if place == 3 else "📍"))
+                if total_pts >= 10:
+                    mood = "Ты просто в огне!"
+                elif total_pts >= 6:
+                    mood = "Очень сильный тур, так держать."
+                elif total_pts >= 3:
+                    mood = "Крепкий результат — хороший темп."
+                elif total_pts > 0:
+                    mood = "Плюс есть, продолжаем набирать."
+                else:
+                    mood = "Этот тур не зашёл, но всё можно вернуть в следующем."
                 text = (
-                    f"🏁 Тур {round_number} завершён ({tournament_name})\n"
-                    f"Твои очки за тур: {total_pts}\n"
+                    f"🏁 Тур {round_number} завершён ({tournament_name})\n\n"
+                    f"{place_mark} Место в туре: {place}/{participants}\n"
+                    f"📊 Очки за тур: {total_pts}\n"
                     f"🎯{exact} | 📏{diff} | ✅{outcome}\n"
-                    f"Место в туре: {place}/{participants}\n\n"
+                    f"🔥 Серия сейчас: {current_streak}\n"
+                    f"🏅 Лучшая серия: {best_streak}\n\n"
+                    f"{mood}\n"
                     "Следующий тур уже рядом — жми «🎯 Поставить прогноз»."
                 )
             else:
                 text = (
-                    f"🏁 Тур {round_number} завершён ({tournament_name})\n"
-                    "В этом туре у тебя не было прогнозов.\n\n"
+                    f"🏁 Тур {round_number} завершён ({tournament_name})\n\n"
+                    "В этом туре у тебя не было прогнозов.\n"
+                    f"🔥 Серия сейчас: {current_streak}\n"
+                    f"🏅 Лучшая серия: {best_streak}\n\n"
                     "В следующем туре врываемся — жми «🎯 Поставить прогноз»."
                 )
 
