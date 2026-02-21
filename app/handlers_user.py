@@ -799,7 +799,11 @@ def register_user_handlers(dp: Dispatcher):
             total = await get_round_total_points_for_user(
                 tg_user_id=tg_user_id, round_number=default_round, tournament_id=tournament.id
             )
-            text = f"{text}\n\nИтого за тур: {total} очк."
+            text = (
+                f"{text}\n\n"
+                f"Итого за тур сейчас: {total} очк.\n"
+                "Хочешь добить оставшиеся матчи? Жми «🎯 Поставить прогноз»."
+            )
         await send_long(message, text)
 
     @dp.message(F.text == "🏆 Общая таблица")
@@ -808,11 +812,16 @@ def register_user_handlers(dp: Dispatcher):
         played, total = await get_matches_played_stats(tournament_id=tournament.id)
         rows, participants = await build_overall_leaderboard(tournament_id=tournament.id)
         if not rows:
-            await message.answer("Пока нет участников с прогнозами. Сделай первый прогноз через /predict или /predict_round.")
+            await message.answer(
+                "Пока в таблице пусто — никто ещё не поставил прогнозы.\n"
+                "Ты можешь открыть гонку первым: «🎯 Поставить прогноз»."
+            )
             return
         lines = [f"🏆 {tournament.name} · Таблица лидеров", f"Участников с прогнозами: {participants}", f"Матчей сыграно: {played} / {total}"]
         for i, r in enumerate(rows[:20], start=1):
             lines.append(f"{i}. {r['name']} — {r['total']} очк. | 🎯{r['exact']} | 📏{r['diff']} | ✅{r['outcome']}")
+        lines.append("")
+        lines.append("Нужен следующий шаг? Открой «🗂 Мои прогнозы» или поставь новый через «🎯 Поставить прогноз».")
         await send_long(message, "\n".join(lines))
 
     @dp.message(F.text == "📊 Статистика")
@@ -970,8 +979,8 @@ def register_user_handlers(dp: Dispatcher):
 
         if not open_matches:
             await message.answer(
-                f"На тур {default_round} открытых матчей нет.\n"
-                f"Посмотри следующий тур через /round {default_round + 1}."
+                f"На тур {default_round} открытых матчей уже нет.\n"
+                f"Загляни в следующий: /round {default_round + 1}"
             )
             return
 
@@ -1023,12 +1032,12 @@ def register_user_handlers(dp: Dispatcher):
         match_id = data.get("single_match_id")
         if not match_id:
             await state.clear()
-            await message.answer("Сессия сброшена. Нажми кнопку «🎯 Поставить прогноз» ещё раз.")
+            await message.answer("Похоже, сессия сбилась. Нажми «🎯 Поставить прогноз» и попробуй ещё раз.")
             return
 
         parsed = parse_score(normalize_score(message.text or ""))
         if parsed is None:
-            await message.answer("Неверный формат. Отправь только счёт: 2:1")
+            await message.answer("Не смог прочитать счёт. Отправь только формат `2:1`.")
             return
         pred_home, pred_away = parsed
 
@@ -1044,12 +1053,12 @@ def register_user_handlers(dp: Dispatcher):
             match = q.scalar_one_or_none()
             if match is None:
                 await state.clear()
-                await message.answer("Матч не найден.")
+                await message.answer("Не нашёл этот матч. Нажми «🎯 Поставить прогноз» и выбери его из списка.")
                 return
 
             if match.kickoff_time <= now:
                 await state.clear()
-                await message.answer("🔒 Прогнозы на этот матч уже закрыты.")
+                await message.answer("🔒 На этот матч прогноз уже закрыт. Можно выбрать другой открытый матч.")
                 return
 
             pred_q = await session.execute(
@@ -1157,7 +1166,7 @@ def register_user_handlers(dp: Dispatcher):
 
     @dp.message(Command("ping"))
     async def cmd_ping(message: types.Message):
-        await message.answer("pong ✅")
+        await message.answer("pong ✅ На связи!")
 
     @dp.message(Command("join"))
     async def cmd_join(message: types.Message, state: FSMContext):
@@ -1171,18 +1180,19 @@ def register_user_handlers(dp: Dispatcher):
         tournament, default_round = await _get_user_tournament_context(message.from_user.id)
         parts = message.text.strip().split()
         if len(parts) != 2:
-            await message.answer(f"Неверный формат. Пример: /round {default_round}")
+            await message.answer(f"Чуть не так. Попробуй формат: /round {default_round}")
             return
 
         try:
             round_number = int(parts[1])
         except ValueError:
-            await message.answer(f"Номер тура должен быть числом. Пример: /round {default_round}")
+            await message.answer(f"Номер тура нужен числом. Пример: /round {default_round}")
             return
 
         if not _round_in_tournament(round_number, tournament):
             await message.answer(
-                f"Можно использовать только туры {tournament.round_min}..{tournament.round_max}. Пример: /round {default_round}"
+                f"В этом турнире доступны только туры {tournament.round_min}..{tournament.round_max}.\n"
+                f"Попробуй: /round {default_round}"
             )
             return
 
@@ -1192,19 +1202,19 @@ def register_user_handlers(dp: Dispatcher):
     async def cmd_predict(message: types.Message):
         parts = message.text.strip().split()
         if len(parts) != 3:
-            await message.answer("Неверный формат. Пример: /predict 1 2:0")
+            await message.answer("Почти! Формат такой: /predict 1 2:0")
             return
 
         try:
             match_id = int(parts[1])
         except ValueError:
-            await message.answer("match_id должен быть числом. Пример: /predict 1 2:0")
+            await message.answer("ID матча должен быть числом. Пример: /predict 1 2:0")
             return
 
         score_str = normalize_score(parts[2])
         parsed = parse_score(score_str)
         if parsed is None:
-            await message.answer("Счёт должен быть в формате 2:0 (или 2-0)")
+            await message.answer("Счёт нужен в формате 2:0 (или 2-0).")
             return
 
         pred_home, pred_away = parsed
@@ -1215,17 +1225,20 @@ def register_user_handlers(dp: Dispatcher):
             await upsert_user_from_message(session, message)
             tournament = await get_selected_tournament_for_user(session, message.from_user.id)
             if not await is_user_in_tournament(session, message.from_user.id, tournament.id):
-                await message.answer(f"Сначала вступи в {tournament.name}: кнопка «✅ Вступить в турнир».")
+                await message.answer(
+                    f"Сначала зайди в турнир {tournament.name} кнопкой «✅ Вступить в турнир»,"
+                    " и сразу сможем сохранить прогноз."
+                )
                 return
 
             match_q = await session.execute(select(Match).where(Match.id == match_id, Match.tournament_id == tournament.id))
             match = match_q.scalar_one_or_none()
             if match is None:
-                await message.answer("Матч не найден.")
+                await message.answer("Не нашёл такой матч в выбранном турнире. Проверь ID через «📅 Матчи тура».")
                 return
 
             if match.kickoff_time <= now:
-                await message.answer("🔒 Прогнозы на этот матч уже закрыты (матч начался).")
+                await message.answer("🔒 На этот матч уже поздно: игра началась. Выбери другой открытый матч.")
                 return
 
             pred_q = await session.execute(
@@ -1256,18 +1269,19 @@ def register_user_handlers(dp: Dispatcher):
             return
         parts = message.text.strip().split()
         if len(parts) != 2:
-            await message.answer(f"Неверный формат. Пример: /predict_round {default_round}")
+            await message.answer(f"Для тура нужен формат: /predict_round {default_round}")
             return
 
         try:
             round_number = int(parts[1])
         except ValueError:
-            await message.answer(f"Номер тура должен быть числом. Пример: /predict_round {default_round}")
+            await message.answer(f"Номер тура нужен числом. Пример: /predict_round {default_round}")
             return
 
         if not _round_in_tournament(round_number, tournament):
             await message.answer(
-                f"Можно использовать только туры {tournament.round_min}..{tournament.round_max}. Пример: /predict_round {default_round}"
+                f"В этом турнире доступны только туры {tournament.round_min}..{tournament.round_max}.\n"
+                f"Попробуй: /predict_round {default_round}"
             )
             return
 
@@ -1279,7 +1293,7 @@ def register_user_handlers(dp: Dispatcher):
         round_number = data.get("round_number")
         if not round_number:
             await state.clear()
-            await message.answer("⚠️ Сессия ввода сброшена. Начни заново: /predict_round N")
+            await message.answer("⚠️ Сессия сбилась. Начни заново: /predict_round N")
             return
 
         tg_user_id = message.from_user.id
@@ -1287,7 +1301,7 @@ def register_user_handlers(dp: Dispatcher):
 
         lines = [line.strip() for line in (message.text or "").splitlines() if line.strip()]
         if not lines:
-            await message.answer("Пусто. Пришли строки формата: match_id счет")
+            await message.answer("Сообщение пустое. Пришли строки в формате: `ID счёт`.")
             return
 
         saved = 0
@@ -1354,7 +1368,10 @@ def register_user_handlers(dp: Dispatcher):
             await session.commit()
 
         await state.clear()
-        await message.answer(f"✅ Сохранено: {saved} | Пропущено: {skipped} | Ошибок: {errors}")
+        await message.answer(
+            f"✅ Готово! Сохранено: {saved} | Пропущено: {skipped} | Ошибок: {errors}\n"
+            "Проверить всё можно через «🗂 Мои прогнозы»."
+        )
 
     @dp.message(Command("my"))
     async def cmd_my(message: types.Message):
@@ -1363,18 +1380,19 @@ def register_user_handlers(dp: Dispatcher):
             return
         parts = message.text.strip().split()
         if len(parts) != 2:
-            await message.answer(f"Неверный формат. Пример: /my {default_round}")
+            await message.answer(f"Для просмотра тура используй формат: /my {default_round}")
             return
 
         try:
             round_number = int(parts[1])
         except ValueError:
-            await message.answer(f"Номер тура должен быть числом. Пример: /my {default_round}")
+            await message.answer(f"Номер тура нужен числом. Пример: /my {default_round}")
             return
 
         if not _round_in_tournament(round_number, tournament):
             await message.answer(
-                f"Можно использовать только туры {tournament.round_min}..{tournament.round_max}. Пример: /my {default_round}"
+                f"В этом турнире доступны только туры {tournament.round_min}..{tournament.round_max}.\n"
+                f"Попробуй: /my {default_round}"
             )
             return
 
@@ -1388,7 +1406,11 @@ def register_user_handlers(dp: Dispatcher):
             total = await get_round_total_points_for_user(
                 tg_user_id=tg_user_id, round_number=round_number, tournament_id=tournament.id
             )
-            text = f"{text}\n\nИтого за тур: {total} очк."
+            text = (
+                f"{text}\n\n"
+                f"Итого за тур сейчас: {total} очк.\n"
+                "Если хочешь, можно сразу продолжить через «🎯 Поставить прогноз»."
+            )
 
         await send_long(message, text)
 
@@ -1399,7 +1421,10 @@ def register_user_handlers(dp: Dispatcher):
         rows, participants = await build_overall_leaderboard(tournament_id=tournament.id)
 
         if not rows:
-            await message.answer("Пока нет участников с прогнозами. Сделай первый прогноз через /predict или /predict_round.")
+            await message.answer(
+                "Пока в таблице пусто — ещё нет прогнозов.\n"
+                "Можешь открыть сезон первым через «🎯 Поставить прогноз»."
+            )
             return
 
         lines = [f"🏆 {tournament.name} · Таблица лидеров"]
@@ -1408,6 +1433,8 @@ def register_user_handlers(dp: Dispatcher):
 
         for i, r in enumerate(rows[:20], start=1):
             lines.append(f"{i}. {r['name']} — {r['total']} очк. | 🎯{r['exact']} | 📏{r['diff']} | ✅{r['outcome']}")
+        lines.append("")
+        lines.append("Хочешь проверить свои ставки? Жми «🗂 Мои прогнозы».")
 
         await send_long(message, "\n".join(lines))
 
@@ -1416,24 +1443,25 @@ def register_user_handlers(dp: Dispatcher):
         tournament, default_round = await _get_user_tournament_context(message.from_user.id)
         parts = message.text.strip().split()
         if len(parts) != 2:
-            await message.answer(f"Неверный формат. Пример: /table_round {default_round}")
+            await message.answer(f"Для таблицы тура используй формат: /table_round {default_round}")
             return
 
         try:
             round_number = int(parts[1])
         except ValueError:
-            await message.answer(f"Номер тура должен быть числом. Пример: /table_round {default_round}")
+            await message.answer(f"Номер тура нужен числом. Пример: /table_round {default_round}")
             return
 
         if not _round_in_tournament(round_number, tournament):
             await message.answer(
-                f"Можно использовать только туры {tournament.round_min}..{tournament.round_max}. Пример: /table_round {default_round}"
+                f"В этом турнире доступны только туры {tournament.round_min}..{tournament.round_max}.\n"
+                f"Попробуй: /table_round {default_round}"
             )
             return
 
         rows, participants = await build_round_leaderboard(round_number, tournament_id=tournament.id)
         if not rows:
-            await message.answer("Пока нет прогнозов на этот тур.")
+            await message.answer("На этот тур пока нет прогнозов. Можно стать первым 😉")
             return
 
         lines = [f"🏁 {tournament.name} · Таблица тура {round_number}:"]
@@ -1441,6 +1469,8 @@ def register_user_handlers(dp: Dispatcher):
 
         for i, r in enumerate(rows[:20], start=1):
             lines.append(f"{i}. {r['name']} — {r['total']} очк. | 🎯{r['exact']} | 📏{r['diff']} | ✅{r['outcome']}")
+        lines.append("")
+        lines.append("Хочешь ворваться выше? Открой «🎯 Поставить прогноз».")
 
         await send_long(message, "\n".join(lines))
 
