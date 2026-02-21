@@ -631,6 +631,19 @@ async def build_profile_text(tg_user_id: int, tournament_id: int, tournament_nam
         )
         rounds = rounds_q.all()
 
+        streak_q = await session.execute(
+            select(Match.kickoff_time, Point.points)
+            .select_from(Point)
+            .join(Match, Match.id == Point.match_id)
+            .where(
+                Point.tg_user_id == tg_user_id,
+                Match.source == "manual",
+                Match.tournament_id == tournament_id,
+            )
+            .order_by(Match.kickoff_time.asc(), Match.id.asc())
+        )
+        streak_rows = streak_q.all()
+
         ut_q = await session.execute(
             select(UserTournament).where(
                 UserTournament.tg_user_id == tg_user_id,
@@ -643,6 +656,17 @@ async def build_profile_text(tg_user_id: int, tournament_id: int, tournament_nam
     form = " | ".join([f"Т{int(r[0])}:{int(r[1])}" for r in rounds[:3]]) if rounds else "нет данных"
     tournament_display_name = ut.display_name if ut is not None else None
     name = format_user_name(tournament_display_name, user.display_name, user.username, user.full_name, tg_user_id)
+
+    current_streak = 0
+    best_streak = 0
+    for _kickoff_time, pts in streak_rows:
+        if int(pts or 0) > 0:
+            current_streak += 1
+            if current_streak > best_streak:
+                best_streak = current_streak
+        else:
+            current_streak = 0
+
     return (
         f"👤 Профиль: {name}\n"
         f"Турнир: {tournament_name}\n"
@@ -650,6 +674,8 @@ async def build_profile_text(tg_user_id: int, tournament_id: int, tournament_nam
         f"Очки: {total}\n"
         f"Прогнозов: {preds_count}\n"
         f"🎯{exact} | 📏{diff} | ✅{outcome}\n"
+        f"🔥 Текущая серия (матчи с очками): {current_streak}\n"
+        f"🏅 Лучшая серия: {best_streak}\n"
         f"Средние очки за тур: {avg_per_round}\n"
         f"Форма (последние туры): {form}\n\n"
         "Хочешь подняться выше? Открой «📅 Матчи тура» и добавь свежие прогнозы."
