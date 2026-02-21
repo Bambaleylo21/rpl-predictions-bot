@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
-from aiogram import Dispatcher, types
+from datetime import datetime, timedelta
+from aiogram import Dispatcher, F, types
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 
 from sqlalchemy import delete, select, func
 
@@ -13,6 +15,14 @@ from app.scoring import calculate_points
 from app.tournament import ROUND_DEFAULT, ROUND_MAX, ROUND_MIN, is_tournament_round
 
 ADMIN_IDS = load_admin_ids()
+
+
+class AdminSetResultStates(StatesGroup):
+    waiting_for_score = State()
+
+
+def _now_msk_naive() -> datetime:
+    return (datetime.utcnow() + timedelta(hours=3)).replace(tzinfo=None)
 
 
 def _parse_admin_kickoff_datetime(raw: str) -> datetime | None:
@@ -118,6 +128,9 @@ async def _set_setting(session, key: str, value: str) -> None:
 def register_admin_handlers(dp: Dispatcher) -> None:
     dp.message.register(admin_add_match, Command("admin_add_match"))
     dp.message.register(admin_set_result, Command("admin_set_result"))
+    dp.callback_query.register(admin_set_result_pick_tournament, F.data.startswith("admin_res_t:"))
+    dp.callback_query.register(admin_set_result_pick_match, F.data.startswith("admin_res_m:"))
+    dp.message.register(admin_set_result_score_input, AdminSetResultStates.waiting_for_score)
     dp.message.register(admin_recalc, Command("admin_recalc"))
     dp.message.register(admin_health, Command("admin_health"))
 
@@ -192,8 +205,15 @@ async def admin_set_result(message: types.Message):
         return
 
     parts = (message.text or "").strip().split()
+    if len(parts) == 1:
+        await _admin_set_result_open_tournament_picker(message)
+        return
     if len(parts) != 3:
-        await message.answer("Формат: /admin_set_result <match_id> <score> (пример: /admin_set_result 12 2:0)")
+        await message.answer(
+            "Формат:\n"
+            "1) /admin_set_result (кнопки выбора)\n"
+            "2) /admin_set_result <match_id> <score> (пример: /admin_set_result 12 2:0)"
+        )
         return
 
     try:
@@ -221,6 +241,179 @@ async def admin_set_result(message: types.Message):
 
         updates = await recalc_points_for_match_in_session(session, match_id)
 
+    await message.answer(
+        f"✅ Результат сохранён: {match.home_team} — {match.away_team} | {home_score}:{away_score}. "
+        f"Пересчитано очков: {updates}"
+    )
+
+
+async def _admin_set_result_open_tournament_picker(message: types.Message) -> None:
+    async with SessionLocal() as session:
+        q = await session.execute(
+            select(Tournament)
+            .where(Tournament.is_active == 1)
+            .order_by(Tournament.code.asc())
+        )
+        tournaments = q.scalars().all()
+
+    if not tournaments:
+        await message.answer("Нет активных турниров.")
+        return
+
+    rows = [
+        [
+            types.InlineKeyboardButton(
+                text=t.name,
+                callback_data=f"admin_res_t:{t.id}",
+            )
+        ]
+        for t in tournaments
+    ]
+    kb = types.InlineKeyboardMarkup(inline_keyboard=rows)
+    await message.answer("Выбери турнир для внесения результата:", reply_markup=kb)
+
+
+async def admin_set_result_pick_tournament(callback: types.CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("Нет прав", show_alert=True)
+        return
+
+    data = callback.data or ""
+    try:
+        tournament_id = int(data.split(":", 1)[1])
+    except Exception:
+        await callback.answer("Ошибка выбора турнира", show_alert=True)
+        return
+
+    now = _now_msk_naive()
+    async with SessionLocal() as session:
+        t_q = await session.execute(select(Tournament).where(Tournament.id == tournament_id))
+        tournament = t_q.scalar_one_or_none()
+        if tournament is None:
+            await callback.answer("Турнир не найден", show_alert=True)
+            return
+
+        round_q = await session.execute(
+            select(func.min(Match.round_number))
+            .where(
+                Match.tournament_id == tournament_id,
+                Match.source == "manual",
+                Match.home_score.is_(None),
+                Match.away_score.is_(None),
+                Match.kickoff_time >= now,
+            )
+        )
+        round_number = round_q.scalar_one_or_none()
+
+        if round_number is None:
+            round_q2 = await session.execute(
+                select(func.min(Match.round_number))
+                .where(
+                    Match.tournament_id == tournament_id,
+                    Match.source == "manual",
+                    Match.home_score.is_(None),
+                    Match.away_score.is_(None),
+                )
+            )
+            round_number = round_q2.scalar_one_or_none()
+
+        if round_number is None:
+            await callback.message.answer(f"В турнире {tournament.name} нет матчей без результата.")
+            await callback.answer()
+            return
+
+        matches_q = await session.execute(
+            select(Match)
+            .where(
+                Match.tournament_id == tournament_id,
+                Match.source == "manual",
+                Match.round_number == int(round_number),
+                Match.home_score.is_(None),
+                Match.away_score.is_(None),
+            )
+            .order_by(Match.kickoff_time.asc(), Match.id.asc())
+        )
+        matches = matches_q.scalars().all()
+
+    if not matches:
+        await callback.message.answer("Матчи не найдены.")
+        await callback.answer()
+        return
+
+    rows = []
+    for m in matches:
+        txt = f"{m.home_team} — {m.away_team} | {m.kickoff_time.strftime('%d.%m %H:%M')}"
+        rows.append([types.InlineKeyboardButton(text=txt, callback_data=f"admin_res_m:{m.id}")])
+    kb = types.InlineKeyboardMarkup(inline_keyboard=rows)
+    await callback.message.answer(
+        f"Турнир: {tournament.name}\nТур: {int(round_number)}\nВыбери матч:",
+        reply_markup=kb,
+    )
+    await callback.answer()
+
+
+async def admin_set_result_pick_match(callback: types.CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("Нет прав", show_alert=True)
+        return
+
+    data = callback.data or ""
+    try:
+        match_id = int(data.split(":", 1)[1])
+    except Exception:
+        await callback.answer("Ошибка выбора матча", show_alert=True)
+        return
+
+    async with SessionLocal() as session:
+        q = await session.execute(select(Match).where(Match.id == match_id))
+        match = q.scalar_one_or_none()
+    if match is None:
+        await callback.answer("Матч не найден", show_alert=True)
+        return
+
+    await state.set_state(AdminSetResultStates.waiting_for_score)
+    await state.update_data(admin_result_match_id=match_id)
+    await callback.message.answer(
+        f"Матч: {match.home_team} — {match.away_team}\n"
+        "Отправь только счёт: 2:1"
+    )
+    await callback.answer()
+
+
+async def admin_set_result_score_input(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        await state.clear()
+        await message.answer("⛔️ У вас нет прав на эту команду.")
+        return
+
+    data = await state.get_data()
+    match_id = int(data.get("admin_result_match_id") or 0)
+    if match_id <= 0:
+        await state.clear()
+        await message.answer("Сессия сброшена. Запусти /admin_set_result заново.")
+        return
+
+    parsed = _parse_score(message.text or "")
+    if not parsed:
+        await message.answer("Счёт должен быть формата 2:0 или 2-0")
+        return
+    home_score, away_score = parsed
+
+    async with SessionLocal() as session:
+        res = await session.execute(select(Match).where(Match.id == match_id))
+        match = res.scalar_one_or_none()
+        if not match:
+            await state.clear()
+            await message.answer("Матч не найден.")
+            return
+
+        match.home_score = home_score
+        match.away_score = away_score
+        await session.commit()
+
+        updates = await recalc_points_for_match_in_session(session, match_id)
+
+    await state.clear()
     await message.answer(
         f"✅ Результат сохранён: {match.home_team} — {match.away_team} | {home_score}:{away_score}. "
         f"Пересчитано очков: {updates}"
