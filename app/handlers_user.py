@@ -535,7 +535,7 @@ async def build_profile_text(tg_user_id: int, tournament_id: int, tournament_nam
         user_q = await session.execute(select(User).where(User.tg_user_id == tg_user_id))
         user = user_q.scalar_one_or_none()
         if user is None:
-            return "Сначала вступи в турнир: /join"
+            return "Похоже, ты ещё не в турнире. Нажми «✅ Вступить в турнир», и поехали."
 
         rank_q = await session.execute(
             select(
@@ -608,7 +608,8 @@ async def build_profile_text(tg_user_id: int, tournament_id: int, tournament_nam
         f"Прогнозов: {preds_count}\n"
         f"🎯{exact} | 📏{diff} | ✅{outcome}\n"
         f"Средние очки за тур: {avg_per_round}\n"
-        f"Форма (последние туры): {form}"
+        f"Форма (последние туры): {form}\n\n"
+        "Хочешь подняться выше? Открой «📅 Матчи тура» и добавь свежие прогнозы."
     )
 
 
@@ -699,9 +700,9 @@ def register_user_handlers(dp: Dispatcher):
         tournament, default_round = await _get_user_tournament_context(message.from_user.id)
         await message.answer(
             "❓ Помощь\n\n"
-            f"Текущий турнир: {tournament.name}\n"
-            f"Туры: {tournament.round_min}..{tournament.round_max}\n\n"
-            "Лучше пользоваться кнопками внизу:\n"
+            f"Сейчас ты в турнире: {tournament.name}\n"
+            f"Диапазон туров: {tournament.round_min}..{tournament.round_max}\n\n"
+            "Самый удобный путь — кнопки внизу:\n"
             "✅ Вступить в турнир\n"
             "📅 Матчи тура\n"
             "🎯 Поставить прогноз\n"
@@ -713,13 +714,14 @@ def register_user_handlers(dp: Dispatcher):
             "🥇 MVP тура\n"
             "⭐ Топы тура\n"
             "📘 Правила\n\n"
-            "Если нужен ручной ввод:\n"
+            "Если удобнее командами:\n"
             "/round N\n"
             "/my N\n"
             "/table_round N\n"
             "/mvp_round N\n"
             "/tops_round N\n\n"
-            f"Сейчас для старта: тур {default_round}"
+            f"Стартовый тур сейчас: {default_round}\n"
+            "Если что-то не получается, просто напиши команду ещё раз — подскажу формат."
         )
 
     async def _open_predict_round(message: types.Message, state: FSMContext, round_number: int, tournament: Tournament) -> None:
@@ -842,7 +844,7 @@ def register_user_handlers(dp: Dispatcher):
     async def btn_history(message: types.Message):
         tournament, _default_round = await _get_user_tournament_context(message.from_user.id)
         await message.answer(
-            f"🗂 {tournament.name}: выбери тур",
+            f"🗂 История туров · {tournament.name}\nВыбери тур — покажу матчи и статус прогнозов.",
             reply_markup=build_round_history_keyboard(tournament.round_min, tournament.round_max),
         )
 
@@ -864,7 +866,7 @@ def register_user_handlers(dp: Dispatcher):
     async def cmd_history(message: types.Message):
         tournament, _default_round = await _get_user_tournament_context(message.from_user.id)
         await message.answer(
-            f"🗂 {tournament.name}: выбери тур",
+            f"🗂 История туров · {tournament.name}\nВыбери тур — покажу матчи и статус прогнозов.",
             reply_markup=build_round_history_keyboard(tournament.round_min, tournament.round_max),
         )
 
@@ -874,11 +876,11 @@ def register_user_handlers(dp: Dispatcher):
         try:
             round_number = int(data.split(":", 1)[1])
         except Exception:
-            await callback.answer("Ошибка выбора тура", show_alert=True)
+            await callback.answer("Не получилось выбрать тур, попробуй ещё раз.", show_alert=True)
             return
         tournament, _default_round = await _get_user_tournament_context(callback.from_user.id)
         if not _round_in_tournament(round_number, tournament):
-            await callback.answer("Тур вне диапазона выбранного турнира", show_alert=True)
+            await callback.answer("Этот тур вне диапазона выбранного турнира.", show_alert=True)
             return
         text = await build_round_matches_text(round_number, tournament_id=tournament.id, tournament_name=tournament.name)
         await callback.message.answer(text)
@@ -946,7 +948,7 @@ def register_user_handlers(dp: Dispatcher):
     async def quick_rules(message: types.Message):
         tournament, _default_round = await _get_user_tournament_context(message.from_user.id)
         await message.answer(
-            "📘 Короткие правила турнира\n\n"
+            "📘 Правила турнира (коротко)\n\n"
             f"Турнир: {tournament.name}\n"
             f"Туры: {tournament.round_min}..{tournament.round_max}\n"
             "Очки:\n"
@@ -955,7 +957,8 @@ def register_user_handlers(dp: Dispatcher):
             "✅ только исход — 1\n"
             "❌ мимо — 0\n\n"
             "⛔️ После начала матча прогноз ставить/менять нельзя.\n"
-            "🕒 Время матчей и дедлайны — по Москве (МСК)."
+            "🕒 Время матчей и дедлайны — по Москве (МСК).\n\n"
+            "Дальше проще всего так: «📅 Матчи тура» → «🎯 Поставить прогноз»."
         )
 
     @dp.message(F.text == "🎯 Поставить прогноз")
