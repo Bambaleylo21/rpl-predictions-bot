@@ -20,6 +20,10 @@ def get_bot_commands() -> list[types.BotCommand]:
         types.BotCommand(command="admin_add_match", description="Админ: добавить матч"),
         types.BotCommand(command="admin_set_result", description="Админ: поставить результат"),
         types.BotCommand(command="admin_recalc", description="Админ: пересчитать очки"),
+        types.BotCommand(command="admin_panel", description="Админ: кнопочная панель"),
+        types.BotCommand(command="admin_status", description="Админ: сводный статус"),
+        types.BotCommand(command="admin_round_progress", description="Админ: прогресс тура"),
+        types.BotCommand(command="admin_missing", description="Админ: кто не поставил"),
     ]
 
 
