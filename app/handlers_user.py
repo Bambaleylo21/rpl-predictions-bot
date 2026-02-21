@@ -35,12 +35,9 @@ def build_main_menu_keyboard(default_round: int) -> types.ReplyKeyboardMarkup:
             [types.KeyboardButton(text="🇷🇺 РПЛ"), types.KeyboardButton(text="🇬🇧 АПЛ")],
             [types.KeyboardButton(text="✅ Вступить в турнир"), types.KeyboardButton(text="📅 Матчи тура")],
             [types.KeyboardButton(text="🎯 Поставить прогноз")],
-            [types.KeyboardButton(text="🗂 Мои прогнозы")],
-            [types.KeyboardButton(text="🏆 Общая таблица"), types.KeyboardButton(text="📊 Статистика")],
-            [types.KeyboardButton(text="👤 Мой профиль"), types.KeyboardButton(text="🗓 История туров")],
-            [types.KeyboardButton(text="🥇 MVP тура"), types.KeyboardButton(text="⭐ Топы тура")],
-            [types.KeyboardButton(text="📘 Правила")],
-            [types.KeyboardButton(text="❓ Помощь")],
+            [types.KeyboardButton(text="🗂 Мои прогнозы"), types.KeyboardButton(text="🏆 Общая таблица")],
+            [types.KeyboardButton(text="👤 Мой профиль"), types.KeyboardButton(text="📊 Статистика")],
+            [types.KeyboardButton(text="❓ Помощь"), types.KeyboardButton(text="📘 Правила")],
         ],
         resize_keyboard=True,
         input_field_placeholder="Выберите действие из меню ниже",
@@ -210,6 +207,29 @@ def build_round_history_keyboard(round_min: int, round_max: int) -> types.Inline
     if row:
         rows.append(row)
     return types.InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_quick_nav_keyboard(kind: str) -> types.InlineKeyboardMarkup:
+    if kind == "after_predict":
+        rows = [
+            [
+                types.InlineKeyboardButton(text="🗂 Мои прогнозы", callback_data="qnav:my"),
+                types.InlineKeyboardButton(text="📅 Матчи тура", callback_data="qnav:round"),
+            ],
+            [types.InlineKeyboardButton(text="🎯 Ещё прогноз", callback_data="qnav:predict")],
+        ]
+        return types.InlineKeyboardMarkup(inline_keyboard=rows)
+
+    if kind == "after_table":
+        rows = [
+            [
+                types.InlineKeyboardButton(text="🎯 Поставить прогноз", callback_data="qnav:predict"),
+                types.InlineKeyboardButton(text="🗂 Мои прогнозы", callback_data="qnav:my"),
+            ]
+        ]
+        return types.InlineKeyboardMarkup(inline_keyboard=rows)
+
+    return types.InlineKeyboardMarkup(inline_keyboard=[])
 
 
 def format_user_name(
@@ -710,14 +730,12 @@ def register_user_handlers(dp: Dispatcher):
             "🏆 Общая таблица\n"
             "📊 Статистика\n"
             "👤 Мой профиль\n"
-            "🗓 История туров\n"
-            "🥇 MVP тура\n"
-            "⭐ Топы тура\n"
             "📘 Правила\n\n"
-            "Если удобнее командами:\n"
+            "Дополнительно командами:\n"
             "/round N\n"
             "/my N\n"
             "/table_round N\n"
+            "/history\n"
             "/mvp_round N\n"
             "/tops_round N\n\n"
             f"Стартовый тур сейчас: {default_round}\n"
@@ -773,29 +791,24 @@ def register_user_handlers(dp: Dispatcher):
             "Пример: Роман"
         )
 
-    @dp.message(F.text == "✅ Вступить в турнир")
-    async def btn_join(message: types.Message, state: FSMContext):
-        async with SessionLocal() as session:
-            await upsert_user_from_message(session, message)
-            tournament = await get_selected_tournament_for_user(session, message.from_user.id)
-        await _request_display_name_for_join(message, state, tournament)
-
-    @dp.message(F.text == "📅 Матчи тура")
-    async def btn_round(message: types.Message):
-        tournament, default_round = await _get_user_tournament_context(message.from_user.id)
+    async def _send_default_round_text(target: types.Message, tg_user_id: int) -> None:
+        tournament, default_round = await _get_user_tournament_context(tg_user_id)
         await send_long(
-            message,
+            target,
             await build_round_matches_text(default_round, tournament_id=tournament.id, tournament_name=tournament.name),
         )
 
-    @dp.message(F.text == "🗂 Мои прогнозы")
-    async def btn_my(message: types.Message):
-        tournament, default_round = await _get_user_tournament_context(message.from_user.id)
-        if not await _require_membership_or_hint(message, tournament):
-            return
+    async def _send_default_my_text(target: types.Message, tg_user_id: int) -> None:
+        tournament, default_round = await _get_user_tournament_context(tg_user_id)
         async with SessionLocal() as session:
-            await upsert_user_from_message(session, message)
-        tg_user_id = message.from_user.id
+            ok = await is_user_in_tournament(session, tg_user_id, tournament.id)
+        if not ok:
+            await target.answer(
+                f"Сначала зайди в турнир {tournament.name} кнопкой «✅ Вступить в турнир»,"
+                " и сразу сможем показать твои прогнозы."
+            )
+            return
+
         text = await build_my_round_text(tg_user_id=tg_user_id, round_number=default_round, tournament_id=tournament.id)
         if await round_has_matches(default_round, tournament_id=tournament.id):
             total = await get_round_total_points_for_user(
@@ -806,7 +819,70 @@ def register_user_handlers(dp: Dispatcher):
                 f"Итого за тур сейчас: {total} очк.\n"
                 "Хочешь добить оставшиеся матчи? Жми «🎯 Поставить прогноз»."
             )
-        await send_long(message, text)
+        await send_long(target, text)
+
+    async def _send_quick_predict_picker(target: types.Message, tg_user_id: int) -> None:
+        tournament, default_round = await _get_user_tournament_context(tg_user_id)
+        async with SessionLocal() as session:
+            ok = await is_user_in_tournament(session, tg_user_id, tournament.id)
+            if not ok:
+                await target.answer(
+                    f"Сначала зайди в турнир {tournament.name} кнопкой «✅ Вступить в турнир»,"
+                    " и сразу сможем сохранить прогноз."
+                )
+                return
+
+            now = now_msk_naive()
+            q = await session.execute(
+                select(Match)
+                .where(
+                    Match.round_number == default_round,
+                    Match.source == "manual",
+                    Match.tournament_id == tournament.id,
+                    Match.kickoff_time > now,
+                )
+                .order_by(Match.kickoff_time.asc())
+            )
+            open_matches = q.scalars().all()
+
+        if not open_matches:
+            await target.answer(
+                f"На тур {default_round} открытых матчей уже нет.\n"
+                f"Загляни в следующий: /round {default_round + 1}"
+            )
+            return
+
+        await target.answer(
+            f"Выбери матч тура {default_round}, затем просто отправь счёт (например: 2:1).",
+            reply_markup=build_open_matches_inline_keyboard(open_matches),
+        )
+
+    @dp.callback_query(F.data.startswith("qnav:"))
+    async def on_quick_nav(callback: types.CallbackQuery, state: FSMContext):
+        data = callback.data or ""
+        action = data.split(":", 1)[1] if ":" in data else ""
+        if action == "my":
+            await _send_default_my_text(callback.message, callback.from_user.id)
+        elif action == "round":
+            await _send_default_round_text(callback.message, callback.from_user.id)
+        elif action == "predict":
+            await _send_quick_predict_picker(callback.message, callback.from_user.id)
+        await callback.answer()
+
+    @dp.message(F.text == "✅ Вступить в турнир")
+    async def btn_join(message: types.Message, state: FSMContext):
+        async with SessionLocal() as session:
+            await upsert_user_from_message(session, message)
+            tournament = await get_selected_tournament_for_user(session, message.from_user.id)
+        await _request_display_name_for_join(message, state, tournament)
+
+    @dp.message(F.text == "📅 Матчи тура")
+    async def btn_round(message: types.Message):
+        await _send_default_round_text(message, message.from_user.id)
+
+    @dp.message(F.text == "🗂 Мои прогнозы")
+    async def btn_my(message: types.Message):
+        await _send_default_my_text(message, message.from_user.id)
 
     @dp.message(F.text == "🏆 Общая таблица")
     async def btn_table(message: types.Message):
@@ -825,6 +901,7 @@ def register_user_handlers(dp: Dispatcher):
         lines.append("")
         lines.append("Нужен следующий шаг? Открой «🗂 Мои прогнозы» или поставь новый через «🎯 Поставить прогноз».")
         await send_long(message, "\n".join(lines))
+        await message.answer("Быстрые действия:", reply_markup=build_quick_nav_keyboard("after_table"))
 
     @dp.message(F.text == "📊 Статистика")
     async def btn_stats(message: types.Message):
@@ -963,34 +1040,7 @@ def register_user_handlers(dp: Dispatcher):
 
     @dp.message(F.text == "🎯 Поставить прогноз")
     async def quick_predict_hint(message: types.Message):
-        tournament, default_round = await _get_user_tournament_context(message.from_user.id)
-        if not await _require_membership_or_hint(message, tournament):
-            return
-        now = now_msk_naive()
-        async with SessionLocal() as session:
-            q = await session.execute(
-                select(Match)
-                .where(
-                    Match.round_number == default_round,
-                    Match.source == "manual",
-                    Match.tournament_id == tournament.id,
-                    Match.kickoff_time > now,
-                )
-                .order_by(Match.kickoff_time.asc())
-            )
-            open_matches = q.scalars().all()
-
-        if not open_matches:
-            await message.answer(
-                f"На тур {default_round} открытых матчей уже нет.\n"
-                f"Загляни в следующий: /round {default_round + 1}"
-            )
-            return
-
-        await message.answer(
-            f"Выбери матч тура {default_round}, затем просто отправь счёт (например: 2:1).",
-            reply_markup=build_open_matches_inline_keyboard(open_matches),
-        )
+        await _send_quick_predict_picker(message, message.from_user.id)
 
     @dp.callback_query(F.data.startswith("pick_match:"))
     async def on_pick_match(callback: types.CallbackQuery, state: FSMContext):
@@ -1084,7 +1134,10 @@ def register_user_handlers(dp: Dispatcher):
             await session.commit()
 
         await state.clear()
-        await message.answer(f"✅ Прогноз: {match.home_team} — {match.away_team} | {pred_home}:{pred_away}")
+        await message.answer(
+            f"✅ Прогноз: {match.home_team} — {match.away_team} | {pred_home}:{pred_away}",
+            reply_markup=build_quick_nav_keyboard("after_predict"),
+        )
 
     @dp.message(PredictRoundStates.waiting_for_display_name)
     async def on_display_name_input(message: types.Message, state: FSMContext):
@@ -1264,6 +1317,7 @@ def register_user_handlers(dp: Dispatcher):
             await session.commit()
 
         await message.answer(f"✅ Прогноз: {match.home_team} — {match.away_team} | {pred_home}:{pred_away}")
+        await message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_predict"))
 
     @dp.message(Command("predict_round"))
     async def cmd_predict_round(message: types.Message, state: FSMContext):
@@ -1375,6 +1429,7 @@ def register_user_handlers(dp: Dispatcher):
             f"✅ Готово! Сохранено: {saved} | Пропущено: {skipped} | Ошибок: {errors}\n"
             "Проверить всё можно через «🗂 Мои прогнозы»."
         )
+        await message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_predict"))
 
     @dp.message(Command("my"))
     async def cmd_my(message: types.Message):
@@ -1440,6 +1495,7 @@ def register_user_handlers(dp: Dispatcher):
         lines.append("Хочешь проверить свои ставки? Жми «🗂 Мои прогнозы».")
 
         await send_long(message, "\n".join(lines))
+        await message.answer("Быстрые действия:", reply_markup=build_quick_nav_keyboard("after_table"))
 
     @dp.message(Command("table_round"))
     async def cmd_table_round(message: types.Message):
@@ -1476,6 +1532,7 @@ def register_user_handlers(dp: Dispatcher):
         lines.append("Хочешь ворваться выше? Открой «🎯 Поставить прогноз».")
 
         await send_long(message, "\n".join(lines))
+        await message.answer("Быстрые действия:", reply_markup=build_quick_nav_keyboard("after_table"))
 
     @dp.message(Command("stats"))
     async def cmd_stats(message: types.Message):
