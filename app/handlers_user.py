@@ -7,10 +7,13 @@ from sqlalchemy import case, func, select
 
 from datetime import datetime, timedelta
 
+from app.config import load_admin_ids
 from app.db import SessionLocal
 from app.models import Match, Point, Prediction, Tournament, User, UserTournament
 from app.stats import build_stats_text
 from app.my_predictions import build_my_round_text
+
+ADMIN_IDS = load_admin_ids()
 
 
 class PredictRoundStates(StatesGroup):
@@ -121,6 +124,29 @@ async def set_selected_tournament_for_user(session, tg_user_id: int, tournament_
         st.value = t.code
     await session.commit()
     return t
+
+
+async def notify_admins_new_join(
+    bot,
+    tg_user_id: int,
+    username: str | None,
+    display_name: str,
+    tournament_name: str,
+) -> None:
+    if not ADMIN_IDS:
+        return
+    login = f"@{username}" if username else str(tg_user_id)
+    text = (
+        "👤 Новый участник турнира\n"
+        f"Имя: {display_name}\n"
+        f"Логин: {login}\n"
+        f"Турнир: {tournament_name}"
+    )
+    for admin_id in ADMIN_IDS:
+        try:
+            await bot.send_message(admin_id, text)
+        except Exception:
+            continue
 
 
 async def get_current_round_default(tournament_id: int, round_min: int, round_max: int) -> int:
@@ -1058,6 +1084,7 @@ def register_user_handlers(dp: Dispatcher):
         data = await state.get_data()
         tournament_id = int(data.get("join_tournament_id") or 0)
         tournament_name = str(data.get("join_tournament_name") or "")
+        new_join = False
 
         async with SessionLocal() as session:
             await upsert_user_from_message(session, message)
@@ -1076,12 +1103,14 @@ def register_user_handlers(dp: Dispatcher):
             if tournament is None:
                 tournament = await get_selected_tournament_for_user(session, message.from_user.id)
 
+            exists_before = await is_user_in_tournament(session, message.from_user.id, tournament.id)
             await ensure_user_membership(
                 session,
                 message.from_user.id,
                 tournament.id,
                 display_name=display_name,
             )
+            new_join = not exists_before
             await session.commit()
 
         await state.clear()
@@ -1090,6 +1119,14 @@ def register_user_handlers(dp: Dispatcher):
             f"✅ Ты в турнире: {t_name}\n"
             f"Имя в таблице: {display_name}"
         )
+        if new_join:
+            await notify_admins_new_join(
+                bot=message.bot,
+                tg_user_id=message.from_user.id,
+                username=message.from_user.username,
+                display_name=display_name,
+                tournament_name=t_name,
+            )
 
     @dp.message(CommandStart())
     async def cmd_start(message: types.Message):
