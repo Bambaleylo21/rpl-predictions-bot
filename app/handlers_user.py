@@ -229,6 +229,16 @@ def build_quick_nav_keyboard(kind: str) -> types.InlineKeyboardMarkup:
         ]
         return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
+    if kind == "after_my":
+        rows = [
+            [
+                types.InlineKeyboardButton(text="🎯 Поставить прогноз", callback_data="qnav:predict"),
+                types.InlineKeyboardButton(text="📅 Матчи тура", callback_data="qnav:round"),
+            ],
+            [types.InlineKeyboardButton(text="🏆 Общая таблица", callback_data="qnav:table")],
+        ]
+        return types.InlineKeyboardMarkup(inline_keyboard=rows)
+
     return types.InlineKeyboardMarkup(inline_keyboard=[])
 
 
@@ -820,6 +830,7 @@ def register_user_handlers(dp: Dispatcher):
                 "Хочешь добить оставшиеся матчи? Жми «🎯 Поставить прогноз»."
             )
         await send_long(target, text)
+        await target.answer("Быстрые действия:", reply_markup=build_quick_nav_keyboard("after_my"))
 
     async def _send_quick_predict_picker(target: types.Message, tg_user_id: int) -> None:
         tournament, default_round = await _get_user_tournament_context(tg_user_id)
@@ -867,6 +878,25 @@ def register_user_handlers(dp: Dispatcher):
             await _send_default_round_text(callback.message, callback.from_user.id)
         elif action == "predict":
             await _send_quick_predict_picker(callback.message, callback.from_user.id)
+        elif action == "table":
+            tournament, _default_round = await _get_user_tournament_context(callback.from_user.id)
+            played, total = await get_matches_played_stats(tournament_id=tournament.id)
+            rows, participants = await build_overall_leaderboard(tournament_id=tournament.id)
+            if not rows:
+                await callback.message.answer(
+                    "Пока в таблице пусто — ещё нет прогнозов.\n"
+                    "Можешь открыть сезон первым через «🎯 Поставить прогноз»."
+                )
+            else:
+                lines = [f"🏆 {tournament.name} · Таблица лидеров"]
+                lines.append(f"Участников с прогнозами: {participants}")
+                lines.append(f"Матчей сыграно: {played} / {total}")
+                for i, r in enumerate(rows[:20], start=1):
+                    lines.append(f"{i}. {r['name']} — {r['total']} очк. | 🎯{r['exact']} | 📏{r['diff']} | ✅{r['outcome']}")
+                lines.append("")
+                lines.append("Хочешь проверить свои ставки? Жми «🗂 Мои прогнозы».")
+                await send_long(callback.message, "\n".join(lines))
+                await callback.message.answer("Быстрые действия:", reply_markup=build_quick_nav_keyboard("after_table"))
         await callback.answer()
 
     @dp.message(F.text == "✅ Вступить в турнир")
@@ -1471,6 +1501,7 @@ def register_user_handlers(dp: Dispatcher):
             )
 
         await send_long(message, text)
+        await message.answer("Быстрые действия:", reply_markup=build_quick_nav_keyboard("after_my"))
 
     @dp.message(Command("table"))
     async def cmd_table(message: types.Message):
