@@ -41,6 +41,8 @@ async def _apply_postgres_schema_fixes(conn) -> None:
         "CREATE INDEX IF NOT EXISTS ix_tournaments_code ON tournaments (code)",
         "INSERT INTO tournaments (code, name, round_min, round_max, is_active) VALUES ('RPL', 'Russian Premier League', 19, 30, 1) ON CONFLICT (code) DO NOTHING",
         "INSERT INTO tournaments (code, name, round_min, round_max, is_active) VALUES ('EPL', 'English Premier League', 27, 38, 1) ON CONFLICT (code) DO NOTHING",
+        "UPDATE tournaments SET name='Russian Premier League', round_min=19, round_max=30, is_active=1 WHERE code='RPL'",
+        "UPDATE tournaments SET name='English Premier League', round_min=27, round_max=38, is_active=1 WHERE code='EPL'",
 
         # user_tournaments
         "CREATE TABLE IF NOT EXISTS user_tournaments (id SERIAL PRIMARY KEY, tg_user_id BIGINT NOT NULL, tournament_id INTEGER NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE, display_name VARCHAR(64), created_at TIMESTAMP NOT NULL DEFAULT NOW(), CONSTRAINT uq_user_tournaments_user_tournament UNIQUE (tg_user_id, tournament_id))",
@@ -104,6 +106,8 @@ async def _apply_sqlite_schema_fixes(conn) -> None:
         "CREATE INDEX IF NOT EXISTS ix_tournaments_code ON tournaments (code)",
         "INSERT OR IGNORE INTO tournaments (code, name, round_min, round_max, is_active) VALUES ('RPL', 'Russian Premier League', 19, 30, 1)",
         "INSERT OR IGNORE INTO tournaments (code, name, round_min, round_max, is_active) VALUES ('EPL', 'English Premier League', 27, 38, 1)",
+        "UPDATE tournaments SET name='Russian Premier League', round_min=19, round_max=30, is_active=1 WHERE code='RPL'",
+        "UPDATE tournaments SET name='English Premier League', round_min=27, round_max=38, is_active=1 WHERE code='EPL'",
 
         # user_tournaments
         "CREATE TABLE IF NOT EXISTS user_tournaments (id INTEGER PRIMARY KEY AUTOINCREMENT, tg_user_id BIGINT NOT NULL, tournament_id INTEGER NOT NULL, display_name VARCHAR(64), created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT uq_user_tournaments_user_tournament UNIQUE (tg_user_id, tournament_id))",

@@ -789,10 +789,11 @@ async def admin_remove_user(message: types.Message):
     async with SessionLocal() as session:
         await session.execute(delete(Prediction).where(Prediction.tg_user_id == tg_user_id))
         await session.execute(delete(Point).where(Point.tg_user_id == tg_user_id))
+        await session.execute(delete(UserTournament).where(UserTournament.tg_user_id == tg_user_id))
         await session.execute(delete(User).where(User.tg_user_id == tg_user_id))
         await session.commit()
 
-    await message.answer(f"✅ Пользователь {tg_user_id} удалён (users + predictions + points).")
+    await message.answer(f"✅ Пользователь {tg_user_id} удалён (users + user_tournaments + predictions + points).")
 
 
 async def _build_admin_status_text() -> str:
@@ -804,7 +805,15 @@ async def _build_admin_status_text() -> str:
         lines = ["🧭 Админ-статус", f"Время: {now.strftime('%d.%m %H:%M')} МСК", ""]
         for t in tournaments:
             members_q = await session.execute(
-                select(func.count(UserTournament.id)).where(UserTournament.tournament_id == t.id)
+                select(func.count(func.distinct(Prediction.tg_user_id)))
+                .select_from(Prediction)
+                .join(Match, Match.id == Prediction.match_id)
+                .where(
+                    Match.tournament_id == t.id,
+                    Match.source == "manual",
+                    Match.round_number >= t.round_min,
+                    Match.round_number <= t.round_max,
+                )
             )
             members = int(members_q.scalar_one() or 0)
 
@@ -816,6 +825,8 @@ async def _build_admin_status_text() -> str:
                 .where(
                     Match.tournament_id == t.id,
                     Match.source == "manual",
+                    Match.round_number >= t.round_min,
+                    Match.round_number <= t.round_max,
                 )
                 .group_by(Match.round_number)
                 .order_by(Match.round_number.asc())
@@ -844,6 +855,8 @@ async def _build_admin_status_text() -> str:
                 select(func.count(Match.id)).where(
                     Match.tournament_id == t.id,
                     Match.source == "manual",
+                    Match.round_number >= t.round_min,
+                    Match.round_number <= t.round_max,
                     Match.home_score.is_(None),
                     Match.away_score.is_(None),
                 )
@@ -851,7 +864,7 @@ async def _build_admin_status_text() -> str:
             no_result = int(no_result_q.scalar_one() or 0)
 
             lines.append(f"🏆 {t.name}")
-            lines.append(f"Участников: {members}")
+            lines.append(f"Участников с прогнозами: {members}")
             lines.append(f"Текущий тур: {current_round}")
             lines.append(f"Открытых матчей в туре: {open_matches}")
             lines.append(f"Матчей без результата: {no_result}")
@@ -867,6 +880,8 @@ async def _build_admin_progress_text(tournament_id: int, round_number: int) -> s
         t = t_q.scalar_one_or_none()
         if t is None:
             return "Турнир не найден."
+        if round_number < t.round_min or round_number > t.round_max:
+            return f"Для {t.name} доступны туры только {t.round_min}..{t.round_max}."
 
         total_q = await session.execute(
             select(func.count(Match.id)).where(
@@ -901,7 +916,10 @@ async def _build_admin_progress_text(tournament_id: int, round_number: int) -> s
         open_matches = int(open_q.scalar_one() or 0)
 
         members_q = await session.execute(
-            select(UserTournament.tg_user_id).where(UserTournament.tournament_id == tournament_id)
+            select(UserTournament.tg_user_id).where(
+                UserTournament.tournament_id == tournament_id,
+                UserTournament.display_name.isnot(None),
+            )
         )
         member_ids = [int(x[0]) for x in members_q.all()]
         members = len(member_ids)
@@ -955,9 +973,14 @@ async def _build_admin_missing_text(tournament_id: int, round_number: int) -> st
         t = t_q.scalar_one_or_none()
         if t is None:
             return "Турнир не найден."
+        if round_number < t.round_min or round_number > t.round_max:
+            return f"Для {t.name} доступны туры только {t.round_min}..{t.round_max}."
 
         members_q = await session.execute(
-            select(UserTournament.tg_user_id, UserTournament.display_name).where(UserTournament.tournament_id == tournament_id)
+            select(UserTournament.tg_user_id, UserTournament.display_name).where(
+                UserTournament.tournament_id == tournament_id,
+                UserTournament.display_name.isnot(None),
+            )
         )
         members_rows = members_q.all()
         member_ids = [int(r[0]) for r in members_rows]
@@ -1135,9 +1158,20 @@ async def admin_pick_tournament_for_progress(callback: types.CallbackQuery):
         await callback.answer("Ошибка выбора турнира", show_alert=True)
         return
     async with SessionLocal() as session:
+        t_q = await session.execute(select(Tournament).where(Tournament.id == tournament_id))
+        t = t_q.scalar_one_or_none()
+        if t is None:
+            await callback.message.answer("Турнир не найден.")
+            await callback.answer()
+            return
         rounds_q = await session.execute(
             select(Match.round_number)
-            .where(Match.tournament_id == tournament_id, Match.source == "manual")
+            .where(
+                Match.tournament_id == tournament_id,
+                Match.source == "manual",
+                Match.round_number >= t.round_min,
+                Match.round_number <= t.round_max,
+            )
             .group_by(Match.round_number)
             .order_by(Match.round_number.asc())
         )
@@ -1164,9 +1198,20 @@ async def admin_pick_tournament_for_missing(callback: types.CallbackQuery):
         await callback.answer("Ошибка выбора турнира", show_alert=True)
         return
     async with SessionLocal() as session:
+        t_q = await session.execute(select(Tournament).where(Tournament.id == tournament_id))
+        t = t_q.scalar_one_or_none()
+        if t is None:
+            await callback.message.answer("Турнир не найден.")
+            await callback.answer()
+            return
         rounds_q = await session.execute(
             select(Match.round_number)
-            .where(Match.tournament_id == tournament_id, Match.source == "manual")
+            .where(
+                Match.tournament_id == tournament_id,
+                Match.source == "manual",
+                Match.round_number >= t.round_min,
+                Match.round_number <= t.round_max,
+            )
             .group_by(Match.round_number)
             .order_by(Match.round_number.asc())
         )
