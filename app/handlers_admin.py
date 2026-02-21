@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta
 from aiogram import Dispatcher, F, types
 from aiogram.filters import Command
@@ -15,6 +16,11 @@ from app.scoring import calculate_points
 from app.tournament import ROUND_DEFAULT, ROUND_MAX, ROUND_MIN, is_tournament_round
 
 ADMIN_IDS = load_admin_ids()
+ROUND_DIGEST_CHAT_ID_RAW = os.getenv("ROUND_DIGEST_CHAT_ID", "").strip()
+try:
+    ROUND_DIGEST_CHAT_ID = int(ROUND_DIGEST_CHAT_ID_RAW) if ROUND_DIGEST_CHAT_ID_RAW else None
+except ValueError:
+    ROUND_DIGEST_CHAT_ID = None
 
 
 class AdminSetResultStates(StatesGroup):
@@ -219,6 +225,44 @@ async def _maybe_send_round_closed_summary(bot, tournament_id: int, round_number
             )
         participants = len(leaderboard_rows)
 
+        exact_max = max((int(r[2] or 0) for r in leaderboard_rows), default=0)
+        diff_max = max((int(r[3] or 0) for r in leaderboard_rows), default=0)
+        outcome_max = max((int(r[4] or 0) for r in leaderboard_rows), default=0)
+
+        exact_names = ", ".join(
+            [str(r[0]) for r in leaderboard_rows if int(r[2] or 0) == exact_max and exact_max > 0]
+        )
+        diff_names = ", ".join(
+            [str(r[0]) for r in leaderboard_rows if int(r[3] or 0) == diff_max and diff_max > 0]
+        )
+        outcome_names = ", ".join(
+            [str(r[0]) for r in leaderboard_rows if int(r[4] or 0) == outcome_max and outcome_max > 0]
+        )
+
+        users_q = await session.execute(select(User.tg_user_id, User.username, User.full_name))
+        users_map = {int(tg): (un, fn) for tg, un, fn in users_q.all()}
+        ut_q = await session.execute(
+            select(UserTournament.tg_user_id, UserTournament.display_name).where(
+                UserTournament.tournament_id == tournament_id
+            )
+        )
+        tournament_names = {int(tg): dn for tg, dn in ut_q.all() if dn}
+
+        def pretty_name(tg_user_id: int) -> str:
+            dn = tournament_names.get(int(tg_user_id))
+            if dn:
+                return dn
+            un, fn = users_map.get(int(tg_user_id), (None, None))
+            if un:
+                return f"@{un}"
+            if fn:
+                return fn
+            return str(tg_user_id)
+
+        exact_pretty = ", ".join(pretty_name(int(x)) for x in exact_names.split(", ") if x) if exact_names else "—"
+        diff_pretty = ", ".join(pretty_name(int(x)) for x in diff_names.split(", ") if x) if diff_names else "—"
+        outcome_pretty = ", ".join(pretty_name(int(x)) for x in outcome_names.split(", ") if x) if outcome_names else "—"
+
         streak_rows_q = await session.execute(
             select(Point.tg_user_id, Match.kickoff_time, Point.points, Match.id)
             .select_from(Point)
@@ -292,6 +336,36 @@ async def _maybe_send_round_closed_summary(bot, tournament_id: int, round_number
                 await bot.send_message(chat_id=tg_user_id, text=text)
             except Exception:
                 continue
+
+        if ROUND_DIGEST_CHAT_ID is not None:
+            top3_lines: list[str] = []
+            for i, (tg_user_id, total_pts, _exact, _diff, _outcome) in enumerate(leaderboard_rows[:3], start=1):
+                top3_lines.append(f"{i}. {pretty_name(int(tg_user_id))} — {int(total_pts or 0)}")
+
+            if leaderboard_rows:
+                best_pts = int(leaderboard_rows[0][1] or 0)
+                mvp_ids = [int(r[0]) for r in leaderboard_rows if int(r[1] or 0) == best_pts]
+                mvp_text = ", ".join(pretty_name(uid) for uid in mvp_ids)
+            else:
+                best_pts = 0
+                mvp_text = "—"
+
+            public_lines = [f"🏁 Итоги тура {round_number} ({tournament_name})", ""]
+            public_lines.append(f"🏅 MVP: {mvp_text} — {best_pts} очк.")
+            public_lines.append(f"🎯 Топ точных: {exact_pretty}")
+            public_lines.append(f"📏 Топ разницы: {diff_pretty}")
+            public_lines.append(f"✅ Топ исходов: {outcome_pretty}")
+            if top3_lines:
+                public_lines.append("")
+                public_lines.append("Топ-3 тура:")
+                public_lines.extend(top3_lines)
+            public_lines.append("")
+            public_lines.append(f"Участников в туре: {participants}")
+            public_lines.append("Следующий тур открыт. Время ставить прогнозы: «🎯 Поставить прогноз».")
+            try:
+                await bot.send_message(chat_id=ROUND_DIGEST_CHAT_ID, text="\n".join(public_lines))
+            except Exception:
+                pass
 
         await _set_setting(session, key, "1")
 
