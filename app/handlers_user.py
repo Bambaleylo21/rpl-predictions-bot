@@ -969,28 +969,39 @@ async def build_round_digest_text(round_number: int, tournament_id: int, tournam
     return "\n".join(lines)
 
 
-async def get_round_prediction_progress_for_user(tg_user_id: int, round_number: int, tournament_id: int) -> tuple[int, int]:
+async def get_round_prediction_progress_for_user(
+    tg_user_id: int,
+    round_number: int,
+    tournament_id: int,
+) -> tuple[int, int, int]:
     async with SessionLocal() as session:
-        match_ids_q = await session.execute(
-            select(Match.id).where(
+        now = now_msk_naive()
+        matches_q = await session.execute(
+            select(Match.id, Match.kickoff_time).where(
                 Match.round_number == round_number,
                 Match.source == "manual",
                 Match.tournament_id == tournament_id,
             )
         )
-        match_ids = [int(x[0]) for x in match_ids_q.all()]
-        total_matches = len(match_ids)
-        if total_matches == 0:
-            return 0, 0
+        rows = [(int(mid), kickoff) for mid, kickoff in matches_q.all()]
+        all_match_ids = [mid for mid, _kickoff in rows]
+        if not all_match_ids:
+            return 0, 0, 0
+
+        open_match_ids = [mid for mid, kickoff in rows if kickoff > now]
 
         preds_q = await session.execute(
-            select(func.count(Prediction.id)).where(
+            select(Prediction.match_id).where(
                 Prediction.tg_user_id == tg_user_id,
-                Prediction.match_id.in_(match_ids),
+                Prediction.match_id.in_(all_match_ids),
             )
         )
-        predicted = int(preds_q.scalar_one() or 0)
-        return predicted, total_matches
+        predicted_match_ids = {int(x[0]) for x in preds_q.all()}
+
+        predicted_open = sum(1 for mid in open_match_ids if mid in predicted_match_ids)
+        total_open = len(open_match_ids)
+        missed_closed = sum(1 for mid, kickoff in rows if kickoff <= now and mid not in predicted_match_ids)
+        return predicted_open, total_open, missed_closed
 
 
 def register_user_handlers(dp: Dispatcher):
@@ -1007,13 +1018,27 @@ def register_user_handlers(dp: Dispatcher):
     def _round_in_tournament(round_number: int, tournament: Tournament) -> bool:
         return tournament.round_min <= round_number <= tournament.round_max
 
-    def _my_round_followup_line(predicted: int, total_matches: int) -> str:
-        if total_matches <= 0:
+    def _my_round_followup_line(predicted_open: int, total_open: int, missed_closed: int) -> str:
+        if total_open <= 0:
+            if missed_closed > 0:
+                return (
+                    f"Все оставшиеся матчи уже закрыты.\n"
+                    f"Пропущено закрытых матчей: {missed_closed}."
+                )
             return "Как только появятся матчи, можно будет сразу поставить прогноз."
-        left = max(total_matches - predicted, 0)
+        left = max(total_open - predicted_open, 0)
         if left == 0:
-            return "Все матчи тура заполнены ✅\nОстаётся ждать результатов."
-        return f"У тебя ещё не заполнены {left} матч(а/ей).\nМожешь быстро добить через «🎯 Поставить прогноз»."
+            if missed_closed > 0:
+                return (
+                    "Все доступные матчи тура заполнены ✅\n"
+                    f"Пропущено закрытых матчей: {missed_closed}."
+                )
+            return "Все доступные матчи тура заполнены ✅\nОстаётся ждать результатов."
+        extra = f"\nПропущено закрытых матчей: {missed_closed}." if missed_closed > 0 else ""
+        return (
+            f"Осталось поставить ещё {left} доступн(ых) матч(а/ей).\n"
+            f"Можешь быстро добить через «🎯 Поставить прогноз».{extra}"
+        )
 
     async def _build_predict_saved_message(
         tg_user_id: int,
@@ -1024,24 +1049,26 @@ def register_user_handlers(dp: Dispatcher):
         pred_home: int,
         pred_away: int,
     ) -> tuple[str, str]:
-        predicted, total_matches = await get_round_prediction_progress_for_user(
+        predicted_open, total_open, missed_closed = await get_round_prediction_progress_for_user(
             tg_user_id=tg_user_id,
             round_number=round_number,
             tournament_id=tournament_id,
         )
-        left = max(total_matches - predicted, 0)
-        if left == 0 and total_matches > 0:
+        left = max(total_open - predicted_open, 0)
+        if left == 0 and total_open > 0:
+            missed_line = f"\nПропущено закрытых матчей: {missed_closed}." if missed_closed > 0 else ""
             text = (
                 f"✅ Прогноз принят: {home_team} — {away_team} | {pred_home}:{pred_away}\n\n"
-                f"Готово! Ты закрыл все матчи тура {round_number} ✅\n"
-                "Теперь ждём результаты и считаем очки."
+                f"Готово! Ты закрыл все доступные матчи тура {round_number} ✅\n"
+                f"Теперь ждём результаты и считаем очки.{missed_line}"
             )
             return text, "after_predict_done"
 
+        missed_line = f"\nЗакрытых пропусков сейчас: {missed_closed}." if missed_closed > 0 else ""
         text = (
             f"✅ Прогноз принят: {home_team} — {away_team} | {pred_home}:{pred_away}\n\n"
-            f"Осталось поставить ещё {left} матч(а/ей) в туре {round_number}.\n"
-            "Успеешь добить сейчас? 👇"
+            f"Осталось поставить ещё {left} доступн(ых) матч(а/ей) в туре {round_number}.\n"
+            f"Успеешь добить сейчас? 👇{missed_line}"
         )
         return text, "after_predict"
 
@@ -1181,7 +1208,7 @@ def register_user_handlers(dp: Dispatcher):
             total = await get_round_total_points_for_user(
                 tg_user_id=tg_user_id, round_number=default_round, tournament_id=tournament.id
             )
-            predicted, total_matches = await get_round_prediction_progress_for_user(
+            predicted_open, total_open, missed_closed = await get_round_prediction_progress_for_user(
                 tg_user_id=tg_user_id,
                 round_number=default_round,
                 tournament_id=tournament.id,
@@ -1189,7 +1216,7 @@ def register_user_handlers(dp: Dispatcher):
             text = (
                 f"{text}\n\n"
                 f"Итого за тур сейчас: {total} очк.\n"
-                f"{_my_round_followup_line(predicted, total_matches)}"
+                f"{_my_round_followup_line(predicted_open, total_open, missed_closed)}"
             )
         await send_long(target, text)
         await target.answer("Быстрые действия:", reply_markup=build_quick_nav_keyboard("after_my"))
@@ -1927,7 +1954,7 @@ def register_user_handlers(dp: Dispatcher):
             total = await get_round_total_points_for_user(
                 tg_user_id=tg_user_id, round_number=round_number, tournament_id=tournament.id
             )
-            predicted, total_matches = await get_round_prediction_progress_for_user(
+            predicted_open, total_open, missed_closed = await get_round_prediction_progress_for_user(
                 tg_user_id=tg_user_id,
                 round_number=round_number,
                 tournament_id=tournament.id,
@@ -1935,7 +1962,7 @@ def register_user_handlers(dp: Dispatcher):
             text = (
                 f"{text}\n\n"
                 f"Итого за тур сейчас: {total} очк.\n"
-                f"{_my_round_followup_line(predicted, total_matches)}"
+                f"{_my_round_followup_line(predicted_open, total_open, missed_closed)}"
             )
 
         await send_long(message, text)
