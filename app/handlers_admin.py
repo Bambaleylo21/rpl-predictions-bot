@@ -137,6 +137,24 @@ def _parse_score(score_str: str) -> tuple[int, int] | None:
         return None
 
 
+def _format_person_name(
+    tg_user_id: int,
+    tournament_display_name: str | None,
+    user_display_name: str | None,
+    username: str | None,
+    full_name: str | None,
+) -> str:
+    if tournament_display_name:
+        return tournament_display_name
+    if user_display_name:
+        return user_display_name
+    if username:
+        return f"@{username}"
+    if full_name:
+        return full_name
+    return str(tg_user_id)
+
+
 async def _set_setting(session, key: str, value: str) -> None:
     res = await session.execute(select(Setting).where(Setting.key == key))
     obj = res.scalar_one_or_none()
@@ -151,6 +169,98 @@ async def _get_setting(session, key: str) -> str | None:
     res = await session.execute(select(Setting).where(Setting.key == key))
     row = res.scalar_one_or_none()
     return row.value if row else None
+
+
+async def _build_admin_match_result_live_update(match_id: int) -> tuple[str, bool]:
+    async with SessionLocal() as session:
+        q = await session.execute(select(Match).where(Match.id == match_id))
+        match = q.scalar_one_or_none()
+        if match is None:
+            return "", False
+
+        preds_q = await session.execute(
+            select(
+                Prediction.tg_user_id,
+                Point.points,
+                Point.category,
+                UserTournament.display_name,
+                User.display_name,
+                User.username,
+                User.full_name,
+            )
+            .select_from(Prediction)
+            .outerjoin(
+                Point,
+                (Point.tg_user_id == Prediction.tg_user_id) & (Point.match_id == Prediction.match_id),
+            )
+            .outerjoin(
+                UserTournament,
+                (UserTournament.tg_user_id == Prediction.tg_user_id) & (UserTournament.tournament_id == match.tournament_id),
+            )
+            .outerjoin(User, User.tg_user_id == Prediction.tg_user_id)
+            .where(Prediction.match_id == match_id)
+            .order_by(Prediction.tg_user_id.asc())
+        )
+        pred_rows = preds_q.all()
+
+        total_preds = len(pred_rows)
+        winners_exact: list[str] = []
+        winners_diff: list[str] = []
+        winners_outcome: list[str] = []
+        scored_any = 0
+
+        for tg_user_id, points, category, tdn, udn, username, full_name in pred_rows:
+            pts = int(points or 0)
+            if pts > 0:
+                scored_any += 1
+            name = _format_person_name(int(tg_user_id), tdn, udn, username, full_name)
+            cat = (category or "").strip()
+            if cat == "exact":
+                winners_exact.append(name)
+            elif cat == "diff":
+                winners_diff.append(name)
+            elif cat == "outcome":
+                winners_outcome.append(name)
+
+        def _names(items: list[str]) -> str:
+            return ", ".join(items[:5]) if items else "—"
+
+        round_closed_q = await session.execute(
+            select(func.count(Match.id))
+            .where(
+                Match.tournament_id == match.tournament_id,
+                Match.round_number == match.round_number,
+                Match.source == "manual",
+                (Match.home_score.is_(None) | Match.away_score.is_(None)),
+            )
+        )
+        remaining_without_result = int(round_closed_q.scalar_one() or 0)
+        round_closed = remaining_without_result == 0
+
+    if total_preds == 0:
+        text = (
+            "⚡ Апдейт по матчу:\n"
+            "Прогнозов на этот матч не было."
+        )
+    elif scored_any == 0:
+        text = (
+            "⚡ Апдейт по матчу:\n"
+            f"Участников с прогнозом: {total_preds}\n"
+            "С очками за матч: 0\n\n"
+            "Сегодня матч удивил всех 😅\n"
+            "Никто не набрал очки за этот матч."
+        )
+    else:
+        text = (
+            "⚡ Апдейт по матчу:\n"
+            f"Участников с прогнозом: {total_preds}\n"
+            f"С очками за матч: {scored_any}\n\n"
+            f"🎯 Точный счёт: {_names(winners_exact)}\n"
+            f"📏 Разница + исход: {_names(winners_diff)}\n"
+            f"✅ Только исход: {_names(winners_outcome)}"
+        )
+
+    return text, round_closed
 
 
 async def _maybe_send_round_closed_summary(bot, tournament_id: int, round_number: int) -> None:
@@ -516,6 +626,18 @@ async def admin_set_result(message: types.Message):
         f"✅ Результат сохранён: {match.home_team} — {match.away_team} | {home_score}:{away_score}. "
         f"Пересчитано очков: {updates}"
     )
+    live_text, round_closed = await _build_admin_match_result_live_update(match.id)
+    if live_text:
+        await message.answer(live_text)
+    if round_closed:
+        await message.answer(
+            f"🏁 Похоже, тур {match.round_number} закрыт полностью.\n"
+            "Все матчи тура с результатами.\n\n"
+            "Можно посмотреть:\n"
+            f"• /mvp_round {match.round_number}\n"
+            f"• /tops_round {match.round_number}\n"
+            f"• /round_digest {match.round_number}"
+        )
     await _maybe_send_round_closed_summary(message.bot, tournament_id=match.tournament_id, round_number=match.round_number)
 
 
@@ -690,6 +812,18 @@ async def admin_set_result_score_input(message: types.Message, state: FSMContext
         f"✅ Результат сохранён: {match.home_team} — {match.away_team} | {home_score}:{away_score}. "
         f"Пересчитано очков: {updates}"
     )
+    live_text, round_closed = await _build_admin_match_result_live_update(match.id)
+    if live_text:
+        await message.answer(live_text)
+    if round_closed:
+        await message.answer(
+            f"🏁 Похоже, тур {match.round_number} закрыт полностью.\n"
+            "Все матчи тура с результатами.\n\n"
+            "Можно посмотреть:\n"
+            f"• /mvp_round {match.round_number}\n"
+            f"• /tops_round {match.round_number}\n"
+            f"• /round_digest {match.round_number}"
+        )
     await _maybe_send_round_closed_summary(message.bot, tournament_id=match.tournament_id, round_number=match.round_number)
 
 

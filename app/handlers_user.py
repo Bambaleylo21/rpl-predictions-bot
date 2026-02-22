@@ -220,6 +220,16 @@ def build_quick_nav_keyboard(kind: str) -> types.InlineKeyboardMarkup:
         ]
         return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
+    if kind == "after_predict_done":
+        rows = [
+            [
+                types.InlineKeyboardButton(text="🗂 Мои прогнозы", callback_data="qnav:my"),
+                types.InlineKeyboardButton(text="🏆 Общая таблица", callback_data="qnav:table"),
+            ],
+            [types.InlineKeyboardButton(text="📅 Матчи тура", callback_data="qnav:round")],
+        ]
+        return types.InlineKeyboardMarkup(inline_keyboard=rows)
+
     if kind == "after_table":
         rows = [
             [
@@ -800,6 +810,30 @@ async def build_round_digest_text(round_number: int, tournament_id: int, tournam
     return "\n".join(lines)
 
 
+async def get_round_prediction_progress_for_user(tg_user_id: int, round_number: int, tournament_id: int) -> tuple[int, int]:
+    async with SessionLocal() as session:
+        match_ids_q = await session.execute(
+            select(Match.id).where(
+                Match.round_number == round_number,
+                Match.source == "manual",
+                Match.tournament_id == tournament_id,
+            )
+        )
+        match_ids = [int(x[0]) for x in match_ids_q.all()]
+        total_matches = len(match_ids)
+        if total_matches == 0:
+            return 0, 0
+
+        preds_q = await session.execute(
+            select(func.count(Prediction.id)).where(
+                Prediction.tg_user_id == tg_user_id,
+                Prediction.match_id.in_(match_ids),
+            )
+        )
+        predicted = int(preds_q.scalar_one() or 0)
+        return predicted, total_matches
+
+
 def register_user_handlers(dp: Dispatcher):
     async def _get_user_tournament_context(tg_user_id: int) -> tuple[Tournament, int]:
         async with SessionLocal() as session:
@@ -813,6 +847,44 @@ def register_user_handlers(dp: Dispatcher):
 
     def _round_in_tournament(round_number: int, tournament: Tournament) -> bool:
         return tournament.round_min <= round_number <= tournament.round_max
+
+    def _my_round_followup_line(predicted: int, total_matches: int) -> str:
+        if total_matches <= 0:
+            return "Как только появятся матчи, можно будет сразу поставить прогноз."
+        left = max(total_matches - predicted, 0)
+        if left == 0:
+            return "Все матчи тура заполнены ✅\nОстаётся ждать результатов."
+        return f"У тебя ещё не заполнены {left} матч(а/ей).\nМожешь быстро добить через «🎯 Поставить прогноз»."
+
+    async def _build_predict_saved_message(
+        tg_user_id: int,
+        tournament_id: int,
+        round_number: int,
+        home_team: str,
+        away_team: str,
+        pred_home: int,
+        pred_away: int,
+    ) -> tuple[str, str]:
+        predicted, total_matches = await get_round_prediction_progress_for_user(
+            tg_user_id=tg_user_id,
+            round_number=round_number,
+            tournament_id=tournament_id,
+        )
+        left = max(total_matches - predicted, 0)
+        if left == 0 and total_matches > 0:
+            text = (
+                f"✅ Прогноз принят: {home_team} — {away_team} | {pred_home}:{pred_away}\n\n"
+                f"Готово! Ты закрыл все матчи тура {round_number} ✅\n"
+                "Теперь ждём результаты и считаем очки."
+            )
+            return text, "after_predict_done"
+
+        text = (
+            f"✅ Прогноз принят: {home_team} — {away_team} | {pred_home}:{pred_away}\n\n"
+            f"Осталось поставить ещё {left} матч(а/ей) в туре {round_number}.\n"
+            "Успеешь добить сейчас? 👇"
+        )
+        return text, "after_predict"
 
     async def _require_membership_or_hint(message: types.Message, tournament: Tournament) -> bool:
         async with SessionLocal() as session:
@@ -946,10 +1018,15 @@ def register_user_handlers(dp: Dispatcher):
             total = await get_round_total_points_for_user(
                 tg_user_id=tg_user_id, round_number=default_round, tournament_id=tournament.id
             )
+            predicted, total_matches = await get_round_prediction_progress_for_user(
+                tg_user_id=tg_user_id,
+                round_number=default_round,
+                tournament_id=tournament.id,
+            )
             text = (
                 f"{text}\n\n"
                 f"Итого за тур сейчас: {total} очк.\n"
-                "Хочешь добить оставшиеся матчи? Жми «🎯 Поставить прогноз»."
+                f"{_my_round_followup_line(predicted, total_matches)}"
             )
         await send_long(target, text)
         await target.answer("Быстрые действия:", reply_markup=build_quick_nav_keyboard("after_my"))
@@ -1298,7 +1375,10 @@ def register_user_handlers(dp: Dispatcher):
 
             if match.kickoff_time <= now:
                 await state.clear()
-                await message.answer("🔒 На этот матч прогноз уже закрыт. Можно выбрать другой открытый матч.")
+                await message.answer(
+                    "⛔️ Этот матч уже начался, прогноз закрыт.\n\n"
+                    "Открой «📅 Матчи тура» — покажу, что ещё доступно для прогноза."
+                )
                 return
 
             pred_q = await session.execute(
@@ -1321,10 +1401,16 @@ def register_user_handlers(dp: Dispatcher):
             await session.commit()
 
         await state.clear()
-        await message.answer(
-            f"✅ Прогноз: {match.home_team} — {match.away_team} | {pred_home}:{pred_away}",
-            reply_markup=build_quick_nav_keyboard("after_predict"),
+        confirm_text, nav_mode = await _build_predict_saved_message(
+            tg_user_id=tg_user_id,
+            tournament_id=tournament.id,
+            round_number=match.round_number,
+            home_team=match.home_team,
+            away_team=match.away_team,
+            pred_home=pred_home,
+            pred_away=pred_away,
         )
+        await message.answer(confirm_text, reply_markup=build_quick_nav_keyboard(nav_mode))
 
     @dp.message(PredictRoundStates.waiting_for_display_name)
     async def on_display_name_input(message: types.Message, state: FSMContext):
@@ -1513,8 +1599,17 @@ def register_user_handlers(dp: Dispatcher):
 
             await session.commit()
 
-        await message.answer(f"✅ Прогноз: {match.home_team} — {match.away_team} | {pred_home}:{pred_away}")
-        await message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_predict"))
+        confirm_text, nav_mode = await _build_predict_saved_message(
+            tg_user_id=tg_user_id,
+            tournament_id=tournament.id,
+            round_number=match.round_number,
+            home_team=match.home_team,
+            away_team=match.away_team,
+            pred_home=pred_home,
+            pred_away=pred_away,
+        )
+        await message.answer(confirm_text)
+        await message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard(nav_mode))
 
     @dp.message(Command("predict_round"))
     async def cmd_predict_round(message: types.Message, state: FSMContext):
@@ -1661,10 +1756,15 @@ def register_user_handlers(dp: Dispatcher):
             total = await get_round_total_points_for_user(
                 tg_user_id=tg_user_id, round_number=round_number, tournament_id=tournament.id
             )
+            predicted, total_matches = await get_round_prediction_progress_for_user(
+                tg_user_id=tg_user_id,
+                round_number=round_number,
+                tournament_id=tournament.id,
+            )
             text = (
                 f"{text}\n\n"
                 f"Итого за тур сейчас: {total} очк.\n"
-                "Если хочешь, можно сразу продолжить через «🎯 Поставить прогноз»."
+                f"{_my_round_followup_line(predicted, total_matches)}"
             )
 
         await send_long(message, text)
