@@ -280,20 +280,10 @@ def format_user_name(
     return str(tg_user_id)
 
 
-def _truncate_table_name(name: str, max_len: int = 14) -> str:
-    s = (name or "").strip()
-    if len(s) <= max_len:
-        return s
-    if max_len <= 1:
-        return "…"
-    return s[: max_len - 1].rstrip() + "…"
-
-
-def _format_leaderboard_row(i: int, row: dict, name_len: int = 14) -> str:
-    short_name = _truncate_table_name(str(row.get("name", "")), max_len=name_len)
+def _format_leaderboard_row(i: int, row: dict) -> str:
     return (
-        f"{i}. {short_name:<{name_len}} — {int(row.get('total', 0))} очк. | "
-        f"🎯 {int(row.get('exact', 0))} | 📏 {int(row.get('diff', 0))} | ✅ {int(row.get('outcome', 0))}"
+        f"{i}. {row.get('name', '')} — {int(row.get('total', 0))} очк. | "
+        f"🎯{int(row.get('exact', 0))} | 📏{int(row.get('diff', 0))} | ✅{int(row.get('outcome', 0))}"
     )
 
 
