@@ -4,6 +4,20 @@ from app.db import SessionLocal
 from app.models import Match, Prediction, Point
 
 
+def _point_category_emoji(category: str | None, points: int | None) -> str:
+    cat = (category or "").strip().lower()
+    if cat == "exact":
+        return "🎯"
+    if cat == "diff":
+        return "📏"
+    if cat == "outcome":
+        return "✅"
+    # none / пусто / неизвестно — считаем промахом
+    if int(points or 0) <= 0:
+        return "❌"
+    return "✅"
+
+
 async def build_my_round_text(tg_user_id: int, round_number: int, tournament_id: int | None = None) -> str:
     async with SessionLocal() as session:
         q = select(Match).where(Match.round_number == round_number, Match.source == "manual")
@@ -46,7 +60,7 @@ async def build_my_round_text(tg_user_id: int, round_number: int, tournament_id:
             result_txt = f" | итог {m.home_score}:{m.away_score}"
             pt = pts_map.get(m.id)
             if pt is not None:
-                result_txt += f" | очки {pt.points} ({pt.category})"
+                result_txt += f" | очки {pt.points} {_point_category_emoji(pt.category, pt.points)}"
 
         lines.append(f"{match_line}{result_txt}")
 
