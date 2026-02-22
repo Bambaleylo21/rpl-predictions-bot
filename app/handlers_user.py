@@ -280,6 +280,133 @@ def format_user_name(
     return str(tg_user_id)
 
 
+def _truncate_table_name(name: str, max_len: int = 14) -> str:
+    s = (name or "").strip()
+    if len(s) <= max_len:
+        return s
+    if max_len <= 1:
+        return "…"
+    return s[: max_len - 1].rstrip() + "…"
+
+
+def _format_leaderboard_row(i: int, row: dict, name_len: int = 14) -> str:
+    short_name = _truncate_table_name(str(row.get("name", "")), max_len=name_len)
+    return (
+        f"{i}. {short_name:<{name_len}} — {int(row.get('total', 0))} очк. | "
+        f"🎯 {int(row.get('exact', 0))} | 📏 {int(row.get('diff', 0))} | ✅ {int(row.get('outcome', 0))}"
+    )
+
+
+def _overall_table_story_line(rows: list[dict], played: int, total: int) -> str:
+    if not rows:
+        return "Гонка ещё не началась."
+    if played == 0:
+        return "Гонка только начинается — каждый матч может перевернуть таблицу 👀"
+    leader_pts = int(rows[0]["total"])
+    second_pts = int(rows[1]["total"]) if len(rows) > 1 else 0
+    gap = leader_pts - second_pts
+    if total > 0 and played >= total:
+        return "Все матчи сыграны — финальная развязка перед тобой 🏁"
+    if gap == 0:
+        return "Плотнейшая борьба наверху — лидер определяется по дополнительным показателям 🔥"
+    if gap <= 2:
+        return "Борьба за лидерство очень плотная — один удачный матч всё меняет ⚡"
+    return f"У лидера небольшой отрыв ({gap} очк.), но он совсем не безопасный 👀"
+
+
+def _round_table_story_line(rows: list[dict], played: int, total: int) -> str:
+    if not rows:
+        return "Пока нет прогнозов на этот тур."
+    if total == 0:
+        return "Матчи тура ещё не загружены."
+    if played == 0:
+        return "Тур только стартует — борьба за MVP впереди 🔥"
+    if played < total:
+        return "MVP тура ещё в игре — несколько матчей могут всё поменять 🔥"
+    return "Тур завершён — итоговая раскладка тура зафиксирована ✅"
+
+
+def _build_overall_user_summary(rows: list[dict], current_user_id: int, top_visible: int = 5) -> str | None:
+    if not rows:
+        return None
+    me_idx = None
+    for idx, row in enumerate(rows, start=1):
+        if int(row.get("tg_user_id", 0)) == int(current_user_id):
+            me_idx = idx
+            me = row
+            break
+    if me_idx is None:
+        return None
+
+    leader_pts = int(rows[0]["total"])
+    my_pts = int(me["total"])
+    gap_to_leader = max(leader_pts - my_pts, 0)
+
+    if me_idx == 1:
+        return "Ты сейчас на 1 месте 👑\nЗадача — удержать лидерство в следующем матче."
+
+    if me_idx <= top_visible:
+        return (
+            f"Ты сейчас: {me_idx} место, отставание от лидера — {gap_to_leader} очк.\n"
+            "Хочешь сократить? Жми «🎯 Поставить прогноз»."
+        )
+
+    top_n = min(top_visible, len(rows))
+    top_cut_pts = int(rows[top_n - 1]["total"])
+    gap_to_top = max(top_cut_pts - my_pts, 0)
+    return (
+        f"Твоя позиция: {me_idx} место — {my_pts} очк.\n"
+        f"До топ-{top_n}: {gap_to_top} очк. Всё ещё очень реально 💪"
+    )
+
+
+def _build_overall_table_lines(
+    tournament_name: str,
+    rows: list[dict],
+    participants: int,
+    played: int,
+    total: int,
+    current_user_id: int,
+    limit: int = 20,
+) -> list[str]:
+    lines = [f"🏆 {tournament_name} · Таблица лидеров"]
+    lines.append(f"Участников с прогнозами: {participants}")
+    lines.append(f"Матчей сыграно: {played} / {total}")
+    lines.append("")
+    lines.append(_overall_table_story_line(rows, played, total))
+    lines.append("")
+    for i, r in enumerate(rows[:limit], start=1):
+        lines.append(_format_leaderboard_row(i, r))
+    lines.append("")
+    me_line = _build_overall_user_summary(rows, current_user_id=current_user_id)
+    if me_line:
+        lines.append(me_line)
+    else:
+        lines.append("Хочешь проверить свои ставки? Жми «🗂 Мои прогнозы».")
+    return lines
+
+
+def _build_round_table_lines(
+    tournament_name: str,
+    round_number: int,
+    rows: list[dict],
+    participants: int,
+    played: int,
+    total: int,
+    limit: int = 20,
+) -> list[str]:
+    lines = [f"🏁 {tournament_name} · Таблица тура {round_number}"]
+    lines.append(f"Участников с прогнозами в туре: {participants}")
+    lines.append("")
+    lines.append(_round_table_story_line(rows, played, total))
+    lines.append("")
+    for i, r in enumerate(rows[:limit], start=1):
+        lines.append(_format_leaderboard_row(i, r))
+    lines.append("")
+    lines.append("Хочешь ворваться выше? Открой «🎯 Поставить прогноз».")
+    return lines
+
+
 def normalize_display_name(raw: str) -> str | None:
     name = " ".join((raw or "").strip().split())
     if len(name) < 2 or len(name) > 24:
@@ -435,6 +562,30 @@ async def get_matches_played_stats(tournament_id: int) -> tuple[int, int]:
         )
         played = int(played_q.scalar_one())
 
+    return played, total
+
+
+async def get_round_matches_played_stats(round_number: int, tournament_id: int) -> tuple[int, int]:
+    async with SessionLocal() as session:
+        total_q = await session.execute(
+            select(func.count(Match.id)).where(
+                Match.round_number == round_number,
+                Match.source == "manual",
+                Match.tournament_id == tournament_id,
+            )
+        )
+        total = int(total_q.scalar_one() or 0)
+
+        played_q = await session.execute(
+            select(func.count(Match.id)).where(
+                Match.round_number == round_number,
+                Match.source == "manual",
+                Match.tournament_id == tournament_id,
+                Match.home_score.isnot(None),
+                Match.away_score.isnot(None),
+            )
+        )
+        played = int(played_q.scalar_one() or 0)
     return played, total
 
 
@@ -672,6 +823,22 @@ async def build_profile_text(tg_user_id: int, tournament_id: int, tournament_nam
         else:
             current_streak = 0
 
+    if place == 1:
+        profile_status = "👑 Лидер гонки"
+        profile_hint = "Ты впереди. Главное сейчас — удержать темп и не дать соперникам приблизиться."
+    elif total > 0 and current_streak >= 3:
+        profile_status = "🟢 В огне"
+        profile_hint = "Серия с очками идёт отлично — можно замахнуться на серьёзный рывок."
+    elif total > 0:
+        profile_status = "🟡 Разогрев"
+        profile_hint = "Ты уже нащупал ритм — следующий точный счёт может резко поднять тебя выше."
+    elif preds_count > 0:
+        profile_status = "⚪ Стартуем"
+        profile_hint = "Прогнозы уже стоят. Ждём первые результаты — и таблица оживёт."
+    else:
+        profile_status = "🆕 Вход в игру"
+        profile_hint = "Сделай первый прогноз через «🎯 Поставить прогноз» — и сразу включишься в гонку."
+
     return (
         f"👤 Профиль: {name}\n"
         f"Турнир: {tournament_name}\n"
@@ -683,6 +850,8 @@ async def build_profile_text(tg_user_id: int, tournament_id: int, tournament_nam
         f"🏅 Лучшая серия: {best_streak}\n"
         f"Средние очки за тур: {avg_per_round}\n"
         f"Форма (последние туры): {form}\n\n"
+        f"Статус: {profile_status}\n"
+        f"{profile_hint}\n\n"
         "Хочешь подняться выше? Открой «📅 Матчи тура» и добавь свежие прогнозы."
     )
 
@@ -925,6 +1094,10 @@ def register_user_handlers(dp: Dispatcher):
             "❓ Помощь\n\n"
             f"Сейчас ты в турнире: {tournament.name}\n"
             f"Диапазон туров: {tournament.round_min}..{tournament.round_max}\n\n"
+            "Если впервые:\n"
+            "1) ✅ Вступить в турнир\n"
+            "2) 📅 Матчи тура\n"
+            "3) 🎯 Поставить прогноз\n\n"
             "Самый удобный путь — кнопки внизу:\n"
             "✅ Вступить в турнир\n"
             "📅 Матчи тура\n"
@@ -1087,13 +1260,15 @@ def register_user_handlers(dp: Dispatcher):
                     "Можешь открыть сезон первым через «🎯 Поставить прогноз»."
                 )
             else:
-                lines = [f"🏆 {tournament.name} · Таблица лидеров"]
-                lines.append(f"Участников с прогнозами: {participants}")
-                lines.append(f"Матчей сыграно: {played} / {total}")
-                for i, r in enumerate(rows[:20], start=1):
-                    lines.append(f"{i}. {r['name']} — {r['total']} очк. | 🎯{r['exact']} | 📏{r['diff']} | ✅{r['outcome']}")
-                lines.append("")
-                lines.append("Хочешь проверить свои ставки? Жми «🗂 Мои прогнозы».")
+                lines = _build_overall_table_lines(
+                    tournament_name=tournament.name,
+                    rows=rows,
+                    participants=participants,
+                    played=played,
+                    total=total,
+                    current_user_id=callback.from_user.id,
+                    limit=20,
+                )
                 await send_long(callback.message, "\n".join(lines))
                 await callback.message.answer("Быстрые действия:", reply_markup=build_quick_nav_keyboard("after_table"))
         await callback.answer()
@@ -1124,9 +1299,15 @@ def register_user_handlers(dp: Dispatcher):
                 "Ты можешь открыть гонку первым: «🎯 Поставить прогноз»."
             )
             return
-        lines = [f"🏆 {tournament.name} · Таблица лидеров", f"Участников с прогнозами: {participants}", f"Матчей сыграно: {played} / {total}"]
-        for i, r in enumerate(rows[:20], start=1):
-            lines.append(f"{i}. {r['name']} — {r['total']} очк. | 🎯{r['exact']} | 📏{r['diff']} | ✅{r['outcome']}")
+        lines = _build_overall_table_lines(
+            tournament_name=tournament.name,
+            rows=rows,
+            participants=participants,
+            played=played,
+            total=total,
+            current_user_id=message.from_user.id,
+            limit=20,
+        )
         lines.append("")
         lines.append("Нужен следующий шаг? Открой «🗂 Мои прогнозы» или поставь новый через «🎯 Поставить прогноз».")
         await send_long(message, "\n".join(lines))
@@ -1783,14 +1964,15 @@ def register_user_handlers(dp: Dispatcher):
             )
             return
 
-        lines = [f"🏆 {tournament.name} · Таблица лидеров"]
-        lines.append(f"Участников с прогнозами: {participants}")
-        lines.append(f"Матчей сыграно: {played} / {total}")
-
-        for i, r in enumerate(rows[:20], start=1):
-            lines.append(f"{i}. {r['name']} — {r['total']} очк. | 🎯{r['exact']} | 📏{r['diff']} | ✅{r['outcome']}")
-        lines.append("")
-        lines.append("Хочешь проверить свои ставки? Жми «🗂 Мои прогнозы».")
+        lines = _build_overall_table_lines(
+            tournament_name=tournament.name,
+            rows=rows,
+            participants=participants,
+            played=played,
+            total=total,
+            current_user_id=message.from_user.id,
+            limit=20,
+        )
 
         await send_long(message, "\n".join(lines))
         await message.answer("Быстрые действия:", reply_markup=build_quick_nav_keyboard("after_table"))
@@ -1820,14 +2002,16 @@ def register_user_handlers(dp: Dispatcher):
         if not rows:
             await message.answer("На этот тур пока нет прогнозов. Можно стать первым 😉")
             return
-
-        lines = [f"🏁 {tournament.name} · Таблица тура {round_number}:"]
-        lines.append(f"Участников с прогнозами в туре: {participants}")
-
-        for i, r in enumerate(rows[:20], start=1):
-            lines.append(f"{i}. {r['name']} — {r['total']} очк. | 🎯{r['exact']} | 📏{r['diff']} | ✅{r['outcome']}")
-        lines.append("")
-        lines.append("Хочешь ворваться выше? Открой «🎯 Поставить прогноз».")
+        played, total = await get_round_matches_played_stats(round_number=round_number, tournament_id=tournament.id)
+        lines = _build_round_table_lines(
+            tournament_name=tournament.name,
+            round_number=round_number,
+            rows=rows,
+            participants=participants,
+            played=played,
+            total=total,
+            limit=20,
+        )
 
         await send_long(message, "\n".join(lines))
         await message.answer("Быстрые действия:", reply_markup=build_quick_nav_keyboard("after_table"))
