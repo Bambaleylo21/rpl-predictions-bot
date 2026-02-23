@@ -32,8 +32,7 @@ def _selected_tournament_key(tg_user_id: int) -> str:
 def build_main_menu_keyboard(default_round: int) -> types.ReplyKeyboardMarkup:
     return types.ReplyKeyboardMarkup(
         keyboard=[
-            [types.KeyboardButton(text="🇷🇺 РПЛ"), types.KeyboardButton(text="🇬🇧 АПЛ")],
-            [types.KeyboardButton(text="✅ Вступить в турнир"), types.KeyboardButton(text="📅 Матчи тура")],
+            [types.KeyboardButton(text="🏟 Турниры"), types.KeyboardButton(text="📅 Матчи тура")],
             [types.KeyboardButton(text="🎯 Поставить прогноз")],
             [types.KeyboardButton(text="🗂 Мои прогнозы"), types.KeyboardButton(text="🏆 Общая таблица")],
             [types.KeyboardButton(text="👤 Мой профиль"), types.KeyboardButton(text="📊 Статистика")],
@@ -193,6 +192,30 @@ def build_open_matches_inline_keyboard(matches: list[Match]) -> types.InlineKeyb
     if current_row:
         rows.append(current_row)
 
+    return types.InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_tournaments_inline_keyboard() -> types.InlineKeyboardMarkup:
+    rows = [
+        [types.InlineKeyboardButton(text="🇷🇺 РПЛ", callback_data="tourselect:set:RPL")],
+        [types.InlineKeyboardButton(text="🇬🇧 АПЛ", callback_data="tourselect:set:EPL")],
+    ]
+    return types.InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_tournament_selected_action_keyboard(is_member: bool) -> types.InlineKeyboardMarkup:
+    if is_member:
+        rows = [
+            [
+                types.InlineKeyboardButton(text="🎯 Поставить прогноз", callback_data="qnav:predict"),
+                types.InlineKeyboardButton(text="📅 Матчи тура", callback_data="qnav:round"),
+            ]
+        ]
+    else:
+        rows = [
+            [types.InlineKeyboardButton(text="✅ Вступить в турнир", callback_data="tourselect:join_current")],
+            [types.InlineKeyboardButton(text="📅 Матчи тура", callback_data="qnav:round")],
+        ]
     return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -740,7 +763,7 @@ async def build_profile_text(tg_user_id: int, tournament_id: int, tournament_nam
         user_q = await session.execute(select(User).where(User.tg_user_id == tg_user_id))
         user = user_q.scalar_one_or_none()
         if user is None:
-            return "Похоже, ты ещё не в турнире. Нажми «✅ Вступить в турнир», и поехали."
+            return "Похоже, ты ещё не в турнире. Открой «🏟 Турниры», выбери турнир и вступай — погнали."
 
         preds_q = await session.execute(
             select(func.count(Prediction.id))
@@ -1079,7 +1102,7 @@ def register_user_handlers(dp: Dispatcher):
             return True
         await message.answer(
             f"Ты пока не в турнире {tournament.name}.\n"
-            "Нажми «✅ Вступить в турнир» — и можно сразу ставить прогнозы."
+            "Открой «🏟 Турниры», выбери турнир и вступай — после этого можно сразу ставить прогнозы."
         )
         return False
 
@@ -1112,11 +1135,11 @@ def register_user_handlers(dp: Dispatcher):
             f"Сейчас ты в турнире: {tournament.name}\n"
             f"Диапазон туров: {tournament.round_min}..{tournament.round_max}\n\n"
             "Если впервые:\n"
-            "1) ✅ Вступить в турнир\n"
-            "2) 📅 Матчи тура\n"
-            "3) 🎯 Поставить прогноз\n\n"
+            "1) 🏟 Турниры → выбери РПЛ или АПЛ\n"
+            "2) Вступи в выбранный турнир\n"
+            "3) 📅 Матчи тура → 🎯 Поставить прогноз\n\n"
             "Самый удобный путь — кнопки внизу:\n"
-            "✅ Вступить в турнир\n"
+            "🏟 Турниры\n"
             "📅 Матчи тура\n"
             "🎯 Поставить прогноз\n"
             "🗂 Мои прогнозы\n"
@@ -1176,6 +1199,40 @@ def register_user_handlers(dp: Dispatcher):
         await state.update_data(round_number=round_number)
         await send_long(message, "\n".join(lines))
 
+    async def _send_tournament_picker(target: types.Message) -> None:
+        async with SessionLocal() as session:
+            await upsert_user_from_message(session, target)
+            selected = await get_selected_tournament_for_user(session, target.from_user.id)
+        await target.answer(
+            f"🏟 Выбор турнира\nСейчас выбран: {selected.name}\n\nВыбери турнир:",
+            reply_markup=build_tournaments_inline_keyboard(),
+        )
+
+    async def _handle_tournament_selected(target: types.Message, tg_user_id: int, state: FSMContext, tournament_code: str) -> None:
+        async with SessionLocal() as session:
+            t = await set_selected_tournament_for_user(session, tg_user_id, tournament_code)
+            if t is None:
+                await target.answer("Не нашёл этот турнир. Попробуй ещё раз.")
+                return
+            is_member = await is_user_in_tournament(session, tg_user_id, t.id)
+        default_round = await get_current_round_default(t.id, t.round_min, t.round_max)
+
+        if is_member:
+            await target.answer(
+                f"✅ Турнир выбран: {t.name}\n"
+                f"Текущий тур: {default_round}\n\n"
+                "Ты уже в турнире — можно сразу идти за очками 😏",
+                reply_markup=build_tournament_selected_action_keyboard(is_member=True),
+            )
+            return
+
+        await target.answer(
+            f"✅ Турнир выбран: {t.name}\n"
+            f"Текущий тур: {default_round}\n\n"
+            "Ты пока не в турнире. Вступаешь и начинаем разносить таблицу? 🔥",
+            reply_markup=build_tournament_selected_action_keyboard(is_member=False),
+        )
+
     async def _request_display_name_for_join(message: types.Message, state: FSMContext, tournament: Tournament) -> None:
         await state.set_state(PredictRoundStates.waiting_for_display_name)
         await state.update_data(join_tournament_id=tournament.id, join_tournament_name=tournament.name)
@@ -1198,7 +1255,7 @@ def register_user_handlers(dp: Dispatcher):
             ok = await is_user_in_tournament(session, tg_user_id, tournament.id)
         if not ok:
             await target.answer(
-                f"Сначала зайди в турнир {tournament.name} кнопкой «✅ Вступить в турнир»,"
+                f"Сначала открой «🏟 Турниры», выбери {tournament.name} и вступи в него,"
                 " и сразу сможем показать твои прогнозы."
             )
             return
@@ -1227,7 +1284,7 @@ def register_user_handlers(dp: Dispatcher):
             ok = await is_user_in_tournament(session, tg_user_id, tournament.id)
             if not ok:
                 await target.answer(
-                    f"Сначала зайди в турнир {tournament.name} кнопкой «✅ Вступить в турнир»,"
+                    f"Сначала открой «🏟 Турниры», выбери {tournament.name} и вступи в него,"
                     " и сразу сможем сохранить прогноз."
                 )
                 return
@@ -1288,6 +1345,27 @@ def register_user_handlers(dp: Dispatcher):
                 )
                 await send_long(callback.message, "\n".join(lines))
                 await callback.message.answer("Быстрые действия:", reply_markup=build_quick_nav_keyboard("after_table"))
+        await callback.answer()
+
+    @dp.message(F.text == "🏟 Турниры")
+    async def btn_tournaments(message: types.Message):
+        await _send_tournament_picker(message)
+
+    @dp.callback_query(F.data.startswith("tourselect:set:"))
+    async def on_tournament_select(callback: types.CallbackQuery, state: FSMContext):
+        data = callback.data or ""
+        code = data.split(":")[-1].strip().upper()
+        if code not in {"RPL", "EPL"}:
+            await callback.answer("Неизвестный турнир", show_alert=True)
+            return
+        await _handle_tournament_selected(callback.message, callback.from_user.id, state, code)
+        await callback.answer()
+
+    @dp.callback_query(F.data == "tourselect:join_current")
+    async def on_tournament_join_current(callback: types.CallbackQuery, state: FSMContext):
+        async with SessionLocal() as session:
+            tournament = await get_selected_tournament_for_user(session, callback.from_user.id)
+        await _request_display_name_for_join(callback.message, state, tournament)
         await callback.answer()
 
     @dp.message(F.text == "✅ Вступить в турнир")
@@ -1670,8 +1748,8 @@ def register_user_handlers(dp: Dispatcher):
         await message.answer(
             "🏆 Добро пожаловать в бот прогнозов РПЛ и АПЛ.\n\n"
             "Как начать (3 шага):\n"
-            "1) Выбери турнир кнопкой: 🇷🇺 РПЛ или 🇬🇧 АПЛ\n"
-            "2) Нажми «✅ Вступить в турнир» и введи имя для таблицы\n"
+            "1) Открой «🏟 Турниры» и выбери РПЛ или АПЛ\n"
+            "2) Вступи в выбранный турнир и введи имя для таблицы\n"
             "3) Открой «📅 Матчи тура» и поставь прогноз через «🎯 Поставить прогноз»\n\n"
             f"Сейчас выбран турнир: {tournament.name}\n"
             f"Текущий тур: {default_round}\n\n"
@@ -1763,7 +1841,7 @@ def register_user_handlers(dp: Dispatcher):
             tournament = await get_selected_tournament_for_user(session, message.from_user.id)
             if not await is_user_in_tournament(session, message.from_user.id, tournament.id):
                 await message.answer(
-                    f"Сначала зайди в турнир {tournament.name} кнопкой «✅ Вступить в турнир»,"
+                    f"Сначала открой «🏟 Турниры», выбери {tournament.name} и вступи в него,"
                     " и сразу сможем сохранить прогноз."
                 )
                 return
