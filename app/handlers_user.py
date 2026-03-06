@@ -34,7 +34,7 @@ def build_main_menu_keyboard(default_round: int, is_joined: bool) -> types.Reply
         rows.append([types.KeyboardButton(text="✅ Вступить в турнир")])
     rows.extend(
         [
-            [types.KeyboardButton(text="📅 Матчи тура"), types.KeyboardButton(text="🎯 Поставить прогноз")],
+            [types.KeyboardButton(text="🎯 Поставить прогноз")],
             [types.KeyboardButton(text="🗂 Мои прогнозы"), types.KeyboardButton(text="🏆 Общая таблица")],
             [types.KeyboardButton(text="👤 Мой профиль"), types.KeyboardButton(text="📊 Статистика")],
             [types.KeyboardButton(text="❓ Помощь"), types.KeyboardButton(text="📘 Правила")],
@@ -235,7 +235,7 @@ def build_quick_nav_keyboard(kind: str) -> types.InlineKeyboardMarkup:
         rows = [
             [
                 types.InlineKeyboardButton(text="🗂 Мои прогнозы", callback_data="qnav:my"),
-                types.InlineKeyboardButton(text="📅 Матчи тура", callback_data="qnav:round"),
+                types.InlineKeyboardButton(text="🏆 Общая таблица", callback_data="qnav:table"),
             ],
             [types.InlineKeyboardButton(text="🎯 Ещё прогноз", callback_data="qnav:predict")],
         ]
@@ -247,7 +247,7 @@ def build_quick_nav_keyboard(kind: str) -> types.InlineKeyboardMarkup:
                 types.InlineKeyboardButton(text="🗂 Мои прогнозы", callback_data="qnav:my"),
                 types.InlineKeyboardButton(text="🏆 Общая таблица", callback_data="qnav:table"),
             ],
-            [types.InlineKeyboardButton(text="📅 Матчи тура", callback_data="qnav:round")],
+            [types.InlineKeyboardButton(text="🎯 Поставить прогноз", callback_data="qnav:predict")],
         ]
         return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -264,17 +264,17 @@ def build_quick_nav_keyboard(kind: str) -> types.InlineKeyboardMarkup:
         rows = [
             [
                 types.InlineKeyboardButton(text="🎯 Поставить прогноз", callback_data="qnav:predict"),
-                types.InlineKeyboardButton(text="📅 Матчи тура", callback_data="qnav:round"),
+                types.InlineKeyboardButton(text="🏆 Общая таблица", callback_data="qnav:table"),
             ],
-            [types.InlineKeyboardButton(text="🏆 Общая таблица", callback_data="qnav:table")],
+            [types.InlineKeyboardButton(text="📊 Статистика", callback_data="qnav:stats_full")],
         ]
         return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
     if kind == "after_info":
         rows = [
             [
-                types.InlineKeyboardButton(text="📅 Матчи тура", callback_data="qnav:round"),
                 types.InlineKeyboardButton(text="🎯 Поставить прогноз", callback_data="qnav:predict"),
+                types.InlineKeyboardButton(text="🏆 Общая таблица", callback_data="qnav:table"),
             ],
             [types.InlineKeyboardButton(text="🗂 Мои прогнозы", callback_data="qnav:my")],
         ]
@@ -911,7 +911,7 @@ async def build_profile_text(
         f"Форма (последние туры): {form}\n\n"
         f"Статус: {profile_status}\n"
         f"{profile_hint}\n\n"
-        "Хочешь подняться выше? Открой «📅 Матчи тура» и добавь свежие прогнозы."
+        "Хочешь подняться выше? Открой «🎯 Поставить прогноз» и добавь свежие прогнозы."
     )
 
 
@@ -1164,11 +1164,10 @@ def register_user_handlers(dp: Dispatcher):
             f"Диапазон туров: {tournament.round_min}..{tournament.round_max}\n\n"
             "Если впервые:\n"
             "1) ✅ Вступить в турнир\n"
-            "2) Открой «📅 Матчи тура»\n"
+            "2) Открой «🎯 Поставить прогноз»\n"
             "3) Поставь прогноз через «🎯 Поставить прогноз»\n\n"
             "Самый удобный путь — кнопки внизу:\n"
             "✅ Вступить в турнир\n"
-            "📅 Матчи тура\n"
             "🎯 Поставить прогноз\n"
             "🗂 Мои прогнозы\n"
             "🏆 Общая таблица\n"
@@ -1694,7 +1693,7 @@ def register_user_handlers(dp: Dispatcher):
             "❌ мимо — 0\n\n"
             "⛔️ После начала матча прогноз ставить/менять нельзя.\n"
             "🕒 Время матчей и дедлайны — по Москве (МСК).\n\n"
-            "Дальше проще всего так: «📅 Матчи тура» → «🎯 Поставить прогноз»."
+            "Дальше проще всего так: «🎯 Поставить прогноз»."
         )
         await message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_info"))
 
@@ -1804,7 +1803,7 @@ def register_user_handlers(dp: Dispatcher):
                 await state.clear()
                 await message.answer(
                     "⛔️ Этот матч уже начался, прогноз закрыт.\n\n"
-                    "Открой «📅 Матчи тура» — покажу, что ещё доступно для прогноза."
+                    "Открой «🎯 Поставить прогноз» — покажу, что ещё доступно для прогноза."
                 )
                 return
 
@@ -1906,7 +1905,7 @@ def register_user_handlers(dp: Dispatcher):
             "🏆 Добро пожаловать в бот прогнозов РПЛ.\n\n"
             "Как начать (3 шага):\n"
             "1) Нажми «✅ Вступить в турнир» и введи имя для таблицы\n"
-            "2) Открой «📅 Матчи тура»\n"
+            "2) Открой «🎯 Поставить прогноз»\n"
             "3) Поставь прогноз через «🎯 Поставить прогноз»\n\n"
             f"Сейчас выбран турнир: {tournament.name}\n"
             f"Текущий тур: {default_round}\n\n"
@@ -2006,7 +2005,7 @@ def register_user_handlers(dp: Dispatcher):
             match_q = await session.execute(select(Match).where(Match.id == match_id, Match.tournament_id == tournament.id))
             match = match_q.scalar_one_or_none()
             if match is None:
-                await message.answer("Не нашёл такой матч в выбранном турнире. Проверь ID через «📅 Матчи тура».")
+                await message.answer("Не нашёл такой матч в выбранном турнире. Проверь ID через «🎯 Поставить прогноз».")
                 return
 
             if match.kickoff_time <= now:
