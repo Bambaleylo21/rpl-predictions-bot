@@ -1410,12 +1410,14 @@ def register_user_handlers(dp: Dispatcher):
 
             open_ids = [m.id for m in open_matches]
             preds_q = await session.execute(
-                select(Prediction.match_id).where(
+                select(Prediction).where(
                     Prediction.tg_user_id == tg_user_id,
                     Prediction.match_id.in_(open_ids),
                 )
             )
-            predicted_ids = {int(r[0]) for r in preds_q.all()}
+            preds = preds_q.scalars().all()
+            preds_map = {int(p.match_id): p for p in preds}
+            predicted_ids = set(preds_map.keys())
 
         editable = [m for m in open_matches if m.id in predicted_ids]
         if not editable:
@@ -1426,11 +1428,29 @@ def register_user_handlers(dp: Dispatcher):
             )
             return
 
+        rows: list[list[types.InlineKeyboardButton]] = []
+        for m in editable:
+            p = preds_map.get(int(m.id))
+            if p is None:
+                continue
+            label = (
+                f"{display_team_name(m.home_team)} {p.pred_home}-{p.pred_away} {display_team_name(m.away_team)} "
+                f"| {m.kickoff_time.strftime('%d.%m %H:%M')}"
+            )
+            rows.append(
+                [
+                    types.InlineKeyboardButton(
+                        text=_truncate_button_text(label),
+                        callback_data=f"pick_match:{m.id}",
+                    )
+                ]
+            )
+
         await target.answer(
             f"Турнир: {tournament_name}\n"
             f"Тур: {round_number}\n"
             "Выбери матч для изменения прогноза:",
-            reply_markup=build_open_matches_inline_keyboard(editable, with_kickoff=True),
+            reply_markup=types.InlineKeyboardMarkup(inline_keyboard=rows),
         )
 
     async def _send_default_my_text(target: types.Message, tg_user_id: int) -> None:
