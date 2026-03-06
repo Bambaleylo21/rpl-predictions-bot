@@ -693,8 +693,6 @@ async def admin_set_result_pick_tournament(callback: types.CallbackQuery, state:
             .where(
                 Match.tournament_id == tournament_id,
                 Match.source == "manual",
-                Match.home_score.is_(None),
-                Match.away_score.is_(None),
             )
             .group_by(Match.round_number)
             .order_by(Match.round_number.asc())
@@ -702,7 +700,7 @@ async def admin_set_result_pick_tournament(callback: types.CallbackQuery, state:
         round_numbers = [int(r[0]) for r in rounds_q.all()]
 
         if not round_numbers:
-            await callback.message.answer(f"В турнире {tournament.name} нет матчей без результата.")
+            await callback.message.answer(f"В турнире {tournament.name} нет матчей.")
             await callback.answer()
             return
 
@@ -711,7 +709,7 @@ async def admin_set_result_pick_tournament(callback: types.CallbackQuery, state:
         rows.append([types.InlineKeyboardButton(text=f"Тур {rnd}", callback_data=f"admin_res_r:{tournament_id}:{rnd}")])
     kb = types.InlineKeyboardMarkup(inline_keyboard=rows)
     await callback.message.answer(
-        f"Турнир: {tournament.name}\nВыбери тур для внесения результатов:",
+        f"Турнир: {tournament.name}\nВыбери тур:",
         reply_markup=kb,
     )
     await callback.answer()
@@ -745,21 +743,20 @@ async def admin_set_result_pick_round(callback: types.CallbackQuery, state: FSMC
                 Match.tournament_id == tournament_id,
                 Match.source == "manual",
                 Match.round_number == round_number,
-                Match.home_score.is_(None),
-                Match.away_score.is_(None),
             )
             .order_by(Match.kickoff_time.asc(), Match.id.asc())
         )
         matches = matches_q.scalars().all()
 
     if not matches:
-        await callback.message.answer("В этом туре уже нет матчей без результата.")
+        await callback.message.answer("В этом туре нет матчей.")
         await callback.answer()
         return
 
     rows = []
     for m in matches:
-        txt = f"{m.home_team} — {m.away_team} | {m.kickoff_time.strftime('%d.%m %H:%M')}"
+        result = f"{m.home_score}:{m.away_score}" if m.home_score is not None and m.away_score is not None else "без итога"
+        txt = f"{m.home_team} — {m.away_team} | {m.kickoff_time.strftime('%d.%m %H:%M')} | {result}"
         rows.append([types.InlineKeyboardButton(text=txt, callback_data=f"admin_res_m:{m.id}")])
     kb = types.InlineKeyboardMarkup(inline_keyboard=rows)
     await callback.message.answer(
