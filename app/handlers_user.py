@@ -176,21 +176,24 @@ async def get_current_round_default(tournament_id: int, round_min: int, round_ma
     return int(rows[-1][0])
 
 
-def build_open_matches_inline_keyboard(matches: list[Match]) -> types.InlineKeyboardMarkup:
+def _truncate_button_text(text: str, max_len: int = 64) -> str:
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 1].rstrip() + "…"
+
+
+def build_open_matches_inline_keyboard(matches: list[Match], with_kickoff: bool = False) -> types.InlineKeyboardMarkup:
     rows: list[list[types.InlineKeyboardButton]] = []
-    current_row: list[types.InlineKeyboardButton] = []
     for m in matches:
+        if with_kickoff:
+            label = f"{m.home_team} — {m.away_team} | {m.kickoff_time.strftime('%d.%m %H:%M')}"
+        else:
+            label = f"{m.home_team} — {m.away_team}"
         btn = types.InlineKeyboardButton(
-            text=f"{m.home_team} — {m.away_team}",
+            text=_truncate_button_text(label),
             callback_data=f"pick_match:{m.id}",
         )
-        current_row.append(btn)
-        if len(current_row) == 1:
-            rows.append(current_row)
-            current_row = []
-
-    if current_row:
-        rows.append(current_row)
+        rows.append([btn])
 
     return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -1219,9 +1222,75 @@ def register_user_handlers(dp: Dispatcher):
 
     async def _send_default_round_text(target: types.Message, tg_user_id: int) -> None:
         tournament, default_round = await _get_user_tournament_context(tg_user_id)
-        await send_long(
-            target,
-            await build_round_matches_text(default_round, tournament_id=tournament.id, tournament_name=tournament.name),
+        await _send_round_predict_picker(
+            target=target,
+            tg_user_id=tg_user_id,
+            tournament=tournament,
+            round_number=default_round,
+        )
+
+    async def _send_round_predict_picker(
+        target: types.Message,
+        tg_user_id: int,
+        tournament: Tournament,
+        round_number: int,
+    ) -> None:
+        async with SessionLocal() as session:
+            ok = await is_user_in_tournament(session, tg_user_id, tournament.id)
+            if not ok:
+                await target.answer(
+                    f"Сначала вступи в турнир {tournament.name} кнопкой «✅ Вступить в турнир»,"
+                    " и сразу сможем сохранить прогноз."
+                )
+                return
+
+            now = now_msk_naive()
+            q = await session.execute(
+                select(Match)
+                .where(
+                    Match.round_number == round_number,
+                    Match.tournament_id == tournament.id,
+                    Match.kickoff_time > now,
+                )
+                .order_by(Match.kickoff_time.asc())
+            )
+            open_matches = q.scalars().all()
+
+            if not open_matches:
+                await target.answer(
+                    f"На тур {round_number} открытых матчей уже нет.\n"
+                    "Можно посмотреть статусы через «🗂 Мои прогнозы»."
+                )
+                return
+
+            open_ids = [m.id for m in open_matches]
+            preds_q = await session.execute(
+                select(Prediction.match_id).where(
+                    Prediction.tg_user_id == tg_user_id,
+                    Prediction.match_id.in_(open_ids),
+                )
+            )
+            predicted_ids = {int(r[0]) for r in preds_q.all()}
+
+        remaining = [m for m in open_matches if m.id not in predicted_ids]
+        total_open = len(open_matches)
+        left = len(remaining)
+
+        if left == 0:
+            await target.answer(
+                f"Турнир: {tournament.name}\n"
+                f"Тур: {round_number}\n"
+                "Все доступные матчи уже заполнены ✅"
+            )
+            await target.answer("Быстрые действия:", reply_markup=build_quick_nav_keyboard("after_predict_done"))
+            return
+
+        await target.answer(
+            f"Турнир: {tournament.name}\n"
+            f"Тур: {round_number}\n"
+            f"Без прогноза осталось: {left} из {total_open}\n"
+            "Выбери матч:",
+            reply_markup=build_open_matches_inline_keyboard(remaining, with_kickoff=True),
         )
 
     async def _send_default_my_text(target: types.Message, tg_user_id: int) -> None:
@@ -1255,37 +1324,11 @@ def register_user_handlers(dp: Dispatcher):
 
     async def _send_quick_predict_picker(target: types.Message, tg_user_id: int) -> None:
         tournament, default_round = await _get_user_tournament_context(tg_user_id)
-        async with SessionLocal() as session:
-            ok = await is_user_in_tournament(session, tg_user_id, tournament.id)
-            if not ok:
-                await target.answer(
-                    f"Сначала вступи в турнир {tournament.name} кнопкой «✅ Вступить в турнир»,"
-                    " и сразу сможем сохранить прогноз."
-                )
-                return
-
-            now = now_msk_naive()
-            q = await session.execute(
-                select(Match)
-                .where(
-                    Match.round_number == default_round,
-                    Match.tournament_id == tournament.id,
-                    Match.kickoff_time > now,
-                )
-                .order_by(Match.kickoff_time.asc())
-            )
-            open_matches = q.scalars().all()
-
-        if not open_matches:
-            await target.answer(
-                f"На тур {default_round} открытых матчей уже нет.\n"
-                f"Загляни в следующий: /round {default_round + 1}"
-            )
-            return
-
-        await target.answer(
-            f"Выбери матч тура {default_round}, затем просто отправь счёт (например: 2:1).",
-            reply_markup=build_open_matches_inline_keyboard(open_matches),
+        await _send_round_predict_picker(
+            target=target,
+            tg_user_id=tg_user_id,
+            tournament=tournament,
+            round_number=default_round,
         )
 
     @dp.callback_query(F.data.startswith("qnav:"))
@@ -1673,6 +1716,13 @@ def register_user_handlers(dp: Dispatcher):
             pred_away=pred_away,
         )
         await message.answer(confirm_text, reply_markup=build_quick_nav_keyboard(nav_mode))
+        if nav_mode == "after_predict":
+            await _send_round_predict_picker(
+                target=message,
+                tg_user_id=tg_user_id,
+                tournament=tournament,
+                round_number=match.round_number,
+            )
 
     @dp.message(PredictRoundStates.waiting_for_display_name)
     async def on_display_name_input(message: types.Message, state: FSMContext):
