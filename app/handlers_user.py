@@ -501,20 +501,30 @@ async def get_round_total_points_for_user(tg_user_id: int, round_number: int, to
         return int(q.scalar_one())
 
 
-async def get_matches_played_stats(tournament_id: int) -> tuple[int, int]:
+async def get_matches_played_stats(
+    tournament_id: int,
+    round_min: int | None = None,
+    round_max: int | None = None,
+) -> tuple[int, int]:
     async with SessionLocal() as session:
-        total_q = await session.execute(
-            select(func.count(Match.id)).where(Match.tournament_id == tournament_id)
-        )
+        total_stmt = select(func.count(Match.id)).where(Match.tournament_id == tournament_id)
+        if round_min is not None:
+            total_stmt = total_stmt.where(Match.round_number >= round_min)
+        if round_max is not None:
+            total_stmt = total_stmt.where(Match.round_number <= round_max)
+        total_q = await session.execute(total_stmt)
         total = int(total_q.scalar_one())
 
-        played_q = await session.execute(
-            select(func.count(Match.id)).where(
-                Match.home_score.isnot(None),
-                Match.away_score.isnot(None),
-                Match.tournament_id == tournament_id,
-            )
+        played_stmt = select(func.count(Match.id)).where(
+            Match.home_score.isnot(None),
+            Match.away_score.isnot(None),
+            Match.tournament_id == tournament_id,
         )
+        if round_min is not None:
+            played_stmt = played_stmt.where(Match.round_number >= round_min)
+        if round_max is not None:
+            played_stmt = played_stmt.where(Match.round_number <= round_max)
+        played_q = await session.execute(played_stmt)
         played = int(played_q.scalar_one())
 
     return played, total
@@ -542,25 +552,38 @@ async def get_round_matches_played_stats(round_number: int, tournament_id: int) 
     return played, total
 
 
-async def build_overall_leaderboard(tournament_id: int) -> tuple[list[dict], int]:
+async def build_overall_leaderboard(
+    tournament_id: int,
+    round_min: int | None = None,
+    round_max: int | None = None,
+) -> tuple[list[dict], int]:
     async with SessionLocal() as session:
         # Только участники, у которых есть хотя бы 1 прогноз (по сути — есть points или predictions)
-        participants_q = await session.execute(
+        participants_stmt = (
             select(func.count(func.distinct(Prediction.tg_user_id)))
             .select_from(Prediction)
             .join(Match, Match.id == Prediction.match_id)
             .where(Match.tournament_id == tournament_id)
         )
+        if round_min is not None:
+            participants_stmt = participants_stmt.where(Match.round_number >= round_min)
+        if round_max is not None:
+            participants_stmt = participants_stmt.where(Match.round_number <= round_max)
+        participants_q = await session.execute(participants_stmt)
         participants = int(participants_q.scalar_one())
 
-        participants_subq = (
+        participants_subq_stmt = (
             select(Prediction.tg_user_id.label("tg_user_id"))
             .join(Match, Match.id == Prediction.match_id)
             .where(Match.tournament_id == tournament_id)
-            .distinct()
-            .subquery()
         )
-        tournament_points_subq = (
+        if round_min is not None:
+            participants_subq_stmt = participants_subq_stmt.where(Match.round_number >= round_min)
+        if round_max is not None:
+            participants_subq_stmt = participants_subq_stmt.where(Match.round_number <= round_max)
+        participants_subq = participants_subq_stmt.distinct().subquery()
+
+        tournament_points_stmt = (
             select(
                 Point.tg_user_id.label("tg_user_id"),
                 Point.points.label("points"),
@@ -568,8 +591,12 @@ async def build_overall_leaderboard(tournament_id: int) -> tuple[list[dict], int
             )
             .join(Match, Match.id == Point.match_id)
             .where(Match.tournament_id == tournament_id)
-            .subquery()
         )
+        if round_min is not None:
+            tournament_points_stmt = tournament_points_stmt.where(Match.round_number >= round_min)
+        if round_max is not None:
+            tournament_points_stmt = tournament_points_stmt.where(Match.round_number <= round_max)
+        tournament_points_subq = tournament_points_stmt.subquery()
 
         q = await session.execute(
             select(
@@ -697,22 +724,33 @@ async def build_round_matches_text(round_number: int, tournament_id: int, tourna
     return "\n".join(lines)
 
 
-async def build_profile_text(tg_user_id: int, tournament_id: int, tournament_name: str) -> str:
+async def build_profile_text(
+    tg_user_id: int,
+    tournament_id: int,
+    tournament_name: str,
+    round_min: int | None = None,
+    round_max: int | None = None,
+) -> str:
     async with SessionLocal() as session:
         user_q = await session.execute(select(User).where(User.tg_user_id == tg_user_id))
         user = user_q.scalar_one_or_none()
         if user is None:
             return "Похоже, ты ещё не в турнире. Нажми «✅ Вступить в турнир», и поехали."
 
-        preds_q = await session.execute(
+        preds_stmt = (
             select(func.count(Prediction.id))
             .select_from(Prediction)
             .join(Match, Match.id == Prediction.match_id)
             .where(Prediction.tg_user_id == tg_user_id, Match.tournament_id == tournament_id)
         )
+        if round_min is not None:
+            preds_stmt = preds_stmt.where(Match.round_number >= round_min)
+        if round_max is not None:
+            preds_stmt = preds_stmt.where(Match.round_number <= round_max)
+        preds_q = await session.execute(preds_stmt)
         preds_count = int(preds_q.scalar_one() or 0)
 
-        rounds_q = await session.execute(
+        rounds_stmt = (
             select(
                 Match.round_number,
                 func.coalesce(func.sum(Point.points), 0).label("pts"),
@@ -723,9 +761,14 @@ async def build_profile_text(tg_user_id: int, tournament_id: int, tournament_nam
             .group_by(Match.round_number)
             .order_by(Match.round_number.desc())
         )
+        if round_min is not None:
+            rounds_stmt = rounds_stmt.where(Match.round_number >= round_min)
+        if round_max is not None:
+            rounds_stmt = rounds_stmt.where(Match.round_number <= round_max)
+        rounds_q = await session.execute(rounds_stmt)
         rounds = rounds_q.all()
 
-        streak_q = await session.execute(
+        streak_stmt = (
             select(Match.kickoff_time, Point.points)
             .select_from(Point)
             .join(Match, Match.id == Point.match_id)
@@ -735,6 +778,11 @@ async def build_profile_text(tg_user_id: int, tournament_id: int, tournament_nam
             )
             .order_by(Match.kickoff_time.asc(), Match.id.asc())
         )
+        if round_min is not None:
+            streak_stmt = streak_stmt.where(Match.round_number >= round_min)
+        if round_max is not None:
+            streak_stmt = streak_stmt.where(Match.round_number <= round_max)
+        streak_q = await session.execute(streak_stmt)
         streak_rows = streak_q.all()
 
         ut_q = await session.execute(
@@ -745,7 +793,11 @@ async def build_profile_text(tg_user_id: int, tournament_id: int, tournament_nam
         )
         ut = ut_q.scalar_one_or_none()
 
-    leaderboard_rows, _participants = await build_overall_leaderboard(tournament_id=tournament_id)
+    leaderboard_rows, _participants = await build_overall_leaderboard(
+        tournament_id=tournament_id,
+        round_min=round_min,
+        round_max=round_max,
+    )
     place = None
     total = exact = diff = outcome = 0
     for i, row in enumerate(leaderboard_rows, start=1):
@@ -1205,8 +1257,16 @@ def register_user_handlers(dp: Dispatcher):
             await _send_quick_predict_picker(callback.message, callback.from_user.id)
         elif action == "table":
             tournament, _default_round = await _get_user_tournament_context(callback.from_user.id)
-            played, total = await get_matches_played_stats(tournament_id=tournament.id)
-            rows, participants = await build_overall_leaderboard(tournament_id=tournament.id)
+            played, total = await get_matches_played_stats(
+                tournament_id=tournament.id,
+                round_min=tournament.round_min,
+                round_max=tournament.round_max,
+            )
+            rows, participants = await build_overall_leaderboard(
+                tournament_id=tournament.id,
+                round_min=tournament.round_min,
+                round_max=tournament.round_max,
+            )
             if not rows:
                 await callback.message.answer(
                     "Пока в таблице пусто — ещё нет прогнозов.\n"
@@ -1244,8 +1304,16 @@ def register_user_handlers(dp: Dispatcher):
     @dp.message(F.text == "🏆 Общая таблица")
     async def btn_table(message: types.Message):
         tournament, _default_round = await _get_user_tournament_context(message.from_user.id)
-        played, total = await get_matches_played_stats(tournament_id=tournament.id)
-        rows, participants = await build_overall_leaderboard(tournament_id=tournament.id)
+        played, total = await get_matches_played_stats(
+            tournament_id=tournament.id,
+            round_min=tournament.round_min,
+            round_max=tournament.round_max,
+        )
+        rows, participants = await build_overall_leaderboard(
+            tournament_id=tournament.id,
+            round_min=tournament.round_min,
+            round_max=tournament.round_max,
+        )
         if not rows:
             await message.answer(
                 "Пока в таблице пусто — никто ещё не поставил прогнозы.\n"
@@ -1279,7 +1347,15 @@ def register_user_handlers(dp: Dispatcher):
         tournament, _default_round = await _get_user_tournament_context(message.from_user.id)
         if not await _require_membership_or_hint(message, tournament):
             return
-        await message.answer(await build_profile_text(message.from_user.id, tournament_id=tournament.id, tournament_name=tournament.name))
+        await message.answer(
+            await build_profile_text(
+                message.from_user.id,
+                tournament_id=tournament.id,
+                tournament_name=tournament.name,
+                round_min=tournament.round_min,
+                round_max=tournament.round_max,
+            )
+        )
         await message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_info"))
 
     @dp.message(F.text == "🗓 История туров")
@@ -1338,7 +1414,13 @@ def register_user_handlers(dp: Dispatcher):
         tournament, _default_round = await _get_user_tournament_context(message.from_user.id)
         if not await _require_membership_or_hint(message, tournament):
             return
-        text = await build_profile_text(message.from_user.id, tournament_id=tournament.id, tournament_name=tournament.name)
+        text = await build_profile_text(
+            message.from_user.id,
+            tournament_id=tournament.id,
+            tournament_name=tournament.name,
+            round_min=tournament.round_min,
+            round_max=tournament.round_max,
+        )
         await message.answer(text)
         await message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_info"))
 
@@ -1905,8 +1987,16 @@ def register_user_handlers(dp: Dispatcher):
     @dp.message(Command("table"))
     async def cmd_table(message: types.Message):
         tournament, _default_round = await _get_user_tournament_context(message.from_user.id)
-        played, total = await get_matches_played_stats(tournament_id=tournament.id)
-        rows, participants = await build_overall_leaderboard(tournament_id=tournament.id)
+        played, total = await get_matches_played_stats(
+            tournament_id=tournament.id,
+            round_min=tournament.round_min,
+            round_max=tournament.round_max,
+        )
+        rows, participants = await build_overall_leaderboard(
+            tournament_id=tournament.id,
+            round_min=tournament.round_min,
+            round_max=tournament.round_max,
+        )
 
         if not rows:
             await message.answer(
