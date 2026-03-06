@@ -5,13 +5,7 @@ from app.db import SessionLocal
 from app.models import Match, Point, User, UserTournament
 
 
-async def build_stats_text(tournament_id: int | None = None) -> str:
-    """
-    Строит общий отчёт по всем участникам:
-    - очки
-    - кол-во exact/diff/outcome/none
-    - проценты
-    """
+async def _build_stats_rows(tournament_id: int | None = None) -> list[dict]:
     async with SessionLocal() as session:
         res_users = await session.execute(select(User))
         users = res_users.scalars().all()
@@ -58,13 +52,6 @@ async def build_stats_text(tournament_id: int | None = None) -> str:
         else:
             pu["none"] += 1
 
-    if not per_user:
-        return (
-            "Пока нет статистики по очкам.\n"
-            "Как только появятся результаты матчей, таблица здесь сразу оживёт."
-        )
-
-    # Формируем таблицу (топ-20)
     rows = []
     for tg_id, s in per_user.items():
         rows.append({
@@ -73,6 +60,36 @@ async def build_stats_text(tournament_id: int | None = None) -> str:
         })
 
     rows.sort(key=lambda x: (x["total"], x["exact"], x["diff"], x["outcome"]), reverse=True)
+    return rows
+
+
+async def build_stats_brief_text(tournament_id: int | None = None, limit: int = 20) -> str:
+    rows = await _build_stats_rows(tournament_id=tournament_id)
+    if not rows:
+        return (
+            "Пока нет статистики по очкам.\n"
+            "Как только появятся результаты матчей, таблица здесь сразу оживёт."
+        )
+
+    lines = ["📊 Статистика (кратко):"]
+    for i, r in enumerate(rows[:limit], start=1):
+        lines.append(f"{i}. {r['name']} — {r['total']} очк.")
+    return "\n".join(lines)
+
+
+async def build_stats_text(tournament_id: int | None = None) -> str:
+    """
+    Подробный отчёт:
+    - очки
+    - кол-во exact/diff/outcome/none
+    - проценты
+    """
+    rows = await _build_stats_rows(tournament_id=tournament_id)
+    if not rows:
+        return (
+            "Пока нет статистики по очкам.\n"
+            "Как только появятся результаты матчей, таблица здесь сразу оживёт."
+        )
 
     lines = ["📊 Подробная статистика (топ-20):"]
     for i, r in enumerate(rows[:20], start=1):

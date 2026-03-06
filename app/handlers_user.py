@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from app.config import load_admin_ids
 from app.db import SessionLocal
 from app.models import Match, Point, Prediction, Tournament, User, UserTournament
-from app.stats import build_stats_text
+from app.stats import build_stats_brief_text, build_stats_text
 from app.my_predictions import build_my_round_text
 
 ADMIN_IDS = load_admin_ids()
@@ -206,6 +206,14 @@ def build_round_history_keyboard(round_min: int, round_max: int) -> types.Inline
     if row:
         rows.append(row)
     return types.InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_stats_actions_keyboard() -> types.InlineKeyboardMarkup:
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [types.InlineKeyboardButton(text="📋 Подробная статистика", callback_data="qnav:stats_full")]
+        ]
+    )
 
 
 def build_quick_nav_keyboard(kind: str) -> types.InlineKeyboardMarkup:
@@ -1319,6 +1327,10 @@ def register_user_handlers(dp: Dispatcher):
                 )
                 await send_long(callback.message, "\n".join(lines))
                 await callback.message.answer("Быстрые действия:", reply_markup=build_quick_nav_keyboard("after_table"))
+        elif action == "stats_full":
+            tournament, _default_round = await _get_user_tournament_context(callback.from_user.id)
+            await send_long(callback.message, await build_stats_text(tournament_id=tournament.id))
+            await callback.message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_info"))
         await callback.answer()
 
     @dp.message(F.text == "✅ Вступить в турнир")
@@ -1372,8 +1384,8 @@ def register_user_handlers(dp: Dispatcher):
     @dp.message(F.text == "📊 Статистика")
     async def btn_stats(message: types.Message):
         tournament, _default_round = await _get_user_tournament_context(message.from_user.id)
-        await send_long(message, await build_stats_text(tournament_id=tournament.id))
-        await message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_info"))
+        await send_long(message, await build_stats_brief_text(tournament_id=tournament.id))
+        await message.answer("Открыть подробный разбор?", reply_markup=build_stats_actions_keyboard())
 
     @dp.message(F.text == "👤 Мой профиль")
     async def btn_profile(message: types.Message):
@@ -2102,6 +2114,6 @@ def register_user_handlers(dp: Dispatcher):
     @dp.message(Command("stats"))
     async def cmd_stats(message: types.Message):
         tournament, _default_round = await _get_user_tournament_context(message.from_user.id)
-        text = await build_stats_text(tournament_id=tournament.id)
+        text = await build_stats_brief_text(tournament_id=tournament.id)
         await send_long(message, text)
-        await message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_info"))
+        await message.answer("Открыть подробный разбор?", reply_markup=build_stats_actions_keyboard())
