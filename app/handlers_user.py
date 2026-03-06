@@ -23,6 +23,8 @@ class PredictRoundStates(StatesGroup):
 
 
 DEFAULT_TOURNAMENT_CODE = "RPL"
+DEFAULT_RPL_ROUND_MIN = 19
+DEFAULT_RPL_ROUND_MAX = 30
 
 
 def build_main_menu_keyboard(default_round: int) -> types.ReplyKeyboardMarkup:
@@ -85,11 +87,35 @@ async def get_selected_tournament_for_user(session, tg_user_id: int) -> Tourname
     t = await get_tournament_by_code(session, DEFAULT_TOURNAMENT_CODE)
     if t is None:
         # fallback safety for corrupted DB
-        t = Tournament(code=DEFAULT_TOURNAMENT_CODE, name="Russian Premier League", round_min=19, round_max=30, is_active=1)
+        t = Tournament(
+            code=DEFAULT_TOURNAMENT_CODE,
+            name="Russian Premier League",
+            round_min=DEFAULT_RPL_ROUND_MIN,
+            round_max=DEFAULT_RPL_ROUND_MAX,
+            is_active=1,
+        )
         session.add(t)
         await session.commit()
         await session.refresh(t)
+    elif (t.code or "").upper() == DEFAULT_TOURNAMENT_CODE and (
+        int(t.round_min) != DEFAULT_RPL_ROUND_MIN or int(t.round_max) != DEFAULT_RPL_ROUND_MAX
+    ):
+        # Самолечение: если в БД границы РПЛ съехали, возвращаем рабочий диапазон.
+        t.round_min = DEFAULT_RPL_ROUND_MIN
+        t.round_max = DEFAULT_RPL_ROUND_MAX
+        await session.commit()
+        await session.refresh(t)
     return t
+
+
+def get_effective_round_window(tournament: Tournament) -> tuple[int, int]:
+    if (tournament.code or "").upper() == DEFAULT_TOURNAMENT_CODE:
+        return DEFAULT_RPL_ROUND_MIN, DEFAULT_RPL_ROUND_MAX
+    lo = int(tournament.round_min)
+    hi = int(tournament.round_max)
+    if lo > hi:
+        lo, hi = hi, lo
+    return lo, hi
 
 
 async def notify_admins_new_join(
@@ -1020,10 +1046,14 @@ def register_user_handlers(dp: Dispatcher):
     async def _get_user_tournament_context(tg_user_id: int) -> tuple[Tournament, int]:
         async with SessionLocal() as session:
             tournament = await get_selected_tournament_for_user(session, tg_user_id)
+        eff_round_min, eff_round_max = get_effective_round_window(tournament)
+        # Дальше в UI/запросах используем уже безопасное окно туров.
+        tournament.round_min = eff_round_min
+        tournament.round_max = eff_round_max
         default_round = await get_current_round_default(
             tournament_id=tournament.id,
-            round_min=tournament.round_min,
-            round_max=tournament.round_max,
+            round_min=eff_round_min,
+            round_max=eff_round_max,
         )
         return tournament, default_round
 
