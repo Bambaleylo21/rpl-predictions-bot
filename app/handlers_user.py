@@ -281,9 +281,8 @@ def build_quick_nav_keyboard(kind: str) -> types.InlineKeyboardMarkup:
         rows = [
             [
                 types.InlineKeyboardButton(text="🎯 Поставить прогноз", callback_data="qnav:predict"),
-                types.InlineKeyboardButton(text="🏆 Общая таблица", callback_data="qnav:table"),
+                types.InlineKeyboardButton(text="📚 Выбрать тур", callback_data="qnav:my_pick"),
             ],
-            [types.InlineKeyboardButton(text="📊 Статистика", callback_data="qnav:stats_full")],
         ]
         return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -1469,6 +1468,30 @@ def register_user_handlers(dp: Dispatcher):
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=rows),
         )
 
+    async def _send_my_round_text(
+        target: types.Message,
+        tg_user_id: int,
+        tournament: Tournament,
+        round_number: int,
+    ) -> None:
+        text = await build_my_round_text(tg_user_id=tg_user_id, round_number=round_number, tournament_id=tournament.id)
+        if await round_has_matches(round_number, tournament_id=tournament.id):
+            total = await get_round_total_points_for_user(
+                tg_user_id=tg_user_id, round_number=round_number, tournament_id=tournament.id
+            )
+            predicted_open, total_open, missed_closed = await get_round_prediction_progress_for_user(
+                tg_user_id=tg_user_id,
+                round_number=round_number,
+                tournament_id=tournament.id,
+            )
+            text = (
+                f"{text}\n\n"
+                f"Итого за тур сейчас: {total} очк.\n"
+                f"{_my_round_followup_line(predicted_open, total_open, missed_closed)}"
+            )
+        await send_long(target, text)
+        await target.answer("Быстрые действия:", reply_markup=build_quick_nav_keyboard("after_my"))
+
     async def _send_default_my_text(target: types.Message, tg_user_id: int) -> None:
         tournament, default_round = await _get_user_tournament_context(tg_user_id)
         async with SessionLocal() as session:
@@ -1479,24 +1502,7 @@ def register_user_handlers(dp: Dispatcher):
                 " и сразу сможем показать твои прогнозы."
             )
             return
-
-        text = await build_my_round_text(tg_user_id=tg_user_id, round_number=default_round, tournament_id=tournament.id)
-        if await round_has_matches(default_round, tournament_id=tournament.id):
-            total = await get_round_total_points_for_user(
-                tg_user_id=tg_user_id, round_number=default_round, tournament_id=tournament.id
-            )
-            predicted_open, total_open, missed_closed = await get_round_prediction_progress_for_user(
-                tg_user_id=tg_user_id,
-                round_number=default_round,
-                tournament_id=tournament.id,
-            )
-            text = (
-                f"{text}\n\n"
-                f"Итого за тур сейчас: {total} очк.\n"
-                f"{_my_round_followup_line(predicted_open, total_open, missed_closed)}"
-            )
-        await send_long(target, text)
-        await target.answer("Быстрые действия:", reply_markup=build_quick_nav_keyboard("after_my"))
+        await _send_my_round_text(target, tg_user_id, tournament=tournament, round_number=default_round)
 
     async def _send_quick_predict_picker(target: types.Message, tg_user_id: int) -> None:
         tournament, default_round = await _get_user_tournament_context(tg_user_id)
@@ -1513,6 +1519,12 @@ def register_user_handlers(dp: Dispatcher):
         action = data.split(":", 1)[1] if ":" in data else ""
         if action == "my":
             await _send_default_my_text(callback.message, callback.from_user.id)
+        elif action == "my_pick":
+            tournament, _default_round = await _get_user_tournament_context(callback.from_user.id)
+            await callback.message.answer(
+                f"Выбери тур для просмотра прогнозов ({display_tournament_name(tournament.name)}):",
+                reply_markup=build_round_picker_inline("qnav_my_round", tournament.round_min, tournament.round_max),
+            )
         elif action == "round":
             await _send_default_round_text(callback.message, callback.from_user.id)
         elif action == "predict":
@@ -1562,6 +1574,27 @@ def register_user_handlers(dp: Dispatcher):
             tournament, _default_round = await _get_user_tournament_context(callback.from_user.id)
             await send_long(callback.message, await build_stats_text(tournament_id=tournament.id))
             await callback.message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_info"))
+        await callback.answer()
+
+    @dp.callback_query(F.data.startswith("qnav_my_round:"))
+    async def on_qnav_my_round(callback: types.CallbackQuery):
+        try:
+            round_number = int((callback.data or "").split(":", 1)[1])
+        except Exception:
+            await callback.answer("Не удалось выбрать тур", show_alert=True)
+            return
+
+        tournament, _default_round = await _get_user_tournament_context(callback.from_user.id)
+        if not _round_in_tournament(round_number, tournament):
+            await callback.answer("Этот тур недоступен", show_alert=True)
+            return
+
+        await _send_my_round_text(
+            callback.message,
+            callback.from_user.id,
+            tournament=tournament,
+            round_number=round_number,
+        )
         await callback.answer()
 
     @dp.callback_query(F.data.startswith("qnav_mvp_round:"))
@@ -2340,27 +2373,7 @@ def register_user_handlers(dp: Dispatcher):
 
         async with SessionLocal() as session:
             await upsert_user_from_message(session, message)
-
-        tg_user_id = message.from_user.id
-        text = await build_my_round_text(tg_user_id=tg_user_id, round_number=round_number, tournament_id=tournament.id)
-
-        if await round_has_matches(round_number, tournament_id=tournament.id):
-            total = await get_round_total_points_for_user(
-                tg_user_id=tg_user_id, round_number=round_number, tournament_id=tournament.id
-            )
-            predicted_open, total_open, missed_closed = await get_round_prediction_progress_for_user(
-                tg_user_id=tg_user_id,
-                round_number=round_number,
-                tournament_id=tournament.id,
-            )
-            text = (
-                f"{text}\n\n"
-                f"Итого за тур сейчас: {total} очк.\n"
-                f"{_my_round_followup_line(predicted_open, total_open, missed_closed)}"
-            )
-
-        await send_long(message, text)
-        await message.answer("Быстрые действия:", reply_markup=build_quick_nav_keyboard("after_my"))
+        await _send_my_round_text(message, message.from_user.id, tournament=tournament, round_number=round_number)
 
     @dp.message(Command("table"))
     async def cmd_table(message: types.Message):
