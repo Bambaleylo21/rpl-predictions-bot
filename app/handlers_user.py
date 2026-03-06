@@ -85,16 +85,8 @@ async def is_user_in_tournament(session, tg_user_id: int, tournament_id: int) ->
 
 
 async def get_selected_tournament_for_user(session, tg_user_id: int) -> Tournament:
-    from app.models import Setting  # local import to avoid circular usage patterns
-
-    key = _selected_tournament_key(tg_user_id)
-    st_q = await session.execute(select(Setting).where(Setting.key == key))
-    st = st_q.scalar_one_or_none()
-    code = (st.value if st else DEFAULT_TOURNAMENT_CODE).upper()
-
-    t = await get_tournament_by_code(session, code)
-    if t is None:
-        t = await get_tournament_by_code(session, DEFAULT_TOURNAMENT_CODE)
+    # Для участников оставляем только РПЛ.
+    t = await get_tournament_by_code(session, DEFAULT_TOURNAMENT_CODE)
     if t is None:
         # fallback safety for corrupted DB
         t = Tournament(code=DEFAULT_TOURNAMENT_CODE, name="Russian Premier League", round_min=19, round_max=30, is_active=1)
@@ -198,7 +190,6 @@ def build_open_matches_inline_keyboard(matches: list[Match]) -> types.InlineKeyb
 def build_tournaments_inline_keyboard() -> types.InlineKeyboardMarkup:
     rows = [
         [types.InlineKeyboardButton(text="🇷🇺 РПЛ", callback_data="tourselect:set:RPL")],
-        [types.InlineKeyboardButton(text="🇬🇧 АПЛ", callback_data="tourselect:set:EPL")],
     ]
     return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -1110,23 +1101,9 @@ def register_user_handlers(dp: Dispatcher):
     async def btn_switch_rpl(message: types.Message):
         async with SessionLocal() as session:
             await upsert_user_from_message(session, message)
-            t = await set_selected_tournament_for_user(session, message.from_user.id, "RPL")
-        if t is None:
-            await message.answer("Турнир РПЛ не найден в базе.")
-            return
+            t = await get_selected_tournament_for_user(session, message.from_user.id)
         default_round = await get_current_round_default(t.id, t.round_min, t.round_max)
-        await message.answer(f"Переключено на турнир: {t.name}\nТекущий тур: {default_round}")
-
-    @dp.message(F.text == "🇬🇧 АПЛ")
-    async def btn_switch_epl(message: types.Message):
-        async with SessionLocal() as session:
-            await upsert_user_from_message(session, message)
-            t = await set_selected_tournament_for_user(session, message.from_user.id, "EPL")
-        if t is None:
-            await message.answer("Турнир АПЛ не найден в базе.")
-            return
-        default_round = await get_current_round_default(t.id, t.round_min, t.round_max)
-        await message.answer(f"Переключено на турнир: {t.name}\nТекущий тур: {default_round}")
+        await message.answer(f"Турнир: {t.name}\nТекущий тур: {default_round}")
 
     async def _send_help_text(message: types.Message) -> None:
         tournament, default_round = await _get_user_tournament_context(message.from_user.id)
@@ -1135,7 +1112,7 @@ def register_user_handlers(dp: Dispatcher):
             f"Сейчас ты в турнире: {tournament.name}\n"
             f"Диапазон туров: {tournament.round_min}..{tournament.round_max}\n\n"
             "Если впервые:\n"
-            "1) 🏟 Турниры → выбери РПЛ или АПЛ\n"
+            "1) 🏟 Турниры → выбери РПЛ\n"
             "2) Вступи в выбранный турнир\n"
             "3) 📅 Матчи тура → 🎯 Поставить прогноз\n\n"
             "Самый удобный путь — кнопки внизу:\n"
@@ -1204,7 +1181,7 @@ def register_user_handlers(dp: Dispatcher):
             await upsert_user_from_message(session, target)
             selected = await get_selected_tournament_for_user(session, target.from_user.id)
         await target.answer(
-            f"🏟 Выбор турнира\nСейчас выбран: {selected.name}\n\nВыбери турнир:",
+            f"🏟 Турниры\nДоступен турнир: {selected.name}\n\nВыбери турнир:",
             reply_markup=build_tournaments_inline_keyboard(),
         )
 
@@ -1355,7 +1332,7 @@ def register_user_handlers(dp: Dispatcher):
     async def on_tournament_select(callback: types.CallbackQuery, state: FSMContext):
         data = callback.data or ""
         code = data.split(":")[-1].strip().upper()
-        if code not in {"RPL", "EPL"}:
+        if code != "RPL":
             await callback.answer("Неизвестный турнир", show_alert=True)
             return
         await _handle_tournament_selected(callback.message, callback.from_user.id, state, code)
@@ -1746,9 +1723,9 @@ def register_user_handlers(dp: Dispatcher):
     async def cmd_start(message: types.Message):
         tournament, default_round = await _get_user_tournament_context(message.from_user.id)
         await message.answer(
-            "🏆 Добро пожаловать в бот прогнозов РПЛ и АПЛ.\n\n"
+            "🏆 Добро пожаловать в бот прогнозов РПЛ.\n\n"
             "Как начать (3 шага):\n"
-            "1) Открой «🏟 Турниры» и выбери РПЛ или АПЛ\n"
+            "1) Открой «🏟 Турниры» и выбери РПЛ\n"
             "2) Вступи в выбранный турнир и введи имя для таблицы\n"
             "3) Открой «📅 Матчи тура» и поставь прогноз через «🎯 Поставить прогноз»\n\n"
             f"Сейчас выбран турнир: {tournament.name}\n"
