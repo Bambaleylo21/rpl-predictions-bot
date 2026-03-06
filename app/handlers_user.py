@@ -373,10 +373,7 @@ def _build_overall_user_summary(rows: list[dict], current_user_id: int, top_visi
         return "Ты сейчас на 1 месте 👑\nЗадача — удержать лидерство в следующем матче."
 
     if me_idx <= top_visible:
-        return (
-            f"Ты сейчас: {me_idx} место, отставание от лидера — {gap_to_leader} очк.\n"
-            "Хочешь сократить? Жми «🎯 Поставить прогноз»."
-        )
+        return f"Ты сейчас: {me_idx} место, отставание от лидера — {gap_to_leader} очк."
 
     top_n = min(top_visible, len(rows))
     top_cut_pts = int(rows[top_n - 1]["total"])
@@ -1680,8 +1677,6 @@ def register_user_handlers(dp: Dispatcher):
             current_user_id=message.from_user.id,
             limit=20,
         )
-        lines.append("")
-        lines.append("Нужен следующий шаг? Открой «🗂 Мои прогнозы» или поставь новый через «🎯 Поставить прогноз».")
         await send_long(message, "\n".join(lines))
         await message.answer("Быстрые действия:", reply_markup=build_quick_nav_keyboard("after_table"))
 
