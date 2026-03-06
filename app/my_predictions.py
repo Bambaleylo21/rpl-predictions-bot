@@ -20,7 +20,7 @@ def _point_category_emoji(category: str | None, points: int | None) -> str:
 
 async def build_my_round_text(tg_user_id: int, round_number: int, tournament_id: int | None = None) -> str:
     async with SessionLocal() as session:
-        q = select(Match).where(Match.round_number == round_number, Match.source == "manual")
+        q = select(Match).where(Match.round_number == round_number)
         if tournament_id is not None:
             q = q.where(Match.tournament_id == tournament_id)
         res_matches = await session.execute(q.order_by(Match.kickoff_time.asc()))

@@ -25,7 +25,7 @@ async def build_stats_text(tournament_id: int | None = None) -> str:
             points_q = (
                 select(Point)
                 .join(Match, Match.id == Point.match_id)
-                .where(Match.tournament_id == tournament_id, Match.source == "manual")
+                .where(Match.tournament_id == tournament_id)
             )
 
         res_points = await session.execute(points_q)

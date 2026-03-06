@@ -129,7 +129,6 @@ async def get_current_round_default(tournament_id: int, round_min: int, round_ma
                 Match.tournament_id == tournament_id,
                 Match.round_number >= round_min,
                 Match.round_number <= round_max,
-                Match.source == "manual",
             )
             .group_by(Match.round_number)
             .order_by(Match.round_number.asc())
@@ -480,7 +479,6 @@ async def round_has_matches(round_number: int, tournament_id: int) -> bool:
         result = await session.execute(
             select(func.count(Match.id)).where(
                 Match.round_number == round_number,
-                Match.source == "manual",
                 Match.tournament_id == tournament_id,
             )
         )
@@ -497,7 +495,6 @@ async def get_round_total_points_for_user(tg_user_id: int, round_number: int, to
             .where(
                 Point.tg_user_id == tg_user_id,
                 Match.round_number == round_number,
-                Match.source == "manual",
                 Match.tournament_id == tournament_id,
             )
         )
@@ -507,7 +504,7 @@ async def get_round_total_points_for_user(tg_user_id: int, round_number: int, to
 async def get_matches_played_stats(tournament_id: int) -> tuple[int, int]:
     async with SessionLocal() as session:
         total_q = await session.execute(
-            select(func.count(Match.id)).where(Match.source == "manual", Match.tournament_id == tournament_id)
+            select(func.count(Match.id)).where(Match.tournament_id == tournament_id)
         )
         total = int(total_q.scalar_one())
 
@@ -515,7 +512,6 @@ async def get_matches_played_stats(tournament_id: int) -> tuple[int, int]:
             select(func.count(Match.id)).where(
                 Match.home_score.isnot(None),
                 Match.away_score.isnot(None),
-                Match.source == "manual",
                 Match.tournament_id == tournament_id,
             )
         )
@@ -529,7 +525,6 @@ async def get_round_matches_played_stats(round_number: int, tournament_id: int) 
         total_q = await session.execute(
             select(func.count(Match.id)).where(
                 Match.round_number == round_number,
-                Match.source == "manual",
                 Match.tournament_id == tournament_id,
             )
         )
@@ -538,7 +533,6 @@ async def get_round_matches_played_stats(round_number: int, tournament_id: int) 
         played_q = await session.execute(
             select(func.count(Match.id)).where(
                 Match.round_number == round_number,
-                Match.source == "manual",
                 Match.tournament_id == tournament_id,
                 Match.home_score.isnot(None),
                 Match.away_score.isnot(None),
@@ -555,14 +549,14 @@ async def build_overall_leaderboard(tournament_id: int) -> tuple[list[dict], int
             select(func.count(func.distinct(Prediction.tg_user_id)))
             .select_from(Prediction)
             .join(Match, Match.id == Prediction.match_id)
-            .where(Match.tournament_id == tournament_id, Match.source == "manual")
+            .where(Match.tournament_id == tournament_id)
         )
         participants = int(participants_q.scalar_one())
 
         participants_subq = (
             select(Prediction.tg_user_id.label("tg_user_id"))
             .join(Match, Match.id == Prediction.match_id)
-            .where(Match.tournament_id == tournament_id, Match.source == "manual")
+            .where(Match.tournament_id == tournament_id)
             .distinct()
             .subquery()
         )
@@ -573,7 +567,7 @@ async def build_overall_leaderboard(tournament_id: int) -> tuple[list[dict], int
                 Point.category.label("category"),
             )
             .join(Match, Match.id == Point.match_id)
-            .where(Match.tournament_id == tournament_id, Match.source == "manual")
+            .where(Match.tournament_id == tournament_id)
             .subquery()
         )
 
@@ -625,7 +619,7 @@ async def build_round_leaderboard(round_number: int, tournament_id: int) -> tupl
             select(func.count(func.distinct(Prediction.tg_user_id)))
             .select_from(Prediction)
             .join(Match, Match.id == Prediction.match_id)
-            .where(Match.round_number == round_number, Match.source == "manual", Match.tournament_id == tournament_id)
+            .where(Match.round_number == round_number, Match.tournament_id == tournament_id)
         )
         participants = int(participants_q.scalar_one())
 
@@ -649,7 +643,7 @@ async def build_round_leaderboard(round_number: int, tournament_id: int) -> tupl
                 (UserTournament.tg_user_id == User.tg_user_id) & (UserTournament.tournament_id == tournament_id),
             )
             .outerjoin(Point, (Point.tg_user_id == User.tg_user_id) & (Point.match_id == Match.id))
-            .where(Match.round_number == round_number, Match.source == "manual", Match.tournament_id == tournament_id)
+            .where(Match.round_number == round_number, Match.tournament_id == tournament_id)
             .group_by(User.tg_user_id, UserTournament.display_name, User.display_name, User.username, User.full_name)
             .order_by(func.coalesce(func.sum(Point.points), 0).desc())
         )
@@ -679,7 +673,6 @@ async def build_round_matches_text(round_number: int, tournament_id: int, tourna
             select(Match)
             .where(
                 Match.round_number == round_number,
-                Match.source == "manual",
                 Match.tournament_id == tournament_id,
             )
             .order_by(Match.kickoff_time.asc())
@@ -715,7 +708,7 @@ async def build_profile_text(tg_user_id: int, tournament_id: int, tournament_nam
             select(func.count(Prediction.id))
             .select_from(Prediction)
             .join(Match, Match.id == Prediction.match_id)
-            .where(Prediction.tg_user_id == tg_user_id, Match.source == "manual", Match.tournament_id == tournament_id)
+            .where(Prediction.tg_user_id == tg_user_id, Match.tournament_id == tournament_id)
         )
         preds_count = int(preds_q.scalar_one() or 0)
 
@@ -726,7 +719,7 @@ async def build_profile_text(tg_user_id: int, tournament_id: int, tournament_nam
             )
             .select_from(Point)
             .join(Match, Match.id == Point.match_id)
-            .where(Point.tg_user_id == tg_user_id, Match.source == "manual", Match.tournament_id == tournament_id)
+            .where(Point.tg_user_id == tg_user_id, Match.tournament_id == tournament_id)
             .group_by(Match.round_number)
             .order_by(Match.round_number.desc())
         )
@@ -738,7 +731,6 @@ async def build_profile_text(tg_user_id: int, tournament_id: int, tournament_nam
             .join(Match, Match.id == Point.match_id)
             .where(
                 Point.tg_user_id == tg_user_id,
-                Match.source == "manual",
                 Match.tournament_id == tournament_id,
             )
             .order_by(Match.kickoff_time.asc(), Match.id.asc())
@@ -948,7 +940,6 @@ async def get_round_prediction_progress_for_user(
         matches_q = await session.execute(
             select(Match.id, Match.kickoff_time).where(
                 Match.round_number == round_number,
-                Match.source == "manual",
                 Match.tournament_id == tournament_id,
             )
         )
@@ -1091,7 +1082,6 @@ def register_user_handlers(dp: Dispatcher):
                 select(Match)
                 .where(
                     Match.round_number == round_number,
-                    Match.source == "manual",
                     Match.tournament_id == tournament.id,
                 )
                 .order_by(Match.kickoff_time.asc())
@@ -1184,7 +1174,6 @@ def register_user_handlers(dp: Dispatcher):
                 select(Match)
                 .where(
                     Match.round_number == default_round,
-                    Match.source == "manual",
                     Match.tournament_id == tournament.id,
                     Match.kickoff_time > now,
                 )
@@ -1466,7 +1455,6 @@ def register_user_handlers(dp: Dispatcher):
             q = await session.execute(
                 select(Match).where(
                     Match.id == match_id,
-                    Match.source == "manual",
                     Match.tournament_id == tournament.id,
                 )
             )
@@ -1510,7 +1498,7 @@ def register_user_handlers(dp: Dispatcher):
             tournament = await get_selected_tournament_for_user(session, message.from_user.id)
 
             q = await session.execute(
-                select(Match).where(Match.id == int(match_id), Match.source == "manual", Match.tournament_id == tournament.id)
+                select(Match).where(Match.id == int(match_id), Match.tournament_id == tournament.id)
             )
             match = q.scalar_one_or_none()
             if match is None:
@@ -1827,7 +1815,6 @@ def register_user_handlers(dp: Dispatcher):
                     select(Match).where(
                         Match.id == match_id,
                         Match.round_number == round_number,
-                        Match.source == "manual",
                         Match.tournament_id == tournament.id,
                     )
                 )
