@@ -183,7 +183,11 @@ def _truncate_button_text(text: str, max_len: int = 64) -> str:
     return text[: max_len - 1].rstrip() + "…"
 
 
-def build_open_matches_inline_keyboard(matches: list[Match], with_kickoff: bool = False) -> types.InlineKeyboardMarkup:
+def build_open_matches_inline_keyboard(
+    matches: list[Match],
+    with_kickoff: bool = False,
+    footer_rows: list[list[types.InlineKeyboardButton]] | None = None,
+) -> types.InlineKeyboardMarkup:
     rows: list[list[types.InlineKeyboardButton]] = []
     for m in matches:
         if with_kickoff:
@@ -198,6 +202,9 @@ def build_open_matches_inline_keyboard(matches: list[Match], with_kickoff: bool 
             callback_data=f"pick_match:{m.id}",
         )
         rows.append([btn])
+
+    if footer_rows:
+        rows.extend(footer_rows)
 
     return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -1244,6 +1251,11 @@ def register_user_handlers(dp: Dispatcher):
         round_number: int,
     ) -> None:
         tournament_name = display_tournament_name(tournament.name)
+        current_round = await get_current_round_default(
+            tournament_id=tournament.id,
+            round_min=tournament.round_min,
+            round_max=tournament.round_max,
+        )
         async with SessionLocal() as session:
             ok = await is_user_in_tournament(session, tg_user_id, tournament.id)
             if not ok:
@@ -1291,15 +1303,84 @@ def register_user_handlers(dp: Dispatcher):
                 f"Тур: {round_number}\n"
                 "Все доступные матчи уже заполнены ✅"
             )
-            await target.answer("Быстрые действия:", reply_markup=build_quick_nav_keyboard("after_predict_done"))
+            footer_rows = [
+                [types.InlineKeyboardButton(text="📚 Выбрать другой тур", callback_data=f"predict_rounds:{round_number}")]
+            ]
+            if round_number != current_round:
+                footer_rows.append(
+                    [types.InlineKeyboardButton(text=f"🔙 Текущий тур ({current_round})", callback_data=f"predict_pick_round:{current_round}")]
+                )
+            await target.answer("Быстрые действия:", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=footer_rows))
             return
+
+        footer_rows = [
+            [types.InlineKeyboardButton(text="📚 Выбрать другой тур", callback_data=f"predict_rounds:{round_number}")]
+        ]
+        if round_number != current_round:
+            footer_rows.append(
+                [types.InlineKeyboardButton(text=f"🔙 Текущий тур ({current_round})", callback_data=f"predict_pick_round:{current_round}")]
+            )
 
         await target.answer(
             f"Турнир: {tournament_name}\n"
             f"Тур: {round_number}\n"
             f"Без прогноза осталось: {left} из {total_open}\n"
             "Выбери матч:",
-            reply_markup=build_open_matches_inline_keyboard(remaining, with_kickoff=True),
+            reply_markup=build_open_matches_inline_keyboard(remaining, with_kickoff=True, footer_rows=footer_rows),
+        )
+
+    async def _send_predict_rounds_picker(target: types.Message, tg_user_id: int, selected_round: int | None = None) -> None:
+        tournament, current_round = await _get_user_tournament_context(tg_user_id)
+        if selected_round is None:
+            selected_round = current_round
+        tournament_name = display_tournament_name(tournament.name)
+        now = now_msk_naive()
+
+        async with SessionLocal() as session:
+            ok = await is_user_in_tournament(session, tg_user_id, tournament.id)
+            if not ok:
+                await target.answer(
+                    f"Сначала вступи в турнир {tournament_name} кнопкой «✅ Вступить в турнир»,"
+                    " и сразу сможем сохранить прогноз."
+                )
+                return
+
+            q = await session.execute(
+                select(
+                    Match.round_number,
+                    func.count(Match.id).label("open_cnt"),
+                )
+                .where(
+                    Match.tournament_id == tournament.id,
+                    Match.round_number >= tournament.round_min,
+                    Match.round_number <= tournament.round_max,
+                    Match.kickoff_time > now,
+                )
+                .group_by(Match.round_number)
+                .order_by(Match.round_number.asc())
+            )
+            round_rows = [(int(r), int(c)) for r, c in q.all()]
+
+        if not round_rows:
+            await target.answer("Сейчас нет открытых матчей для прогноза.")
+            return
+
+        rows: list[list[types.InlineKeyboardButton]] = []
+        for rnd, open_cnt in round_rows:
+            label = f"Тур {rnd} · открыто {open_cnt}"
+            if rnd == current_round:
+                label = f"⭐ {label} (текущий)"
+            rows.append([types.InlineKeyboardButton(text=label, callback_data=f"predict_pick_round:{rnd}")])
+
+        if selected_round != current_round:
+            rows.append(
+                [types.InlineKeyboardButton(text=f"🔙 Текущий тур ({current_round})", callback_data=f"predict_pick_round:{current_round}")]
+            )
+
+        await target.answer(
+            f"Турнир: {tournament_name}\n"
+            f"Выбери тур для прогноза:",
+            reply_markup=types.InlineKeyboardMarkup(inline_keyboard=rows),
         )
 
     async def _send_default_my_text(target: types.Message, tg_user_id: int) -> None:
@@ -1654,6 +1735,38 @@ def register_user_handlers(dp: Dispatcher):
         await callback.message.answer(
             f"Матч выбран: {display_team_name(match.home_team)} — {display_team_name(match.away_team)}\n"
             "Отправь только счёт: 2:1"
+        )
+        await callback.answer()
+
+    @dp.callback_query(F.data.startswith("predict_rounds:"))
+    async def on_predict_rounds_picker(callback: types.CallbackQuery):
+        data = callback.data or ""
+        try:
+            selected_round = int(data.split(":", 1)[1])
+        except Exception:
+            selected_round = None
+        await _send_predict_rounds_picker(callback.message, callback.from_user.id, selected_round=selected_round)
+        await callback.answer()
+
+    @dp.callback_query(F.data.startswith("predict_pick_round:"))
+    async def on_predict_pick_round(callback: types.CallbackQuery):
+        data = callback.data or ""
+        try:
+            round_number = int(data.split(":", 1)[1])
+        except Exception:
+            await callback.answer("Не удалось выбрать тур", show_alert=True)
+            return
+
+        tournament, _default_round = await _get_user_tournament_context(callback.from_user.id)
+        if not _round_in_tournament(round_number, tournament):
+            await callback.answer("Этот тур недоступен", show_alert=True)
+            return
+
+        await _send_round_predict_picker(
+            target=callback.message,
+            tg_user_id=callback.from_user.id,
+            tournament=tournament,
+            round_number=round_number,
         )
         await callback.answer()
 
