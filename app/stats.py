@@ -43,6 +43,8 @@ def _format_best_metric(names: dict[int, str], per_user: dict[int, dict], key: s
     if not per_user:
         return "нет данных"
     max_val = max(int(v.get(key, 0)) for v in per_user.values())
+    if max_val <= 0:
+        return ""
     winners = [uid for uid, v in per_user.items() if int(v.get(key, 0)) == max_val]
     winners_sorted = sorted(winners, key=lambda uid: names.get(uid, str(uid)).lower())
     return f"{', '.join(names.get(uid, str(uid)) for uid in winners_sorted)} — {max_val}"
@@ -170,11 +172,21 @@ async def build_stats_text(tournament_id: int | None = None) -> str:
         rate_rows.append((uid, hits, int(total), int(pct)))
 
     lines = ["📊 Статистика сезона:"]
-    lines.append(f"Лучший в туре: {_format_names_with_optional_counts(names, best_in_round_count)}")
-    lines.append(f"Худший в туре: {_format_names_with_optional_counts(names, worst_in_round_count)}")
-    lines.append(f"Лучший по точным счётам: {_format_best_metric(names, per_user, 'exact')}")
-    lines.append(f"Лучший по разнице: {_format_best_metric(names, per_user, 'diff')}")
-    lines.append(f"Лучший по исходам: {_format_best_metric(names, per_user, 'outcome')}")
+    if best_in_round_count:
+        lines.append(f"Лучший в туре: {_format_names_with_optional_counts(names, best_in_round_count)}")
+    if worst_in_round_count:
+        lines.append(f"Худший в туре: {_format_names_with_optional_counts(names, worst_in_round_count)}")
+
+    best_exact = _format_best_metric(names, per_user, "exact")
+    best_diff = _format_best_metric(names, per_user, "diff")
+    best_outcome = _format_best_metric(names, per_user, "outcome")
+    if best_exact:
+        lines.append(f"Лучший по точным счётам: {best_exact}")
+    if best_diff:
+        lines.append(f"Лучший по разнице: {best_diff}")
+    if best_outcome:
+        lines.append(f"Лучший по исходам: {best_outcome}")
+
     lines.append(f"Лучший процент угаданных матчей: {_format_rate_metric(names, rate_rows, pick_max=True)}")
     lines.append(f"Худший процент угаданных матчей: {_format_rate_metric(names, rate_rows, pick_max=False)}")
     lines.append(f"Порог для процентов: минимум {MIN_PREDICTIONS_FOR_RATE} прогнозов на завершённые матчи.")

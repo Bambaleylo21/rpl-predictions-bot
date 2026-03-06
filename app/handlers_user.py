@@ -222,6 +222,31 @@ def build_round_history_keyboard(round_min: int, round_max: int) -> types.Inline
     return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def build_round_picker_inline(prefix: str, round_min: int, round_max: int) -> types.InlineKeyboardMarkup:
+    rows: list[list[types.InlineKeyboardButton]] = []
+    row: list[types.InlineKeyboardButton] = []
+    for r in range(round_min, round_max + 1):
+        row.append(types.InlineKeyboardButton(text=str(r), callback_data=f"{prefix}:{r}"))
+        if len(row) == 4:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    return types.InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_stats_followup_keyboard() -> types.InlineKeyboardMarkup:
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(text="🥇 MVP тура", callback_data="qnav:mvp_pick"),
+                types.InlineKeyboardButton(text="⭐ Топы тура", callback_data="qnav:tops_pick"),
+            ],
+            [types.InlineKeyboardButton(text="🎯 Поставить прогноз", callback_data="qnav:predict")],
+        ]
+    )
+
+
 def build_quick_nav_keyboard(kind: str) -> types.InlineKeyboardMarkup:
     if kind == "after_predict":
         rows = [
@@ -1522,10 +1547,62 @@ def register_user_handlers(dp: Dispatcher):
                 )
                 await send_long(callback.message, "\n".join(lines))
                 await callback.message.answer("Быстрые действия:", reply_markup=build_quick_nav_keyboard("after_table"))
+        elif action == "mvp_pick":
+            tournament, _default_round = await _get_user_tournament_context(callback.from_user.id)
+            await callback.message.answer(
+                f"Выбери тур для MVP ({tournament.name}):",
+                reply_markup=build_round_picker_inline("qnav_mvp_round", tournament.round_min, tournament.round_max),
+            )
+        elif action == "tops_pick":
+            tournament, _default_round = await _get_user_tournament_context(callback.from_user.id)
+            await callback.message.answer(
+                f"Выбери тур для топов ({tournament.name}):",
+                reply_markup=build_round_picker_inline("qnav_tops_round", tournament.round_min, tournament.round_max),
+            )
         elif action == "stats_full":
             tournament, _default_round = await _get_user_tournament_context(callback.from_user.id)
             await send_long(callback.message, await build_stats_text(tournament_id=tournament.id))
             await callback.message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_info"))
+        await callback.answer()
+
+    @dp.callback_query(F.data.startswith("qnav_mvp_round:"))
+    async def on_qnav_mvp_round(callback: types.CallbackQuery):
+        try:
+            round_number = int((callback.data or "").split(":", 1)[1])
+        except Exception:
+            await callback.answer("Не удалось выбрать тур", show_alert=True)
+            return
+        tournament, default_round = await _get_user_tournament_context(callback.from_user.id)
+        if not _round_in_tournament(round_number, tournament):
+            await callback.answer(
+                f"Можно использовать только туры {tournament.round_min}..{tournament.round_max}.",
+                show_alert=True,
+            )
+            return
+        await callback.message.answer(
+            await build_mvp_round_text(round_number, tournament_id=tournament.id, tournament_name=tournament.name)
+        )
+        await callback.message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_info"))
+        await callback.answer()
+
+    @dp.callback_query(F.data.startswith("qnav_tops_round:"))
+    async def on_qnav_tops_round(callback: types.CallbackQuery):
+        try:
+            round_number = int((callback.data or "").split(":", 1)[1])
+        except Exception:
+            await callback.answer("Не удалось выбрать тур", show_alert=True)
+            return
+        tournament, default_round = await _get_user_tournament_context(callback.from_user.id)
+        if not _round_in_tournament(round_number, tournament):
+            await callback.answer(
+                f"Можно использовать только туры {tournament.round_min}..{tournament.round_max}.",
+                show_alert=True,
+            )
+            return
+        await callback.message.answer(
+            await build_round_tops_text(round_number, tournament_id=tournament.id, tournament_name=tournament.name)
+        )
+        await callback.message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_info"))
         await callback.answer()
 
     @dp.message(F.text == "✅ Вступить в турнир")
@@ -1580,7 +1657,7 @@ def register_user_handlers(dp: Dispatcher):
     async def btn_stats(message: types.Message):
         tournament, _default_round = await _get_user_tournament_context(message.from_user.id)
         await send_long(message, await build_stats_text(tournament_id=tournament.id))
-        await message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_info"))
+        await message.answer("Что дальше?", reply_markup=build_stats_followup_keyboard())
 
     @dp.message(F.text == "👤 Мой профиль")
     async def btn_profile(message: types.Message):
@@ -2364,4 +2441,4 @@ def register_user_handlers(dp: Dispatcher):
         tournament, _default_round = await _get_user_tournament_context(message.from_user.id)
         text = await build_stats_text(tournament_id=tournament.id)
         await send_long(message, text)
-        await message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_info"))
+        await message.answer("Что дальше?", reply_markup=build_stats_followup_keyboard())
