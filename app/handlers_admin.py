@@ -510,6 +510,7 @@ def register_admin_handlers(dp: Dispatcher) -> None:
     dp.message.register(admin_add_match, Command("admin_add_match"))
     dp.message.register(admin_set_result, Command("admin_set_result"))
     dp.callback_query.register(admin_set_result_pick_tournament, F.data.startswith("admin_res_t:"))
+    dp.callback_query.register(admin_set_result_pick_round, F.data.startswith("admin_res_r:"))
     dp.callback_query.register(admin_set_result_pick_match, F.data.startswith("admin_res_m:"))
     dp.message.register(admin_set_result_score_input, AdminSetResultStates.waiting_for_score)
     dp.message.register(admin_recalc, Command("admin_recalc"))
@@ -680,7 +681,6 @@ async def admin_set_result_pick_tournament(callback: types.CallbackQuery, state:
         await callback.answer("Ошибка выбора турнира", show_alert=True)
         return
 
-    now = _now_msk_naive()
     async with SessionLocal() as session:
         t_q = await session.execute(select(Tournament).where(Tournament.id == tournament_id))
         tournament = t_q.scalar_one_or_none()
@@ -688,33 +688,55 @@ async def admin_set_result_pick_tournament(callback: types.CallbackQuery, state:
             await callback.answer("Турнир не найден", show_alert=True)
             return
 
-        round_q = await session.execute(
-            select(func.min(Match.round_number))
+        rounds_q = await session.execute(
+            select(Match.round_number)
             .where(
                 Match.tournament_id == tournament_id,
                 Match.source == "manual",
                 Match.home_score.is_(None),
                 Match.away_score.is_(None),
-                Match.kickoff_time >= now,
             )
+            .group_by(Match.round_number)
+            .order_by(Match.round_number.asc())
         )
-        round_number = round_q.scalar_one_or_none()
+        round_numbers = [int(r[0]) for r in rounds_q.all()]
 
-        if round_number is None:
-            round_q2 = await session.execute(
-                select(func.min(Match.round_number))
-                .where(
-                    Match.tournament_id == tournament_id,
-                    Match.source == "manual",
-                    Match.home_score.is_(None),
-                    Match.away_score.is_(None),
-                )
-            )
-            round_number = round_q2.scalar_one_or_none()
-
-        if round_number is None:
+        if not round_numbers:
             await callback.message.answer(f"В турнире {tournament.name} нет матчей без результата.")
             await callback.answer()
+            return
+
+    rows = []
+    for rnd in round_numbers:
+        rows.append([types.InlineKeyboardButton(text=f"Тур {rnd}", callback_data=f"admin_res_r:{tournament_id}:{rnd}")])
+    kb = types.InlineKeyboardMarkup(inline_keyboard=rows)
+    await callback.message.answer(
+        f"Турнир: {tournament.name}\nВыбери тур для внесения результатов:",
+        reply_markup=kb,
+    )
+    await callback.answer()
+
+
+async def admin_set_result_pick_round(callback: types.CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMIN_IDS:
+        await callback.answer("Нет прав", show_alert=True)
+        return
+
+    data = callback.data or ""
+    try:
+        _, payload = data.split(":", 1)
+        tournament_id_s, round_s = payload.split(":", 1)
+        tournament_id = int(tournament_id_s)
+        round_number = int(round_s)
+    except Exception:
+        await callback.answer("Ошибка выбора тура", show_alert=True)
+        return
+
+    async with SessionLocal() as session:
+        t_q = await session.execute(select(Tournament).where(Tournament.id == tournament_id))
+        tournament = t_q.scalar_one_or_none()
+        if tournament is None:
+            await callback.answer("Турнир не найден", show_alert=True)
             return
 
         matches_q = await session.execute(
@@ -722,7 +744,7 @@ async def admin_set_result_pick_tournament(callback: types.CallbackQuery, state:
             .where(
                 Match.tournament_id == tournament_id,
                 Match.source == "manual",
-                Match.round_number == int(round_number),
+                Match.round_number == round_number,
                 Match.home_score.is_(None),
                 Match.away_score.is_(None),
             )
@@ -731,7 +753,7 @@ async def admin_set_result_pick_tournament(callback: types.CallbackQuery, state:
         matches = matches_q.scalars().all()
 
     if not matches:
-        await callback.message.answer("Матчи не найдены.")
+        await callback.message.answer("В этом туре уже нет матчей без результата.")
         await callback.answer()
         return
 
@@ -741,7 +763,7 @@ async def admin_set_result_pick_tournament(callback: types.CallbackQuery, state:
         rows.append([types.InlineKeyboardButton(text=txt, callback_data=f"admin_res_m:{m.id}")])
     kb = types.InlineKeyboardMarkup(inline_keyboard=rows)
     await callback.message.answer(
-        f"Турнир: {tournament.name}\nТур: {int(round_number)}\nВыбери матч:",
+        f"Турнир: {tournament.name}\nТур: {round_number}\nВыбери матч:",
         reply_markup=kb,
     )
     await callback.answer()
