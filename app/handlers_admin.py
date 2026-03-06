@@ -509,7 +509,6 @@ def register_admin_handlers(dp: Dispatcher) -> None:
 
     dp.message.register(admin_add_match, Command("admin_add_match"))
     dp.message.register(admin_set_result, Command("admin_set_result"))
-    dp.callback_query.register(admin_set_result_pick_tournament, F.data.startswith("admin_res_t:"))
     dp.callback_query.register(admin_set_result_pick_round, F.data.startswith("admin_res_r:"))
     dp.callback_query.register(admin_set_result_pick_match, F.data.startswith("admin_res_m:"))
     dp.message.register(admin_set_result_score_input, AdminSetResultStates.waiting_for_score)
@@ -645,28 +644,32 @@ async def admin_set_result(message: types.Message):
 
 async def _admin_set_result_open_tournament_picker(message: types.Message) -> None:
     async with SessionLocal() as session:
-        q = await session.execute(
-            select(Tournament)
-            .where(Tournament.is_active == 1)
-            .order_by(Tournament.code.asc())
-        )
-        tournaments = q.scalars().all()
+        t_q = await session.execute(select(Tournament).where(Tournament.code == "RPL"))
+        tournament = t_q.scalar_one_or_none()
+        if tournament is None:
+            await message.answer("Турнир RPL не найден.")
+            return
 
-    if not tournaments:
-        await message.answer("Нет активных турниров.")
+        rounds_q = await session.execute(
+            select(Match.round_number)
+            .where(
+                Match.tournament_id == tournament.id,
+                Match.source == "manual",
+            )
+            .group_by(Match.round_number)
+            .order_by(Match.round_number.asc())
+        )
+        round_numbers = [int(r[0]) for r in rounds_q.all()]
+
+    if not round_numbers:
+        await message.answer(f"В турнире {tournament.name} нет матчей.")
         return
 
-    rows = [
-        [
-            types.InlineKeyboardButton(
-                text=t.name,
-                callback_data=f"admin_res_t:{t.id}",
-            )
-        ]
-        for t in tournaments
-    ]
+    rows = []
+    for rnd in round_numbers:
+        rows.append([types.InlineKeyboardButton(text=f"Тур {rnd}", callback_data=f"admin_res_r:{tournament.id}:{rnd}")])
     kb = types.InlineKeyboardMarkup(inline_keyboard=rows)
-    await message.answer("Выбери турнир для внесения результата:", reply_markup=kb)
+    await message.answer(f"Турнир: {tournament.name}\nВыбери тур:", reply_markup=kb)
 
 
 async def admin_set_result_pick_tournament(callback: types.CallbackQuery, state: FSMContext):

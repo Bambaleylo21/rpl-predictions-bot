@@ -27,15 +27,20 @@ DEFAULT_RPL_ROUND_MIN = 19
 DEFAULT_RPL_ROUND_MAX = 30
 
 
-def build_main_menu_keyboard(default_round: int) -> types.ReplyKeyboardMarkup:
-    return types.ReplyKeyboardMarkup(
-        keyboard=[
-            [types.KeyboardButton(text="✅ Вступить в турнир"), types.KeyboardButton(text="📅 Матчи тура")],
-            [types.KeyboardButton(text="🎯 Поставить прогноз")],
+def build_main_menu_keyboard(default_round: int, is_joined: bool) -> types.ReplyKeyboardMarkup:
+    rows: list[list[types.KeyboardButton]] = []
+    if not is_joined:
+        rows.append([types.KeyboardButton(text="✅ Вступить в турнир")])
+    rows.extend(
+        [
+            [types.KeyboardButton(text="📅 Матчи тура"), types.KeyboardButton(text="🎯 Поставить прогноз")],
             [types.KeyboardButton(text="🗂 Мои прогнозы"), types.KeyboardButton(text="🏆 Общая таблица")],
             [types.KeyboardButton(text="👤 Мой профиль"), types.KeyboardButton(text="📊 Статистика")],
             [types.KeyboardButton(text="❓ Помощь"), types.KeyboardButton(text="📘 Правила")],
-        ],
+        ]
+    )
+    return types.ReplyKeyboardMarkup(
+        keyboard=rows,
         resize_keyboard=True,
         input_field_placeholder="Выберите действие из меню ниже",
     )
@@ -1702,6 +1707,11 @@ def register_user_handlers(dp: Dispatcher):
             f"✅ Ты в турнире: {t_name}\n"
             f"Имя в таблице: {display_name}"
         )
+        tournament, default_round = await _get_user_tournament_context(message.from_user.id)
+        await message.answer(
+            f"Готово. Текущий тур: {default_round}",
+            reply_markup=build_main_menu_keyboard(default_round=default_round, is_joined=True),
+        )
         if new_join:
             await notify_admins_new_join(
                 bot=message.bot,
@@ -1714,6 +1724,8 @@ def register_user_handlers(dp: Dispatcher):
     @dp.message(CommandStart())
     async def cmd_start(message: types.Message):
         tournament, default_round = await _get_user_tournament_context(message.from_user.id)
+        async with SessionLocal() as session:
+            is_joined = await is_user_in_tournament(session, message.from_user.id, tournament.id)
         await message.answer(
             "🏆 Добро пожаловать в бот прогнозов РПЛ.\n\n"
             "Как начать (3 шага):\n"
@@ -1731,7 +1743,7 @@ def register_user_handlers(dp: Dispatcher):
             "🕒 Время матчей и дедлайны — по Москве (МСК).\n"
             "⛔️ После начала матча прогноз ставить/менять нельзя.\n"
             "✅ Можно вводить счет как 2:0 или 2-0.",
-            reply_markup=build_main_menu_keyboard(default_round=default_round),
+            reply_markup=build_main_menu_keyboard(default_round=default_round, is_joined=is_joined),
         )
 
     @dp.message(Command("help"))
