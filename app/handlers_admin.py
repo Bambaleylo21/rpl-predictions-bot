@@ -513,6 +513,7 @@ def register_admin_handlers(dp: Dispatcher) -> None:
     dp.callback_query.register(admin_set_result_pick_match, F.data.startswith("admin_res_m:"))
     dp.message.register(admin_set_result_score_input, AdminSetResultStates.waiting_for_score)
     dp.message.register(admin_recalc, Command("admin_recalc"))
+    dp.message.register(admin_manual_only_cleanup, Command("admin_manual_only_cleanup"))
     dp.message.register(admin_health, Command("admin_health"))
 
     # Новое: управление окном турнира и удаление участников
@@ -844,6 +845,38 @@ async def admin_recalc(message: types.Message):
             total_updates += await recalc_points_for_match_in_session(session, m.id)
 
     await message.answer(f"✅ Пересчёт завершён. Обновлений: {total_updates}")
+
+
+async def admin_manual_only_cleanup(message: types.Message):
+    """/admin_manual_only_cleanup — удалить всё API и оставить только ручной RPL"""
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("⛔️ У вас нет прав на эту команду.")
+        return
+
+    async with SessionLocal() as session:
+        rpl_q = await session.execute(select(Tournament).where(Tournament.code == "RPL"))
+        rpl = rpl_q.scalar_one_or_none()
+        if rpl is not None:
+            rpl.round_min = 19
+            rpl.round_max = 30
+
+        await session.execute(delete(Tournament).where(Tournament.code != "RPL"))
+        bad_ids_subq = select(Match.id).where(
+            (Match.source != "manual") | Match.api_fixture_id.isnot(None) | (Match.tournament_id != (rpl.id if rpl else -1))
+        )
+        await session.execute(delete(Point).where(Point.match_id.in_(bad_ids_subq)))
+        await session.execute(delete(Prediction).where(Prediction.match_id.in_(bad_ids_subq)))
+        del_matches = await session.execute(delete(Match).where(Match.id.in_(bad_ids_subq)))
+        await session.commit()
+
+        left_matches = int((await session.execute(select(func.count(Match.id)))).scalar_one() or 0)
+
+    await message.answer(
+        "✅ Manual-only cleanup завершён.\n"
+        f"Удалено матчей: {int(del_matches.rowcount or 0)}\n"
+        f"Осталось матчей: {left_matches}\n"
+        "Теперь бот работает только в ручном режиме RPL."
+    )
 
 
 async def admin_health(message: types.Message):

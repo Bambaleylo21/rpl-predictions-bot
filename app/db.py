@@ -43,9 +43,8 @@ async def _apply_postgres_schema_fixes(conn) -> None:
         "CREATE TABLE IF NOT EXISTS tournaments (id SERIAL PRIMARY KEY, code VARCHAR(16) UNIQUE NOT NULL, name VARCHAR(64) NOT NULL, round_min INTEGER NOT NULL, round_max INTEGER NOT NULL, is_active INTEGER NOT NULL DEFAULT 1, created_at TIMESTAMP NOT NULL DEFAULT NOW())",
         "CREATE INDEX IF NOT EXISTS ix_tournaments_code ON tournaments (code)",
         "INSERT INTO tournaments (code, name, round_min, round_max, is_active) VALUES ('RPL', 'Russian Premier League', 19, 30, 1) ON CONFLICT (code) DO NOTHING",
-        "INSERT INTO tournaments (code, name, round_min, round_max, is_active) VALUES ('EPL', 'English Premier League', 27, 38, 1) ON CONFLICT (code) DO NOTHING",
         "UPDATE tournaments SET name='Russian Premier League', round_min=19, round_max=30, is_active=1 WHERE code='RPL'",
-        "UPDATE tournaments SET name='English Premier League', round_min=27, round_max=38, is_active=1 WHERE code='EPL'",
+        "DELETE FROM tournaments WHERE code='EPL'",
 
         # user_tournaments
         "CREATE TABLE IF NOT EXISTS user_tournaments (id SERIAL PRIMARY KEY, tg_user_id BIGINT NOT NULL, tournament_id INTEGER NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE, display_name VARCHAR(64), created_at TIMESTAMP NOT NULL DEFAULT NOW(), CONSTRAINT uq_user_tournaments_user_tournament UNIQUE (tg_user_id, tournament_id))",
@@ -90,6 +89,10 @@ async def _apply_postgres_schema_fixes(conn) -> None:
         # settings (на всякий — не валимся, даже если create_all уже сделает)
         "CREATE TABLE IF NOT EXISTS settings (key VARCHAR(64) PRIMARY KEY, value VARCHAR(256) NOT NULL, created_at TIMESTAMP NOT NULL DEFAULT NOW())",
         "INSERT INTO user_tournaments (tg_user_id, tournament_id) SELECT u.tg_user_id, t.id FROM users u CROSS JOIN tournaments t WHERE t.code = 'RPL' ON CONFLICT (tg_user_id, tournament_id) DO NOTHING",
+        # manual-only режим: удаляем API-матчи
+        "DELETE FROM points WHERE match_id IN (SELECT id FROM matches WHERE source <> 'manual' OR api_fixture_id IS NOT NULL)",
+        "DELETE FROM predictions WHERE match_id IN (SELECT id FROM matches WHERE source <> 'manual' OR api_fixture_id IS NOT NULL)",
+        "DELETE FROM matches WHERE source <> 'manual' OR api_fixture_id IS NOT NULL",
     ]
 
     for sql in statements:
@@ -108,9 +111,8 @@ async def _apply_sqlite_schema_fixes(conn) -> None:
         "CREATE TABLE IF NOT EXISTS tournaments (id INTEGER PRIMARY KEY AUTOINCREMENT, code VARCHAR(16) UNIQUE NOT NULL, name VARCHAR(64) NOT NULL, round_min INTEGER NOT NULL, round_max INTEGER NOT NULL, is_active INTEGER NOT NULL DEFAULT 1, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)",
         "CREATE INDEX IF NOT EXISTS ix_tournaments_code ON tournaments (code)",
         "INSERT OR IGNORE INTO tournaments (code, name, round_min, round_max, is_active) VALUES ('RPL', 'Russian Premier League', 19, 30, 1)",
-        "INSERT OR IGNORE INTO tournaments (code, name, round_min, round_max, is_active) VALUES ('EPL', 'English Premier League', 27, 38, 1)",
         "UPDATE tournaments SET name='Russian Premier League', round_min=19, round_max=30, is_active=1 WHERE code='RPL'",
-        "UPDATE tournaments SET name='English Premier League', round_min=27, round_max=38, is_active=1 WHERE code='EPL'",
+        "DELETE FROM tournaments WHERE code='EPL'",
 
         # user_tournaments
         "CREATE TABLE IF NOT EXISTS user_tournaments (id INTEGER PRIMARY KEY AUTOINCREMENT, tg_user_id BIGINT NOT NULL, tournament_id INTEGER NOT NULL, display_name VARCHAR(64), created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT uq_user_tournaments_user_tournament UNIQUE (tg_user_id, tournament_id))",
@@ -126,6 +128,10 @@ async def _apply_sqlite_schema_fixes(conn) -> None:
 
         # backfill memberships for existing users into RPL
         "INSERT OR IGNORE INTO user_tournaments (tg_user_id, tournament_id) SELECT u.tg_user_id, t.id FROM users u CROSS JOIN tournaments t WHERE t.code = 'RPL'",
+        # manual-only режим: удаляем API-матчи
+        "DELETE FROM points WHERE match_id IN (SELECT id FROM matches WHERE source <> 'manual' OR api_fixture_id IS NOT NULL)",
+        "DELETE FROM predictions WHERE match_id IN (SELECT id FROM matches WHERE source <> 'manual' OR api_fixture_id IS NOT NULL)",
+        "DELETE FROM matches WHERE source <> 'manual' OR api_fixture_id IS NOT NULL",
     ]
 
     for sql in statements:
