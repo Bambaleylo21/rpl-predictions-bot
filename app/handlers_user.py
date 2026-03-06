@@ -1303,7 +1303,8 @@ def register_user_handlers(dp: Dispatcher):
                 "Все доступные матчи уже заполнены ✅"
             )
             footer_rows = [
-                [types.InlineKeyboardButton(text="📚 Выбрать другой тур", callback_data=f"predict_rounds:{round_number}")]
+                [types.InlineKeyboardButton(text="📚 Выбрать другой тур", callback_data=f"predict_rounds:{round_number}")],
+                [types.InlineKeyboardButton(text="✏️ Изменить прогноз", callback_data=f"predict_edit:{round_number}")],
             ]
             if round_number != current_round:
                 footer_rows.append(
@@ -1313,7 +1314,8 @@ def register_user_handlers(dp: Dispatcher):
             return
 
         footer_rows = [
-            [types.InlineKeyboardButton(text="📚 Выбрать другой тур", callback_data=f"predict_rounds:{round_number}")]
+            [types.InlineKeyboardButton(text="📚 Выбрать другой тур", callback_data=f"predict_rounds:{round_number}")],
+            [types.InlineKeyboardButton(text="✏️ Изменить прогноз", callback_data=f"predict_edit:{round_number}")],
         ]
         if round_number != current_round:
             footer_rows.append(
@@ -1380,6 +1382,55 @@ def register_user_handlers(dp: Dispatcher):
             f"Турнир: {tournament_name}\n"
             f"Выбери тур для прогноза:",
             reply_markup=types.InlineKeyboardMarkup(inline_keyboard=rows),
+        )
+
+    async def _send_round_edit_picker(
+        target: types.Message,
+        tg_user_id: int,
+        tournament: Tournament,
+        round_number: int,
+    ) -> None:
+        tournament_name = display_tournament_name(tournament.name)
+        now = now_msk_naive()
+
+        async with SessionLocal() as session:
+            q = await session.execute(
+                select(Match)
+                .where(
+                    Match.round_number == round_number,
+                    Match.tournament_id == tournament.id,
+                    Match.kickoff_time > now,
+                )
+                .order_by(Match.kickoff_time.asc())
+            )
+            open_matches = q.scalars().all()
+            if not open_matches:
+                await target.answer("В этом туре нет открытых матчей для редактирования.")
+                return
+
+            open_ids = [m.id for m in open_matches]
+            preds_q = await session.execute(
+                select(Prediction.match_id).where(
+                    Prediction.tg_user_id == tg_user_id,
+                    Prediction.match_id.in_(open_ids),
+                )
+            )
+            predicted_ids = {int(r[0]) for r in preds_q.all()}
+
+        editable = [m for m in open_matches if m.id in predicted_ids]
+        if not editable:
+            await target.answer(
+                f"Турнир: {tournament_name}\n"
+                f"Тур: {round_number}\n"
+                "Пока нет открытых матчей с твоим прогнозом для редактирования."
+            )
+            return
+
+        await target.answer(
+            f"Турнир: {tournament_name}\n"
+            f"Тур: {round_number}\n"
+            "Выбери матч для изменения прогноза:",
+            reply_markup=build_open_matches_inline_keyboard(editable, with_kickoff=True),
         )
 
     async def _send_default_my_text(target: types.Message, tg_user_id: int) -> None:
@@ -1762,6 +1813,28 @@ def register_user_handlers(dp: Dispatcher):
             return
 
         await _send_round_predict_picker(
+            target=callback.message,
+            tg_user_id=callback.from_user.id,
+            tournament=tournament,
+            round_number=round_number,
+        )
+        await callback.answer()
+
+    @dp.callback_query(F.data.startswith("predict_edit:"))
+    async def on_predict_edit(callback: types.CallbackQuery):
+        data = callback.data or ""
+        try:
+            round_number = int(data.split(":", 1)[1])
+        except Exception:
+            await callback.answer("Не удалось выбрать тур", show_alert=True)
+            return
+
+        tournament, _default_round = await _get_user_tournament_context(callback.from_user.id)
+        if not _round_in_tournament(round_number, tournament):
+            await callback.answer("Этот тур недоступен", show_alert=True)
+            return
+
+        await _send_round_edit_picker(
             target=callback.message,
             tg_user_id=callback.from_user.id,
             tournament=tournament,
