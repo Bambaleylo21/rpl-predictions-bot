@@ -11,6 +11,7 @@ from sqlalchemy import case, delete, select, func
 
 from app.config import load_admin_ids
 from app.db import SessionLocal
+from app.display import display_team_name, display_tournament_name
 from app.models import Match, Prediction, Point, User, Setting, Tournament, UserTournament
 from app.scoring import calculate_points
 from app.tournament import ROUND_DEFAULT, ROUND_MAX, ROUND_MIN, is_tournament_round
@@ -302,7 +303,7 @@ async def _maybe_send_round_closed_summary(bot, tournament_id: int, round_number
 
         t_q = await session.execute(select(Tournament).where(Tournament.id == tournament_id))
         tournament = t_q.scalar_one_or_none()
-        tournament_name = tournament.name if tournament else f"турнир #{tournament_id}"
+        tournament_name = display_tournament_name(tournament.name) if tournament else f"турнир #{tournament_id}"
 
         members_q = await session.execute(
             select(UserTournament.tg_user_id).where(UserTournament.tournament_id == tournament_id)
@@ -624,7 +625,7 @@ async def admin_set_result(message: types.Message):
         updates = await recalc_points_for_match_in_session(session, match_id)
 
     await message.answer(
-        f"✅ Результат сохранён: {match.home_team} — {match.away_team} | {home_score}:{away_score}. "
+        f"✅ Результат сохранён: {display_team_name(match.home_team)} — {display_team_name(match.away_team)} | {home_score}:{away_score}. "
         f"Пересчитано очков: {updates}"
     )
     live_text, round_closed = await _build_admin_match_result_live_update(match.id)
@@ -662,14 +663,14 @@ async def _admin_set_result_open_tournament_picker(message: types.Message) -> No
         round_numbers = [int(r[0]) for r in rounds_q.all()]
 
     if not round_numbers:
-        await message.answer(f"В турнире {tournament.name} нет матчей.")
+        await message.answer(f"В турнире {display_tournament_name(tournament.name)} нет матчей.")
         return
 
     rows = []
     for rnd in round_numbers:
         rows.append([types.InlineKeyboardButton(text=f"Тур {rnd}", callback_data=f"admin_res_r:{tournament.id}:{rnd}")])
     kb = types.InlineKeyboardMarkup(inline_keyboard=rows)
-    await message.answer(f"Турнир: {tournament.name}\nВыбери тур:", reply_markup=kb)
+    await message.answer(f"Турнир: {display_tournament_name(tournament.name)}\nВыбери тур:", reply_markup=kb)
 
 
 async def admin_set_result_pick_tournament(callback: types.CallbackQuery, state: FSMContext):
@@ -703,7 +704,7 @@ async def admin_set_result_pick_tournament(callback: types.CallbackQuery, state:
         round_numbers = [int(r[0]) for r in rounds_q.all()]
 
         if not round_numbers:
-            await callback.message.answer(f"В турнире {tournament.name} нет матчей.")
+            await callback.message.answer(f"В турнире {display_tournament_name(tournament.name)} нет матчей.")
             await callback.answer()
             return
 
@@ -712,7 +713,7 @@ async def admin_set_result_pick_tournament(callback: types.CallbackQuery, state:
         rows.append([types.InlineKeyboardButton(text=f"Тур {rnd}", callback_data=f"admin_res_r:{tournament_id}:{rnd}")])
     kb = types.InlineKeyboardMarkup(inline_keyboard=rows)
     await callback.message.answer(
-        f"Турнир: {tournament.name}\nВыбери тур:",
+        f"Турнир: {display_tournament_name(tournament.name)}\nВыбери тур:",
         reply_markup=kb,
     )
     await callback.answer()
@@ -759,11 +760,14 @@ async def admin_set_result_pick_round(callback: types.CallbackQuery, state: FSMC
     rows = []
     for m in matches:
         result = f"{m.home_score}:{m.away_score}" if m.home_score is not None and m.away_score is not None else "без итога"
-        txt = f"{m.home_team} — {m.away_team} | {m.kickoff_time.strftime('%d.%m %H:%M')} | {result}"
+        txt = (
+            f"{display_team_name(m.home_team)} — {display_team_name(m.away_team)} "
+            f"| {m.kickoff_time.strftime('%d.%m %H:%M')} | {result}"
+        )
         rows.append([types.InlineKeyboardButton(text=txt, callback_data=f"admin_res_m:{m.id}")])
     kb = types.InlineKeyboardMarkup(inline_keyboard=rows)
     await callback.message.answer(
-        f"Турнир: {tournament.name}\nТур: {round_number}\nВыбери матч:",
+        f"Турнир: {display_tournament_name(tournament.name)}\nТур: {round_number}\nВыбери матч:",
         reply_markup=kb,
     )
     await callback.answer()
@@ -791,7 +795,7 @@ async def admin_set_result_pick_match(callback: types.CallbackQuery, state: FSMC
     await state.set_state(AdminSetResultStates.waiting_for_score)
     await state.update_data(admin_result_match_id=match_id)
     await callback.message.answer(
-        f"Матч: {match.home_team} — {match.away_team}\n"
+        f"Матч: {display_team_name(match.home_team)} — {display_team_name(match.away_team)}\n"
         "Отправь только счёт: 2:1"
     )
     await callback.answer()
@@ -832,7 +836,7 @@ async def admin_set_result_score_input(message: types.Message, state: FSMContext
 
     await state.clear()
     await message.answer(
-        f"✅ Результат сохранён: {match.home_team} — {match.away_team} | {home_score}:{away_score}. "
+        f"✅ Результат сохранён: {display_team_name(match.home_team)} — {display_team_name(match.away_team)} | {home_score}:{away_score}. "
         f"Пересчитано очков: {updates}"
     )
     live_text, round_closed = await _build_admin_match_result_live_update(match.id)

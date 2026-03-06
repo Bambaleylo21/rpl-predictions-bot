@@ -42,8 +42,8 @@ async def _apply_postgres_schema_fixes(conn) -> None:
         # tournaments
         "CREATE TABLE IF NOT EXISTS tournaments (id SERIAL PRIMARY KEY, code VARCHAR(16) UNIQUE NOT NULL, name VARCHAR(64) NOT NULL, round_min INTEGER NOT NULL, round_max INTEGER NOT NULL, is_active INTEGER NOT NULL DEFAULT 1, created_at TIMESTAMP NOT NULL DEFAULT NOW())",
         "CREATE INDEX IF NOT EXISTS ix_tournaments_code ON tournaments (code)",
-        "INSERT INTO tournaments (code, name, round_min, round_max, is_active) VALUES ('RPL', 'Russian Premier League', 19, 30, 1) ON CONFLICT (code) DO NOTHING",
-        "UPDATE tournaments SET name='Russian Premier League', round_min=19, round_max=30, is_active=1 WHERE code='RPL'",
+        "INSERT INTO tournaments (code, name, round_min, round_max, is_active) VALUES ('RPL', 'РПЛ', 19, 30, 1) ON CONFLICT (code) DO NOTHING",
+        "UPDATE tournaments SET name='РПЛ', round_min=19, round_max=30, is_active=1 WHERE code='RPL'",
         "DELETE FROM tournaments WHERE code='EPL'",
 
         # user_tournaments
@@ -110,8 +110,8 @@ async def _apply_sqlite_schema_fixes(conn) -> None:
         # tournaments
         "CREATE TABLE IF NOT EXISTS tournaments (id INTEGER PRIMARY KEY AUTOINCREMENT, code VARCHAR(16) UNIQUE NOT NULL, name VARCHAR(64) NOT NULL, round_min INTEGER NOT NULL, round_max INTEGER NOT NULL, is_active INTEGER NOT NULL DEFAULT 1, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)",
         "CREATE INDEX IF NOT EXISTS ix_tournaments_code ON tournaments (code)",
-        "INSERT OR IGNORE INTO tournaments (code, name, round_min, round_max, is_active) VALUES ('RPL', 'Russian Premier League', 19, 30, 1)",
-        "UPDATE tournaments SET name='Russian Premier League', round_min=19, round_max=30, is_active=1 WHERE code='RPL'",
+        "INSERT OR IGNORE INTO tournaments (code, name, round_min, round_max, is_active) VALUES ('RPL', 'РПЛ', 19, 30, 1)",
+        "UPDATE tournaments SET name='РПЛ', round_min=19, round_max=30, is_active=1 WHERE code='RPL'",
         "DELETE FROM tournaments WHERE code='EPL'",
 
         # user_tournaments

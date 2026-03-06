@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 
 from app.config import load_admin_ids
 from app.db import SessionLocal
+from app.display import display_team_name, display_tournament_name
 from app.models import Match, Point, Prediction, Tournament, User, UserTournament
 from app.stats import build_stats_brief_text, build_stats_text
 from app.my_predictions import build_my_round_text
@@ -94,7 +95,7 @@ async def get_selected_tournament_for_user(session, tg_user_id: int) -> Tourname
         # fallback safety for corrupted DB
         t = Tournament(
             code=DEFAULT_TOURNAMENT_CODE,
-            name="Russian Premier League",
+            name="РПЛ",
             round_min=DEFAULT_RPL_ROUND_MIN,
             round_max=DEFAULT_RPL_ROUND_MAX,
             is_active=1,
@@ -186,9 +187,12 @@ def build_open_matches_inline_keyboard(matches: list[Match], with_kickoff: bool 
     rows: list[list[types.InlineKeyboardButton]] = []
     for m in matches:
         if with_kickoff:
-            label = f"{m.home_team} — {m.away_team} | {m.kickoff_time.strftime('%d.%m %H:%M')}"
+            label = (
+                f"{display_team_name(m.home_team)} — {display_team_name(m.away_team)} "
+                f"| {m.kickoff_time.strftime('%d.%m %H:%M')}"
+            )
         else:
-            label = f"{m.home_team} — {m.away_team}"
+            label = f"{display_team_name(m.home_team)} — {display_team_name(m.away_team)}"
         btn = types.InlineKeyboardButton(
             text=_truncate_button_text(label),
             callback_data=f"pick_match:{m.id}",
@@ -760,7 +764,10 @@ async def build_round_matches_text(round_number: int, tournament_id: int, tourna
         score = ""
         if m.home_score is not None and m.away_score is not None:
             score = f" | {m.home_score}:{m.away_score}"
-        lines.append(f"{icon} {m.home_team} — {m.away_team} | {m.kickoff_time.strftime('%d.%m %H:%M')}{score}")
+        lines.append(
+            f"{icon} {display_team_name(m.home_team)} — {display_team_name(m.away_team)} "
+            f"| {m.kickoff_time.strftime('%d.%m %H:%M')}{score}"
+        )
     lines.append("")
     lines.append("🟢 прогноз открыт · 🔒 прогноз закрыт · ✅ есть итог")
     return "\n".join(lines)
@@ -1062,6 +1069,7 @@ def register_user_handlers(dp: Dispatcher):
     async def _get_user_tournament_context(tg_user_id: int) -> tuple[Tournament, int]:
         async with SessionLocal() as session:
             tournament = await get_selected_tournament_for_user(session, tg_user_id)
+        tournament.name = display_tournament_name(tournament.name)
         eff_round_min, eff_round_max = get_effective_round_window(tournament)
         # Дальше в UI/запросах используем уже безопасное окно туров.
         tournament.round_min = eff_round_min
@@ -1235,11 +1243,12 @@ def register_user_handlers(dp: Dispatcher):
         tournament: Tournament,
         round_number: int,
     ) -> None:
+        tournament_name = display_tournament_name(tournament.name)
         async with SessionLocal() as session:
             ok = await is_user_in_tournament(session, tg_user_id, tournament.id)
             if not ok:
                 await target.answer(
-                    f"Сначала вступи в турнир {tournament.name} кнопкой «✅ Вступить в турнир»,"
+                    f"Сначала вступи в турнир {tournament_name} кнопкой «✅ Вступить в турнир»,"
                     " и сразу сможем сохранить прогноз."
                 )
                 return
@@ -1278,7 +1287,7 @@ def register_user_handlers(dp: Dispatcher):
 
         if left == 0:
             await target.answer(
-                f"Турнир: {tournament.name}\n"
+                f"Турнир: {tournament_name}\n"
                 f"Тур: {round_number}\n"
                 "Все доступные матчи уже заполнены ✅"
             )
@@ -1286,7 +1295,7 @@ def register_user_handlers(dp: Dispatcher):
             return
 
         await target.answer(
-            f"Турнир: {tournament.name}\n"
+            f"Турнир: {tournament_name}\n"
             f"Тур: {round_number}\n"
             f"Без прогноза осталось: {left} из {total_open}\n"
             "Выбери матч:",
@@ -1643,7 +1652,7 @@ def register_user_handlers(dp: Dispatcher):
         await state.set_state(PredictRoundStates.waiting_for_single_match_score)
         await state.update_data(single_match_id=match.id)
         await callback.message.answer(
-            f"Матч выбран: {match.home_team} — {match.away_team}\n"
+            f"Матч выбран: {display_team_name(match.home_team)} — {display_team_name(match.away_team)}\n"
             "Отправь только счёт: 2:1"
         )
         await callback.answer()
@@ -1706,23 +1715,15 @@ def register_user_handlers(dp: Dispatcher):
             await session.commit()
 
         await state.clear()
-        confirm_text, nav_mode = await _build_predict_saved_message(
-            tg_user_id=tg_user_id,
-            tournament_id=tournament.id,
-            round_number=match.round_number,
-            home_team=match.home_team,
-            away_team=match.away_team,
-            pred_home=pred_home,
-            pred_away=pred_away,
+        await message.answer(
+            f"✅ Ставка принята: {display_team_name(match.home_team)} — {display_team_name(match.away_team)} | {pred_home}:{pred_away}"
         )
-        await message.answer(confirm_text, reply_markup=build_quick_nav_keyboard(nav_mode))
-        if nav_mode == "after_predict":
-            await _send_round_predict_picker(
-                target=message,
-                tg_user_id=tg_user_id,
-                tournament=tournament,
-                round_number=match.round_number,
-            )
+        await _send_round_predict_picker(
+            target=message,
+            tg_user_id=tg_user_id,
+            tournament=tournament,
+            round_number=match.round_number,
+        )
 
     @dp.message(PredictRoundStates.waiting_for_display_name)
     async def on_display_name_input(message: types.Message, state: FSMContext):

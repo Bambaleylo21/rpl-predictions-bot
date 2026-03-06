@@ -1,6 +1,7 @@
 from sqlalchemy import select
 
 from app.db import SessionLocal
+from app.display import display_team_name
 from app.models import Match, Prediction, Point
 
 
@@ -49,11 +50,13 @@ async def build_my_round_text(tg_user_id: int, round_number: int, tournament_id:
 
     lines = [f"🧾 Мои прогнозы — тур {round_number}:"]
     for m in matches:
+        home = display_team_name(m.home_team)
+        away = display_team_name(m.away_team)
         pred = preds_map.get(m.id)
         if pred is None:
-            match_line = f"{m.home_team} — {m.away_team}"
+            match_line = f"{home} — {away}"
         else:
-            match_line = f"{m.home_team} {pred.pred_home}:{pred.pred_away} {m.away_team}"
+            match_line = f"{home} {pred.pred_home}:{pred.pred_away} {away}"
 
         result_txt = ""
         if m.home_score is not None and m.away_score is not None:
