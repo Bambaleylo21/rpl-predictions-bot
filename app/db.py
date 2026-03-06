@@ -3,8 +3,11 @@ import os
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
+from dotenv import load_dotenv
 
 from app.models import Base
+
+load_dotenv()
 
 
 def _make_async_db_url(url: str) -> str:
