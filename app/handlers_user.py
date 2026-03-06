@@ -37,7 +37,7 @@ def build_main_menu_keyboard(default_round: int, is_joined: bool) -> types.Reply
             [types.KeyboardButton(text="🎯 Поставить прогноз")],
             [types.KeyboardButton(text="🗂 Мои прогнозы"), types.KeyboardButton(text="🏆 Общая таблица")],
             [types.KeyboardButton(text="👤 Мой профиль"), types.KeyboardButton(text="📊 Статистика")],
-            [types.KeyboardButton(text="❓ Помощь"), types.KeyboardButton(text="📘 Правила")],
+            [types.KeyboardButton(text="📘 Правила")],
         ]
     )
     return types.ReplyKeyboardMarkup(
@@ -917,7 +917,6 @@ async def build_profile_text(
 
     return (
         f"👤 Профиль: {name}\n"
-        f"Турнир: {tournament_name}\n"
         f"Место в общем зачёте: {place}\n"
         f"Очки: {total}\n"
         f"Прогнозов: {preds_count}\n"
