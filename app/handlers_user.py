@@ -6,6 +6,7 @@ from aiogram.fsm.state import State, StatesGroup
 from sqlalchemy import case, func, select
 
 from datetime import datetime, timedelta
+import re
 
 from app.config import load_admin_ids
 from app.db import SessionLocal
@@ -527,6 +528,84 @@ def parse_score(s: str) -> tuple[int, int] | None:
         return int(a), int(b)
     except ValueError:
         return None
+
+
+def normalize_team_token(s: str) -> str:
+    s = (s or "").strip().lower().replace("ё", "е")
+    s = re.sub(r"[^\w\s]", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def resolve_match_by_team_names(home_raw: str, away_raw: str, matches: list[Match]) -> Match | None:
+    home_norm = normalize_team_token(home_raw)
+    away_norm = normalize_team_token(away_raw)
+    if not home_norm or not away_norm:
+        return None
+
+    found: list[Match] = []
+    for m in matches:
+        home_aliases = {
+            normalize_team_token(m.home_team),
+            normalize_team_token(display_team_name(m.home_team)),
+        }
+        away_aliases = {
+            normalize_team_token(m.away_team),
+            normalize_team_token(display_team_name(m.away_team)),
+        }
+        if home_norm in home_aliases and away_norm in away_aliases:
+            found.append(m)
+
+    if len(found) != 1:
+        return None
+    return found[0]
+
+
+def parse_bulk_prediction_line(line: str, open_matches: list[Match]) -> tuple[Match | None, int | None, int | None]:
+    txt = (line or "").strip()
+    if not txt:
+        return None, None, None
+
+    # Формат: "1 2:1" или "1. 2-1"
+    m = re.match(r"^\s*(\d+)\.?\s+(\d+)\s*[:\-]\s*(\d+)\s*$", txt)
+    if m:
+        idx = int(m.group(1))
+        pred_home = int(m.group(2))
+        pred_away = int(m.group(3))
+        if 1 <= idx <= len(open_matches):
+            return open_matches[idx - 1], pred_home, pred_away
+        # Обратная совместимость: если ввели ID, а не номер.
+        by_id = {int(mm.id): mm for mm in open_matches}
+        match = by_id.get(idx)
+        if match is not None:
+            return match, pred_home, pred_away
+        return None, None, None
+
+    # Формат: "Ростов 2-1 Балтика"
+    m = re.match(r"^\s*(.+?)\s+(\d+)\s*[:\-]\s*(\d+)\s+(.+?)\s*$", txt)
+    if m:
+        home_raw = m.group(1).strip()
+        pred_home = int(m.group(2))
+        pred_away = int(m.group(3))
+        away_raw = m.group(4).strip()
+        match = resolve_match_by_team_names(home_raw, away_raw, open_matches)
+        if match is not None:
+            return match, pred_home, pred_away
+        return None, None, None
+
+    # Формат: "Ростов - Балтика 2:1"
+    m = re.match(r"^\s*(.+?)\s*[-—]\s*(.+?)\s+(\d+)\s*[:\-]\s*(\d+)\s*$", txt)
+    if m:
+        home_raw = m.group(1).strip()
+        away_raw = m.group(2).strip()
+        pred_home = int(m.group(3))
+        pred_away = int(m.group(4))
+        match = resolve_match_by_team_names(home_raw, away_raw, open_matches)
+        if match is not None:
+            return match, pred_home, pred_away
+        return None, None, None
+
+    return None, None, None
 
 
 def match_status_icon(match: Match, now: datetime) -> str:
@@ -1237,6 +1316,63 @@ def register_user_handlers(dp: Dispatcher):
         await state.update_data(round_number=round_number)
         await send_long(message, "\n".join(lines))
 
+    async def _send_bulk_predict_prompt(
+        target: types.Message,
+        state: FSMContext,
+        tg_user_id: int,
+        tournament: Tournament,
+        round_number: int,
+    ) -> None:
+        now = now_msk_naive()
+        tournament_name = display_tournament_name(tournament.name)
+        async with SessionLocal() as session:
+            ok = await is_user_in_tournament(session, tg_user_id, tournament.id)
+            if not ok:
+                await target.answer(
+                    f"Сначала вступи в турнир {tournament_name} кнопкой «✅ Вступить в турнир»,"
+                    " и сразу сможем сохранить прогноз."
+                )
+                return
+
+            q = await session.execute(
+                select(Match)
+                .where(
+                    Match.round_number == round_number,
+                    Match.tournament_id == tournament.id,
+                    Match.kickoff_time > now,
+                )
+                .order_by(Match.kickoff_time.asc())
+            )
+            open_matches = q.scalars().all()
+
+        if not open_matches:
+            await target.answer("В этом туре не осталось открытых матчей для прогноза.")
+            return
+
+        lines = [
+            f"⚡ Проставить всё за тур\nТурнир: {tournament_name}\nТур: {round_number}\n",
+            "Открытые матчи (только доступные для прогноза):",
+        ]
+        for i, m in enumerate(open_matches, start=1):
+            lines.append(
+                f"{i}) {display_team_name(m.home_team)} — {display_team_name(m.away_team)} | {m.kickoff_time.strftime('%d.%m %H:%M')}"
+            )
+        lines.extend(
+            [
+                "",
+                "Отправь прогнозы одним сообщением, каждый матч с новой строки.",
+                "Поддерживаемые форматы:",
+                "1 2:1",
+                "1. 2-1",
+                "Ростов 2-1 Балтика",
+                "Ростов - Балтика 2:1",
+            ]
+        )
+
+        await state.set_state(PredictRoundStates.waiting_for_predictions_block)
+        await state.update_data(round_number=round_number)
+        await send_long(target, "\n".join(lines))
+
     async def _request_display_name_for_join(message: types.Message, state: FSMContext, tournament: Tournament) -> None:
         await state.set_state(PredictRoundStates.waiting_for_display_name)
         await state.update_data(join_tournament_id=tournament.id, join_tournament_name=tournament.name)
@@ -1315,6 +1451,7 @@ def register_user_handlers(dp: Dispatcher):
                 "Все доступные матчи уже заполнены ✅"
             )
             footer_rows = [
+                [types.InlineKeyboardButton(text="⚡ Проставить всё за тур", callback_data=f"predict_bulk:{round_number}")],
                 [types.InlineKeyboardButton(text="📚 Выбрать другой тур", callback_data=f"predict_rounds:{round_number}")],
                 [types.InlineKeyboardButton(text="✏️ Изменить прогноз", callback_data=f"predict_edit:{round_number}")],
             ]
@@ -1326,6 +1463,7 @@ def register_user_handlers(dp: Dispatcher):
             return
 
         footer_rows = [
+            [types.InlineKeyboardButton(text="⚡ Проставить всё за тур", callback_data=f"predict_bulk:{round_number}")],
             [types.InlineKeyboardButton(text="📚 Выбрать другой тур", callback_data=f"predict_rounds:{round_number}")],
             [types.InlineKeyboardButton(text="✏️ Изменить прогноз", callback_data=f"predict_edit:{round_number}")],
         ]
@@ -1958,6 +2096,29 @@ def register_user_handlers(dp: Dispatcher):
         )
         await callback.answer()
 
+    @dp.callback_query(F.data.startswith("predict_bulk:"))
+    async def on_predict_bulk(callback: types.CallbackQuery, state: FSMContext):
+        data = callback.data or ""
+        try:
+            round_number = int(data.split(":", 1)[1])
+        except Exception:
+            await callback.answer("Не удалось выбрать тур", show_alert=True)
+            return
+
+        tournament, _default_round = await _get_user_tournament_context(callback.from_user.id)
+        if not _round_in_tournament(round_number, tournament):
+            await callback.answer("Этот тур недоступен", show_alert=True)
+            return
+
+        await _send_bulk_predict_prompt(
+            target=callback.message,
+            state=state,
+            tg_user_id=callback.from_user.id,
+            tournament=tournament,
+            round_number=round_number,
+        )
+        await callback.answer()
+
     @dp.message(PredictRoundStates.waiting_for_single_match_score)
     async def on_single_match_score(message: types.Message, state: FSMContext):
         data = await state.get_data()
@@ -2277,53 +2438,41 @@ def register_user_handlers(dp: Dispatcher):
         saved = 0
         skipped = 0
         errors = 0
+        accepted_lines: list[str] = []
 
         async with SessionLocal() as session:
             await upsert_user_from_message(session, message)
             tournament = await get_selected_tournament_for_user(session, message.from_user.id)
+            matches_q = await session.execute(
+                select(Match)
+                .where(
+                    Match.round_number == round_number,
+                    Match.tournament_id == tournament.id,
+                    Match.kickoff_time > now,
+                )
+                .order_by(Match.kickoff_time.asc())
+            )
+            open_matches = matches_q.scalars().all()
+            if not open_matches:
+                await state.clear()
+                await message.answer("В этом туре не осталось открытых матчей для прогноза.")
+                return
 
             for line in lines:
-                parts = line.replace("-", ":").split()
-                if len(parts) != 2:
+                match, pred_home, pred_away = parse_bulk_prediction_line(line, open_matches=open_matches)
+                if match is None or pred_home is None or pred_away is None:
                     errors += 1
-                    continue
-                try:
-                    match_id = int(parts[0])
-                except ValueError:
-                    errors += 1
-                    continue
-
-                parsed = parse_score(parts[1])
-                if parsed is None:
-                    errors += 1
-                    continue
-                pred_home, pred_away = parsed
-
-                match_q = await session.execute(
-                    select(Match).where(
-                        Match.id == match_id,
-                        Match.round_number == round_number,
-                        Match.tournament_id == tournament.id,
-                    )
-                )
-                match = match_q.scalar_one_or_none()
-                if match is None:
-                    skipped += 1
-                    continue
-
-                if match.kickoff_time <= now:
-                    skipped += 1
                     continue
 
                 pred_q = await session.execute(
-                    select(Prediction).where(Prediction.tg_user_id == tg_user_id, Prediction.match_id == match_id)
+                    select(Prediction).where(Prediction.tg_user_id == tg_user_id, Prediction.match_id == match.id)
                 )
                 pred = pred_q.scalar_one_or_none()
                 if pred is None:
                     session.add(
                         Prediction(
                             tg_user_id=tg_user_id,
-                            match_id=match_id,
+                            match_id=match.id,
                             pred_home=pred_home,
                             pred_away=pred_away,
                         )
@@ -2333,15 +2482,30 @@ def register_user_handlers(dp: Dispatcher):
                     pred.pred_away = pred_away
 
                 saved += 1
+                accepted_lines.append(
+                    f"• {display_team_name(match.home_team)} {pred_home}-{pred_away} {display_team_name(match.away_team)}"
+                )
 
             await session.commit()
 
         await state.clear()
+        result_lines = [f"✅ Прогнозы приняты: {saved} | Пропущено: {skipped} | Ошибок: {errors}"]
+        if accepted_lines:
+            result_lines.append("")
+            result_lines.append("Принятые прогнозы:")
+            result_lines.extend(accepted_lines[:12])
+            if len(accepted_lines) > 12:
+                result_lines.append(f"... и ещё {len(accepted_lines) - 12}")
+        await send_long(message, "\n".join(result_lines))
         await message.answer(
-            f"✅ Готово! Сохранено: {saved} | Пропущено: {skipped} | Ошибок: {errors}\n"
-            "Проверить всё можно через «🗂 Мои прогнозы»."
+            "Быстрые действия:",
+            reply_markup=types.InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [types.InlineKeyboardButton(text="✏️ Изменить прогноз", callback_data=f"predict_edit:{round_number}")],
+                    [types.InlineKeyboardButton(text="📚 Выбрать другой тур", callback_data=f"predict_rounds:{round_number}")],
+                ]
+            ),
         )
-        await message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_predict"))
 
     @dp.message(Command("my"))
     async def cmd_my(message: types.Message):
