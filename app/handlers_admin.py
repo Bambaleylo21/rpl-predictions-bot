@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from datetime import datetime, timedelta
 from aiogram import Dispatcher, F, types
@@ -22,6 +23,12 @@ try:
     ROUND_DIGEST_CHAT_ID = int(ROUND_DIGEST_CHAT_ID_RAW) if ROUND_DIGEST_CHAT_ID_RAW else None
 except ValueError:
     ROUND_DIGEST_CHAT_ID = None
+
+EXACT_HIT_PUSH_DELAY_RAW = os.getenv("EXACT_HIT_PUSH_DELAY_SEC", "0.12").strip()
+try:
+    EXACT_HIT_PUSH_DELAY_SEC = max(0.0, float(EXACT_HIT_PUSH_DELAY_RAW))
+except ValueError:
+    EXACT_HIT_PUSH_DELAY_SEC = 0.12
 
 
 class AdminSetResultStates(StatesGroup):
@@ -497,6 +504,146 @@ async def _maybe_send_round_closed_summary(bot, tournament_id: int, round_number
         await _set_setting(session, key, "1")
 
 
+def _rank_places_from_stats(stats_map: dict[int, tuple[int, int, int, int]]) -> dict[int, int]:
+    rows = [
+        (uid, vals[0], vals[1], vals[2], vals[3])
+        for uid, vals in stats_map.items()
+    ]
+    rows.sort(key=lambda x: (-x[1], -x[2], -x[3], -x[4], x[0]))
+    return {uid: idx for idx, (uid, *_rest) in enumerate(rows, start=1)}
+
+
+async def _build_tournament_stats_map(session, tournament_id: int) -> dict[int, tuple[int, int, int, int]]:
+    lb_q = await session.execute(
+        select(
+            Prediction.tg_user_id,
+            func.coalesce(func.sum(Point.points), 0).label("total"),
+            func.coalesce(func.sum(case((Point.category == "exact", 1), else_=0)), 0).label("exact"),
+            func.coalesce(func.sum(case((Point.category == "diff", 1), else_=0)), 0).label("diff"),
+            func.coalesce(func.sum(case((Point.category == "outcome", 1), else_=0)), 0).label("outcome"),
+        )
+        .select_from(Prediction)
+        .join(Match, Match.id == Prediction.match_id)
+        .outerjoin(
+            Point,
+            (Point.tg_user_id == Prediction.tg_user_id) & (Point.match_id == Prediction.match_id),
+        )
+        .where(Match.tournament_id == tournament_id)
+        .group_by(Prediction.tg_user_id)
+    )
+    out: dict[int, tuple[int, int, int, int]] = {}
+    for uid, total, exact, diff, outcome in lb_q.all():
+        out[int(uid)] = (int(total or 0), int(exact or 0), int(diff or 0), int(outcome or 0))
+    return out
+
+
+async def _maybe_send_exact_hit_pushes(bot, match_id: int) -> int:
+    send_payloads: list[tuple[int, str, types.InlineKeyboardMarkup]] = []
+
+    async with SessionLocal() as session:
+        match_q = await session.execute(select(Match).where(Match.id == match_id))
+        match = match_q.scalar_one_or_none()
+        if match is None:
+            return 0
+        if match.home_score is None or match.away_score is None:
+            return 0
+
+        exact_q = await session.execute(
+            select(Point.tg_user_id)
+            .where(Point.match_id == match_id, Point.category == "exact")
+            .order_by(Point.tg_user_id.asc())
+        )
+        exact_user_ids = [int(r[0]) for r in exact_q.all()]
+        if not exact_user_ids:
+            return 0
+
+        keys_by_uid = {uid: f"EXACT_PUSH_SENT_M{int(match_id)}_U{uid}" for uid in exact_user_ids}
+        sent_q = await session.execute(
+            select(Setting.key).where(Setting.key.in_(list(keys_by_uid.values())))
+        )
+        already_sent = {str(r[0]) for r in sent_q.all()}
+        target_user_ids = [uid for uid in exact_user_ids if keys_by_uid[uid] not in already_sent]
+        if not target_user_ids:
+            return 0
+
+        after_stats = await _build_tournament_stats_map(session, match.tournament_id)
+        before_stats = dict(after_stats)
+
+        contrib_q = await session.execute(
+            select(Point.tg_user_id, Point.points, Point.category).where(Point.match_id == match_id)
+        )
+        for uid_raw, pts_raw, cat_raw in contrib_q.all():
+            uid = int(uid_raw)
+            pts = int(pts_raw or 0)
+            cat = str(cat_raw or "")
+            total, exact, diff, outcome = before_stats.get(uid, (0, 0, 0, 0))
+            total = max(total - pts, 0)
+            if cat == "exact":
+                exact = max(exact - 1, 0)
+            elif cat == "diff":
+                diff = max(diff - 1, 0)
+            elif cat == "outcome":
+                outcome = max(outcome - 1, 0)
+            before_stats[uid] = (total, exact, diff, outcome)
+
+        before_places = _rank_places_from_stats(before_stats)
+        after_places = _rank_places_from_stats(after_stats)
+
+        preds_q = await session.execute(
+            select(Prediction.tg_user_id, Prediction.pred_home, Prediction.pred_away).where(
+                Prediction.match_id == match_id,
+                Prediction.tg_user_id.in_(target_user_ids),
+            )
+        )
+        pred_map = {int(uid): (int(ph), int(pa)) for uid, ph, pa in preds_q.all()}
+
+        for uid in target_user_ids:
+            before_place = before_places.get(uid)
+            after_place = after_places.get(uid)
+            if before_place is not None and after_place is not None and before_place != after_place:
+                icon = "⬆️" if after_place < before_place else "⬇️"
+                pos_line = f"{icon} Подъём в таблице: {before_place} → {after_place} место"
+                if after_place > before_place:
+                    pos_line = f"{icon} Позиция в таблице: {before_place} → {after_place} место"
+            elif after_place is not None:
+                pos_line = f"Позиция в таблице: {after_place} место"
+            else:
+                pos_line = "Позиция в таблице: —"
+
+            pred_pair = pred_map.get(uid, (match.home_score, match.away_score))
+            score_line = f"{pred_pair[0]}-{pred_pair[1]}"
+            text = (
+                "🎯 Ты угадал точный счёт!\n"
+                f"{display_team_name(match.home_team)} {score_line} {display_team_name(match.away_team)}\n"
+                "+4 очка\n"
+                f"{pos_line}"
+            )
+            kb = types.InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [types.InlineKeyboardButton(text="🏆 Общая таблица", callback_data="qnav:table")],
+                    [types.InlineKeyboardButton(text="🗂 Мои прогнозы", callback_data=f"qnav_my_round:{match.round_number}")],
+                ]
+            )
+            send_payloads.append((uid, text, kb))
+
+            # Антидубль: помечаем отправку заранее.
+            session.add(Setting(key=keys_by_uid[uid], value="1"))
+
+        await session.commit()
+
+    sent = 0
+    for uid, text, kb in send_payloads:
+        try:
+            await bot.send_message(chat_id=uid, text=text, reply_markup=kb)
+            sent += 1
+        except Exception:
+            # Тихий фейл: пользователь мог заблокировать бота или недоступен.
+            pass
+        if EXACT_HIT_PUSH_DELAY_SEC > 0:
+            await asyncio.sleep(EXACT_HIT_PUSH_DELAY_SEC)
+    return sent
+
+
 def register_admin_handlers(dp: Dispatcher) -> None:
     dp.message.register(admin_panel, Command("admin_panel"))
     dp.message.register(admin_status, Command("admin_status"))
@@ -624,10 +771,13 @@ async def admin_set_result(message: types.Message):
 
         updates = await recalc_points_for_match_in_session(session, match_id)
 
+    sent_exact_pushes = await _maybe_send_exact_hit_pushes(message.bot, match.id)
     await message.answer(
         f"✅ Результат сохранён: {display_team_name(match.home_team)} — {display_team_name(match.away_team)} | {home_score}:{away_score}. "
         f"Пересчитано очков: {updates}"
     )
+    if sent_exact_pushes > 0:
+        await message.answer(f"📬 Пуш «точный счёт» отправлен: {sent_exact_pushes}")
     live_text, round_closed = await _build_admin_match_result_live_update(match.id)
     if live_text:
         await message.answer(live_text)
@@ -835,10 +985,13 @@ async def admin_set_result_score_input(message: types.Message, state: FSMContext
         updates = await recalc_points_for_match_in_session(session, match_id)
 
     await state.clear()
+    sent_exact_pushes = await _maybe_send_exact_hit_pushes(message.bot, match.id)
     await message.answer(
         f"✅ Результат сохранён: {display_team_name(match.home_team)} — {display_team_name(match.away_team)} | {home_score}:{away_score}. "
         f"Пересчитано очков: {updates}"
     )
+    if sent_exact_pushes > 0:
+        await message.answer(f"📬 Пуш «точный счёт» отправлен: {sent_exact_pushes}")
     live_text, round_closed = await _build_admin_match_result_live_update(match.id)
     if live_text:
         await message.answer(live_text)
