@@ -363,18 +363,12 @@ async def _maybe_send_round_closed_summary(bot, tournament_id: int, round_number
         diff_max = max((int(r[3] or 0) for r in leaderboard_rows), default=0)
         outcome_max = max((int(r[4] or 0) for r in leaderboard_rows), default=0)
 
-        exact_names = ", ".join(
-            [str(r[0]) for r in leaderboard_rows if int(r[2] or 0) == exact_max and exact_max > 0]
-        )
-        diff_names = ", ".join(
-            [str(r[0]) for r in leaderboard_rows if int(r[3] or 0) == diff_max and diff_max > 0]
-        )
-        outcome_names = ", ".join(
-            [str(r[0]) for r in leaderboard_rows if int(r[4] or 0) == outcome_max and outcome_max > 0]
-        )
+        exact_ids = [int(r[0]) for r in leaderboard_rows if int(r[2] or 0) == exact_max and exact_max > 0]
+        diff_ids = [int(r[0]) for r in leaderboard_rows if int(r[3] or 0) == diff_max and diff_max > 0]
+        outcome_ids = [int(r[0]) for r in leaderboard_rows if int(r[4] or 0) == outcome_max and outcome_max > 0]
 
-        users_q = await session.execute(select(User.tg_user_id, User.username, User.full_name))
-        users_map = {int(tg): (un, fn) for tg, un, fn in users_q.all()}
+        users_q = await session.execute(select(User.tg_user_id, User.display_name, User.full_name))
+        users_map = {int(tg): (dn, fn) for tg, dn, fn in users_q.all()}
         ut_q = await session.execute(
             select(UserTournament.tg_user_id, UserTournament.display_name).where(
                 UserTournament.tournament_id == tournament_id
@@ -386,16 +380,16 @@ async def _maybe_send_round_closed_summary(bot, tournament_id: int, round_number
             dn = tournament_names.get(int(tg_user_id))
             if dn:
                 return dn
-            un, fn = users_map.get(int(tg_user_id), (None, None))
-            if un:
-                return f"@{un}"
+            user_dn, fn = users_map.get(int(tg_user_id), (None, None))
+            if user_dn:
+                return user_dn
             if fn:
                 return fn
             return str(tg_user_id)
 
-        exact_pretty = ", ".join(pretty_name(int(x)) for x in exact_names.split(", ") if x) if exact_names else "—"
-        diff_pretty = ", ".join(pretty_name(int(x)) for x in diff_names.split(", ") if x) if diff_names else "—"
-        outcome_pretty = ", ".join(pretty_name(int(x)) for x in outcome_names.split(", ") if x) if outcome_names else "—"
+        exact_pretty = ", ".join(pretty_name(x) for x in exact_ids) if exact_ids else "—"
+        diff_pretty = ", ".join(pretty_name(x) for x in diff_ids) if diff_ids else "—"
+        outcome_pretty = ", ".join(pretty_name(x) for x in outcome_ids) if outcome_ids else "—"
 
         streak_rows_q = await session.execute(
             select(Point.tg_user_id, Match.kickoff_time, Point.points, Match.id)
@@ -472,6 +466,57 @@ async def _maybe_send_round_closed_summary(bot, tournament_id: int, round_number
                 continue
 
         if ROUND_DIGEST_CHAT_ID is not None:
+            round_pred_stats_q = await session.execute(
+                select(
+                    func.count(Prediction.id).label("total_preds"),
+                    func.coalesce(
+                        func.sum(case((Point.points > 0, 1), else_=0)),
+                        0,
+                    ).label("hit_preds"),
+                )
+                .select_from(Prediction)
+                .join(Match, Match.id == Prediction.match_id)
+                .outerjoin(
+                    Point,
+                    (Point.tg_user_id == Prediction.tg_user_id) & (Point.match_id == Prediction.match_id),
+                )
+                .where(
+                    Match.tournament_id == tournament_id,
+                    Match.round_number == round_number,
+                    Match.source == "manual",
+                )
+            )
+            round_total_preds, round_hit_preds = round_pred_stats_q.one()
+            round_total_preds = int(round_total_preds or 0)
+            round_hit_preds = int(round_hit_preds or 0)
+            round_acc = (round_hit_preds / round_total_preds * 100.0) if round_total_preds > 0 else 0.0
+
+            season_pred_stats_q = await session.execute(
+                select(
+                    func.count(Prediction.id).label("total_preds"),
+                    func.coalesce(
+                        func.sum(case((Point.points > 0, 1), else_=0)),
+                        0,
+                    ).label("hit_preds"),
+                )
+                .select_from(Prediction)
+                .join(Match, Match.id == Prediction.match_id)
+                .outerjoin(
+                    Point,
+                    (Point.tg_user_id == Prediction.tg_user_id) & (Point.match_id == Prediction.match_id),
+                )
+                .where(
+                    Match.tournament_id == tournament_id,
+                    Match.source == "manual",
+                    Match.home_score.isnot(None),
+                    Match.away_score.isnot(None),
+                )
+            )
+            season_total_preds, season_hit_preds = season_pred_stats_q.one()
+            season_total_preds = int(season_total_preds or 0)
+            season_hit_preds = int(season_hit_preds or 0)
+            season_acc = (season_hit_preds / season_total_preds * 100.0) if season_total_preds > 0 else 0.0
+
             top3_lines: list[str] = []
             for i, (tg_user_id, total_pts, _exact, _diff, _outcome) in enumerate(leaderboard_rows[:3], start=1):
                 top3_lines.append(f"{i}. {pretty_name(int(tg_user_id))} — {int(total_pts or 0)}")
@@ -485,17 +530,20 @@ async def _maybe_send_round_closed_summary(bot, tournament_id: int, round_number
                 mvp_text = "—"
 
             public_lines = [f"🏁 Итоги тура {round_number} ({tournament_name})", ""]
-            public_lines.append(f"🏅 MVP: {mvp_text} — {best_pts} очк.")
-            public_lines.append(f"🎯 Топ точных: {exact_pretty}")
-            public_lines.append(f"📏 Топ разницы: {diff_pretty}")
-            public_lines.append(f"✅ Топ исходов: {outcome_pretty}")
+            public_lines.append(f"🏅 MVP: {best_pts} — {mvp_text}")
+            public_lines.append(f"🎯 Топ точных: {exact_max} — {exact_pretty}")
+            public_lines.append(f"📏 Топ разницы: {diff_max} — {diff_pretty}")
+            public_lines.append(f"✅ Топ исходов: {outcome_max} — {outcome_pretty}")
             if top3_lines:
                 public_lines.append("")
                 public_lines.append("Топ-3 тура:")
                 public_lines.extend(top3_lines)
             public_lines.append("")
             public_lines.append(f"Участников в туре: {participants}")
-            public_lines.append("Следующий тур открыт. Время ставить прогнозы: «🎯 Поставить прогноз».")
+            public_lines.append(
+                f"Прогнозов с очками: {round_hit_preds}/{round_total_preds} ({round_acc:.0f}%)"
+            )
+            public_lines.append(f"Точность тура vs сезон: {round_acc:.0f}% vs {season_acc:.0f}%")
             try:
                 await bot.send_message(chat_id=ROUND_DIGEST_CHAT_ID, text="\n".join(public_lines))
             except Exception:
