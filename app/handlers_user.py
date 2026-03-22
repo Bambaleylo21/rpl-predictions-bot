@@ -1610,20 +1610,6 @@ def register_user_handlers(dp: Dispatcher):
         round_number: int,
     ) -> None:
         text = await build_my_round_text(tg_user_id=tg_user_id, round_number=round_number, tournament_id=tournament.id)
-        if await round_has_matches(round_number, tournament_id=tournament.id):
-            total = await get_round_total_points_for_user(
-                tg_user_id=tg_user_id, round_number=round_number, tournament_id=tournament.id
-            )
-            predicted_open, total_open, missed_closed = await get_round_prediction_progress_for_user(
-                tg_user_id=tg_user_id,
-                round_number=round_number,
-                tournament_id=tournament.id,
-            )
-            text = (
-                f"{text}\n\n"
-                f"Итого за тур сейчас: {total} очк.\n"
-                f"{_my_round_followup_line(predicted_open, total_open, missed_closed)}"
-            )
         await send_long(target, text)
         await target.answer("Быстрые действия:", reply_markup=build_quick_nav_keyboard("after_my"))
 
