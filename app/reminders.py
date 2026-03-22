@@ -5,8 +5,10 @@ import logging
 from collections import defaultdict
 from datetime import datetime, timedelta
 
+from aiogram import types
 from sqlalchemy import select
 
+from app.display import display_team_name
 from app.models import Match, Prediction, Setting, UserTournament
 
 logger = logging.getLogger(__name__)
@@ -45,6 +47,17 @@ def _build_reminder_text(kickoff: datetime, matches: list[Match]) -> str:
     lines.append("")
     lines.append("Ставка: нажми «🎯 Поставить прогноз»")
     return "\n".join(lines)
+
+
+def _build_reminder_keyboard(matches: list[Match]) -> types.InlineKeyboardMarkup:
+    rows: list[list[types.InlineKeyboardButton]] = []
+    for m in matches:
+        label = (
+            f"{display_team_name(m.home_team)} — {display_team_name(m.away_team)}"
+            f" | {m.kickoff_time.strftime('%d.%m %H:%M')}"
+        )
+        rows.append([types.InlineKeyboardButton(text=label[:64], callback_data=f"pick_match:{m.id}")])
+    return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 async def _process_reminders_once(bot, session_factory) -> int:
@@ -108,8 +121,9 @@ async def _process_reminders_once(bot, session_factory) -> int:
                     continue
 
                 text = _build_reminder_text(kickoff, missing_matches)
+                kb = _build_reminder_keyboard(missing_matches)
                 try:
-                    await bot.send_message(chat_id=tg_user_id, text=text)
+                    await bot.send_message(chat_id=tg_user_id, text=text, reply_markup=kb)
                 except Exception:
                     # Пользователь мог заблокировать бота и т.п.; продолжаем для остальных.
                     logger.exception("[reminder] send failed for user=%s", tg_user_id)
