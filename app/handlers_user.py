@@ -50,6 +50,7 @@ def build_main_menu_keyboard(
     return types.ReplyKeyboardMarkup(
         keyboard=rows,
         resize_keyboard=True,
+        is_persistent=True,
         input_field_placeholder="Выберите действие из меню ниже",
     )
 
