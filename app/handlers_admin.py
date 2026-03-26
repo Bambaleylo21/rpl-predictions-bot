@@ -16,6 +16,12 @@ from app.display import display_team_name, display_tournament_name
 from app.models import Match, Prediction, Point, User, Setting, Tournament, UserTournament
 from app.scoring import calculate_points
 from app.tournament import ROUND_DEFAULT, ROUND_MAX, ROUND_MIN, is_tournament_round
+from app.audience import (
+    extract_left_user_id,
+    is_blocked_send_error,
+    mark_user_blocked,
+    LEFT_KEY_PATTERN,
+)
 
 ADMIN_IDS = load_admin_ids()
 ROUND_DIGEST_CHAT_ID_RAW = os.getenv("ROUND_DIGEST_CHAT_ID", "").strip()
@@ -462,7 +468,9 @@ async def _maybe_send_round_closed_summary(bot, tournament_id: int, round_number
 
             try:
                 await bot.send_message(chat_id=tg_user_id, text=text)
-            except Exception:
+            except Exception as e:
+                if is_blocked_send_error(e):
+                    await mark_user_blocked(session, int(tg_user_id))
                 continue
 
         if ROUND_DIGEST_CHAT_ID is not None:
@@ -684,9 +692,12 @@ async def _maybe_send_exact_hit_pushes(bot, match_id: int) -> int:
         try:
             await bot.send_message(chat_id=uid, text=text, reply_markup=kb)
             sent += 1
-        except Exception:
+        except Exception as e:
             # Тихий фейл: пользователь мог заблокировать бота или недоступен.
-            pass
+            if is_blocked_send_error(e):
+                async with SessionLocal() as session:
+                    await mark_user_blocked(session, int(uid))
+                    await session.commit()
         if EXACT_HIT_PUSH_DELAY_SEC > 0:
             await asyncio.sleep(EXACT_HIT_PUSH_DELAY_SEC)
     return sent
@@ -715,6 +726,7 @@ def register_admin_handlers(dp: Dispatcher) -> None:
     # Новое: управление окном турнира и удаление участников
     dp.message.register(admin_set_window, Command("admin_set_window"))
     dp.message.register(admin_remove_user, Command("admin_remove_user"))
+    dp.message.register(admin_audience, Command("admin_audience"))
 
 
 async def admin_add_match(message: types.Message):
@@ -1188,6 +1200,53 @@ async def admin_remove_user(message: types.Message):
         await session.commit()
 
     await message.answer(f"✅ Пользователь {tg_user_id} удалён (users + user_tournaments + predictions + points).")
+
+
+async def admin_audience(message: types.Message):
+    """/admin_audience — сводка аудитории бота"""
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("⛔️ У вас нет прав на эту команду.")
+        return
+
+    async with SessionLocal() as session:
+        total_users_q = await session.execute(select(func.count(User.id)))
+        total_users = int(total_users_q.scalar_one() or 0)
+
+        active_users_q = await session.execute(select(func.count(func.distinct(UserTournament.tg_user_id))))
+        active_users = int(active_users_q.scalar_one() or 0)
+
+        blocked_q = await session.execute(
+            select(Setting.key).where(Setting.key.like("BOT_BLOCKED_U%"))
+        )
+        blocked_user_ids: set[int] = set()
+        for key_raw, in blocked_q.all():
+            key = str(key_raw or "")
+            suffix = key.replace("BOT_BLOCKED_U", "", 1).strip()
+            if suffix.isdigit():
+                blocked_user_ids.add(int(suffix))
+        blocked_users = len(blocked_user_ids)
+
+        left_q = await session.execute(select(Setting.key).where(Setting.key.like(LEFT_KEY_PATTERN), Setting.value == "1"))
+        left_user_ids: set[int] = set()
+        for key_raw, in left_q.all():
+            uid = extract_left_user_id(str(key_raw or ""))
+            if uid is not None:
+                left_user_ids.add(uid)
+        left_users = len(left_user_ids)
+
+        sleeping_users = max(total_users - active_users - blocked_users, 0)
+
+    lines = [
+        "👥 Аудитория бота",
+        f"Всего запустили бота: {total_users}",
+        f"Активные в турнирах сейчас: {active_users}",
+        f"Спящие: {sleeping_users}",
+        f"Остановили/заблокировали (зафиксировано): {blocked_users}",
+        f"Покинули турнир: {left_users}",
+        "",
+        "Примечание: blocked считается по фактам неуспешной отправки пушей.",
+    ]
+    await message.answer("\n".join(lines))
 
 
 async def _build_admin_status_text() -> str:

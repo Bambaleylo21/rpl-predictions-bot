@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from aiogram import types
 from sqlalchemy import select
 
+from app.audience import is_blocked_send_error, mark_user_blocked
 from app.display import display_team_name
 from app.models import Match, Prediction, Setting, UserTournament
 
@@ -124,9 +125,11 @@ async def _process_reminders_once(bot, session_factory) -> int:
                 kb = _build_reminder_keyboard(missing_matches)
                 try:
                     await bot.send_message(chat_id=tg_user_id, text=text, reply_markup=kb)
-                except Exception:
+                except Exception as e:
                     # Пользователь мог заблокировать бота и т.п.; продолжаем для остальных.
                     logger.exception("[reminder] send failed for user=%s", tg_user_id)
+                    if is_blocked_send_error(e):
+                        await mark_user_blocked(session, int(tg_user_id))
 
             await _mark_setting(session, key, "1")
             await session.commit()

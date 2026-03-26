@@ -14,6 +14,7 @@ from app.display import display_team_name, display_tournament_name
 from app.models import Match, Point, Prediction, Tournament, User, UserTournament, Setting
 from app.stats import build_stats_text
 from app.my_predictions import build_my_round_text
+from app.audience import unmark_user_blocked
 
 ADMIN_IDS = load_admin_ids()
 
@@ -554,6 +555,8 @@ async def upsert_user_from_message(session, message: types.Message):
         user.username = username
         user.full_name = full_name
 
+    # Если пользователь снова пишет боту, значит он не в blocked-состоянии.
+    await unmark_user_blocked(session, tg_user_id)
     await session.commit()
 
 

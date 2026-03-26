@@ -13,6 +13,7 @@ def get_admin_bot_commands() -> list[types.BotCommand]:
         types.BotCommand(command="admin_recalc", description="Админ: пересчитать очки"),
         types.BotCommand(command="admin_manual_only_cleanup", description="Админ: чистка ручного режима"),
         types.BotCommand(command="admin_health", description="Админ: здоровье БД"),
+        types.BotCommand(command="admin_audience", description="Админ: аудитория бота"),
         types.BotCommand(command="admin_set_window", description="Админ: окно туров"),
         types.BotCommand(command="admin_remove_user", description="Админ: удалить участника"),
     ]
