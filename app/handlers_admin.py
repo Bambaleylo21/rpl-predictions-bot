@@ -1272,7 +1272,6 @@ async def admin_audience(message: types.Message):
         return
 
     now = _now_msk_naive()
-    sleep_rounds = 2
 
     async with SessionLocal() as session:
         rpl_q = await session.execute(select(Tournament).where(Tournament.code == "RPL"))
@@ -1342,46 +1341,13 @@ async def admin_audience(message: types.Message):
             .order_by(Match.round_number.asc())
         )
         round_rows = rounds_q.all()
-        current_round = int(rpl.round_min)
+        last_finished_round: int | None = None
         for r, ends_at in round_rows:
-            if now <= ends_at:
-                current_round = int(r)
-                break
-        else:
-            if round_rows:
-                current_round = int(round_rows[-1][0])
+            if ends_at is not None and ends_at <= now:
+                last_finished_round = int(r)
 
-        recent_round_min = max(int(rpl.round_min), int(current_round) - (sleep_rounds - 1))
-        recent_round_max = int(current_round)
-
-        active_now_q = await session.execute(
+        season_preds_q = await session.execute(
             select(func.distinct(Prediction.tg_user_id))
-            .select_from(Prediction)
-            .join(Match, Match.id == Prediction.match_id)
-            .where(
-                Match.tournament_id == rpl.id,
-                Match.round_number == current_round,
-            )
-        )
-        active_now_ids = {int(x[0]) for x in active_now_q.all()} & rpl_member_ids
-        active_now = len(active_now_ids)
-
-        recent_preds_q = await session.execute(
-            select(func.distinct(Prediction.tg_user_id))
-            .select_from(Prediction)
-            .join(Match, Match.id == Prediction.match_id)
-            .where(
-                Match.tournament_id == rpl.id,
-                Match.round_number >= recent_round_min,
-                Match.round_number <= recent_round_max,
-            )
-        )
-        recent_pred_ids = {int(x[0]) for x in recent_preds_q.all()}
-        sleeping_ids = rpl_member_ids - recent_pred_ids
-        sleeping = len(sleeping_ids)
-
-        season_pred_users_q = await session.execute(
-            select(func.count(func.distinct(Prediction.tg_user_id)))
             .select_from(Prediction)
             .join(Match, Match.id == Prediction.match_id)
             .where(
@@ -1391,7 +1357,26 @@ async def admin_audience(message: types.Message):
                 Match.round_number <= rpl.round_max,
             )
         )
-        with_preds_season = int(season_pred_users_q.scalar_one() or 0)
+        season_pred_ids = {int(x[0]) for x in season_preds_q.all()}
+        no_preds_ids = rpl_member_ids - season_pred_ids
+
+        active_last_round_ids: set[int] = set()
+        if last_finished_round is not None:
+            active_q = await session.execute(
+                select(func.distinct(Prediction.tg_user_id))
+                .select_from(Prediction)
+                .join(Match, Match.id == Prediction.match_id)
+                .where(
+                    Match.tournament_id == rpl.id,
+                    Match.round_number == last_finished_round,
+                )
+            )
+            active_last_round_ids = {int(x[0]) for x in active_q.all()} & rpl_member_ids
+
+        sleeping_ids = (rpl_member_ids - active_last_round_ids) - no_preds_ids
+        sleeping = len(sleeping_ids)
+        with_preds_season = len(season_pred_ids & rpl_member_ids)
+        active_now = len(active_last_round_ids)
 
     lines = [
         "👥 Аудитория бота",
@@ -1399,8 +1384,8 @@ async def admin_audience(message: types.Message):
         f"В турнире сейчас: {in_tournament_now}",
         f"Никогда не вступали: {never_joined}",
         f"Вне турнира (были раньше): {outside_were_before}",
-        f"Активные (тур {current_round}): {active_now}",
-        f"Спящие (нет прогнозов {sleep_rounds} последних тура): {sleeping}",
+        f"Активные (последний прошедший тур {last_finished_round if last_finished_round is not None else '—'}): {active_now}",
+        f"Спящие (не активны в последнем прошедшем туре): {sleeping}",
         f"С прогнозами в сезоне: {with_preds_season}",
         f"Заблокировали бота (зафиксировано): {blocked_users}",
         f"Покинули турнир: {left_users}",
@@ -1417,7 +1402,6 @@ async def admin_audience_list(message: types.Message):
         return
 
     now = _now_msk_naive()
-    sleep_rounds = 2
 
     async with SessionLocal() as session:
         rpl_q = await session.execute(select(Tournament).where(Tournament.code == "RPL"))
@@ -1466,40 +1450,10 @@ async def admin_audience_list(message: types.Message):
             .order_by(Match.round_number.asc())
         )
         round_rows = rounds_q.all()
-        current_round = int(rpl.round_min)
+        last_finished_round: int | None = None
         for r, ends_at in round_rows:
-            if now <= ends_at:
-                current_round = int(r)
-                break
-        else:
-            if round_rows:
-                current_round = int(round_rows[-1][0])
-
-        active_now_q = await session.execute(
-            select(func.distinct(Prediction.tg_user_id))
-            .select_from(Prediction)
-            .join(Match, Match.id == Prediction.match_id)
-            .where(
-                Match.tournament_id == rpl.id,
-                Match.round_number == current_round,
-            )
-        )
-        active_now_ids = {int(x[0]) for x in active_now_q.all()} & rpl_member_ids
-
-        recent_round_min = max(int(rpl.round_min), int(current_round) - (sleep_rounds - 1))
-        recent_round_max = int(current_round)
-        recent_preds_q = await session.execute(
-            select(func.distinct(Prediction.tg_user_id))
-            .select_from(Prediction)
-            .join(Match, Match.id == Prediction.match_id)
-            .where(
-                Match.tournament_id == rpl.id,
-                Match.round_number >= recent_round_min,
-                Match.round_number <= recent_round_max,
-            )
-        )
-        recent_pred_ids = {int(x[0]) for x in recent_preds_q.all()}
-        sleeping_ids = rpl_member_ids - recent_pred_ids
+            if ends_at is not None and ends_at <= now:
+                last_finished_round = int(r)
 
         season_preds_q = await session.execute(
             select(func.distinct(Prediction.tg_user_id))
@@ -1515,6 +1469,21 @@ async def admin_audience_list(message: types.Message):
         season_pred_ids = {int(x[0]) for x in season_preds_q.all()}
         no_preds_ids = rpl_member_ids - season_pred_ids
 
+        active_last_round_ids: set[int] = set()
+        if last_finished_round is not None:
+            active_q = await session.execute(
+                select(func.distinct(Prediction.tg_user_id))
+                .select_from(Prediction)
+                .join(Match, Match.id == Prediction.match_id)
+                .where(
+                    Match.tournament_id == rpl.id,
+                    Match.round_number == last_finished_round,
+                )
+            )
+            active_last_round_ids = {int(x[0]) for x in active_q.all()} & rpl_member_ids
+
+        sleeping_ids = (rpl_member_ids - active_last_round_ids) - no_preds_ids
+
     def section(title: str, ids: set[int], limit: int = 50) -> list[str]:
         lines = [f"{title}: {len(ids)}"]
         if not ids:
@@ -1529,12 +1498,12 @@ async def admin_audience_list(message: types.Message):
 
     out: list[str] = [
         f"👥 Аудитория RPL — списки",
-        f"Текущий тур: {current_round}",
+        f"Последний прошедший тур: {last_finished_round if last_finished_round is not None else '—'}",
         "",
     ]
-    out.extend(section("🟢 Активные (текущий тур)", active_now_ids))
+    out.extend(section("🟢 Активные (последний прошедший тур)", active_last_round_ids))
     out.append("")
-    out.extend(section(f"😴 Спящие (нет прогнозов {sleep_rounds} последних тура)", sleeping_ids))
+    out.extend(section("😴 Спящие (не активны в последнем прошедшем туре)", sleeping_ids))
     out.append("")
     out.extend(section("🕳 В турнире без прогнозов в сезоне", no_preds_ids))
     await message.answer("\n".join(out))
