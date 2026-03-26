@@ -11,7 +11,7 @@ import re
 from app.config import load_admin_ids
 from app.db import SessionLocal
 from app.display import display_team_name, display_tournament_name
-from app.models import Match, Point, Prediction, Tournament, User, UserTournament
+from app.models import Match, Point, Prediction, Tournament, User, UserTournament, Setting
 from app.stats import build_stats_text
 from app.my_predictions import build_my_round_text
 
@@ -29,10 +29,14 @@ DEFAULT_RPL_ROUND_MIN = 19
 DEFAULT_RPL_ROUND_MAX = 30
 
 
-def build_main_menu_keyboard(default_round: int, is_joined: bool) -> types.ReplyKeyboardMarkup:
+def build_main_menu_keyboard(
+    default_round: int,
+    is_joined: bool,
+    join_cta_text: str = "✅ Вступить в турнир",
+) -> types.ReplyKeyboardMarkup:
     rows: list[list[types.KeyboardButton]] = []
     if not is_joined:
-        rows.append([types.KeyboardButton(text="✅ Вступить в турнир")])
+        rows.append([types.KeyboardButton(text=join_cta_text)])
     rows.extend(
         [
             [types.KeyboardButton(text="🎯 Поставить прогноз")],
@@ -41,6 +45,8 @@ def build_main_menu_keyboard(default_round: int, is_joined: bool) -> types.Reply
             [types.KeyboardButton(text="📘 Правила")],
         ]
     )
+    if is_joined:
+        rows.append([types.KeyboardButton(text="🚪 Покинуть турнир")])
     return types.ReplyKeyboardMarkup(
         keyboard=rows,
         resize_keyboard=True,
@@ -87,6 +93,43 @@ async def is_user_in_tournament(session, tg_user_id: int, tournament_id: int) ->
         )
     )
     return q.scalar_one_or_none() is not None
+
+
+def _left_tournament_key(tournament_id: int, tg_user_id: int) -> str:
+    return f"LEFT_T{int(tournament_id)}_U{int(tg_user_id)}"
+
+
+def _left_tournament_name_key(tournament_id: int, tg_user_id: int) -> str:
+    return f"LEFT_NAME_T{int(tournament_id)}_U{int(tg_user_id)}"
+
+
+async def _get_setting(session, key: str) -> str | None:
+    q = await session.execute(select(Setting).where(Setting.key == key))
+    row = q.scalar_one_or_none()
+    return row.value if row is not None else None
+
+
+async def _set_setting(session, key: str, value: str) -> None:
+    q = await session.execute(select(Setting).where(Setting.key == key))
+    row = q.scalar_one_or_none()
+    if row is None:
+        session.add(Setting(key=key, value=value))
+    else:
+        row.value = value
+
+
+async def _delete_setting(session, key: str) -> None:
+    q = await session.execute(select(Setting).where(Setting.key == key))
+    row = q.scalar_one_or_none()
+    if row is not None:
+        await session.delete(row)
+
+
+async def _get_join_cta_text(session, tg_user_id: int, tournament_id: int) -> str:
+    left_flag = await _get_setting(session, _left_tournament_key(tournament_id, tg_user_id))
+    if (left_flag or "").strip() == "1":
+        return "🔄 Вернуться в турнир"
+    return "✅ Вступить в турнир"
 
 
 async def get_selected_tournament_for_user(session, tg_user_id: int) -> Tournament:
@@ -1765,6 +1808,119 @@ def register_user_handlers(dp: Dispatcher):
             tournament = await get_selected_tournament_for_user(session, message.from_user.id)
         await _request_display_name_for_join(message, state, tournament)
 
+    @dp.message(F.text == "🔄 Вернуться в турнир")
+    async def btn_rejoin(message: types.Message, state: FSMContext):
+        async with SessionLocal() as session:
+            await upsert_user_from_message(session, message)
+            tournament = await get_selected_tournament_for_user(session, message.from_user.id)
+            if await is_user_in_tournament(session, message.from_user.id, tournament.id):
+                await message.answer("Ты уже участвуешь в турнире.")
+                return
+
+            saved_name = await _get_setting(session, _left_tournament_name_key(tournament.id, message.from_user.id))
+            if saved_name:
+                await ensure_user_membership(
+                    session,
+                    message.from_user.id,
+                    tournament.id,
+                    display_name=saved_name,
+                )
+                await _delete_setting(session, _left_tournament_key(tournament.id, message.from_user.id))
+                await session.commit()
+                tournament, default_round = await _get_user_tournament_context(message.from_user.id)
+                await message.answer(
+                    f"✅ Возвращение в турнир подтверждено.\nИмя в таблице: {saved_name}"
+                )
+                await message.answer(
+                    f"Готово. Текущий тур: {default_round}",
+                    reply_markup=build_main_menu_keyboard(default_round=default_round, is_joined=True),
+                )
+                return
+
+        async with SessionLocal() as session:
+            tournament = await get_selected_tournament_for_user(session, message.from_user.id)
+        await message.answer("Не нашёл прошлое имя в турнире. Давай быстро заново укажем имя.")
+        await _request_display_name_for_join(message, state, tournament)
+
+    @dp.message(F.text == "🚪 Покинуть турнир")
+    async def btn_leave(message: types.Message):
+        async with SessionLocal() as session:
+            tournament = await get_selected_tournament_for_user(session, message.from_user.id)
+            if not await is_user_in_tournament(session, message.from_user.id, tournament.id):
+                join_cta_text = await _get_join_cta_text(session, message.from_user.id, tournament.id)
+                _tournament, default_round = await _get_user_tournament_context(message.from_user.id)
+                await message.answer(
+                    "Ты сейчас не участвуешь в турнире.",
+                    reply_markup=build_main_menu_keyboard(
+                        default_round=default_round,
+                        is_joined=False,
+                        join_cta_text=join_cta_text,
+                    ),
+                )
+                return
+
+        kb = types.InlineKeyboardMarkup(
+            inline_keyboard=[
+                [types.InlineKeyboardButton(text="✅ Да, покинуть", callback_data="leave_tournament:yes")],
+                [types.InlineKeyboardButton(text="↩️ Отмена", callback_data="leave_tournament:no")],
+            ]
+        )
+        await message.answer("Подтвердить выход из турнира?", reply_markup=kb)
+
+    @dp.callback_query(F.data.startswith("leave_tournament:"))
+    async def on_leave_tournament(callback: types.CallbackQuery):
+        action = (callback.data or "").split(":", 1)[1] if ":" in (callback.data or "") else "no"
+        if action != "yes":
+            await callback.message.answer("Ок, участие в турнире оставили без изменений.")
+            await callback.answer()
+            return
+
+        async with SessionLocal() as session:
+            tournament = await get_selected_tournament_for_user(session, callback.from_user.id)
+            ut_q = await session.execute(
+                select(UserTournament).where(
+                    UserTournament.tg_user_id == callback.from_user.id,
+                    UserTournament.tournament_id == tournament.id,
+                )
+            )
+            ut = ut_q.scalar_one_or_none()
+            if ut is None:
+                join_cta_text = await _get_join_cta_text(session, callback.from_user.id, tournament.id)
+                _tournament, default_round = await _get_user_tournament_context(callback.from_user.id)
+                await callback.message.answer(
+                    "Ты уже не участвуешь в турнире.",
+                    reply_markup=build_main_menu_keyboard(
+                        default_round=default_round,
+                        is_joined=False,
+                        join_cta_text=join_cta_text,
+                    ),
+                )
+                await callback.answer()
+                return
+
+            if (ut.display_name or "").strip():
+                await _set_setting(
+                    session,
+                    _left_tournament_name_key(tournament.id, callback.from_user.id),
+                    ut.display_name.strip(),
+                )
+            await _set_setting(session, _left_tournament_key(tournament.id, callback.from_user.id), "1")
+            await session.delete(ut)
+            await session.commit()
+
+            join_cta_text = await _get_join_cta_text(session, callback.from_user.id, tournament.id)
+            _tournament, default_round = await _get_user_tournament_context(callback.from_user.id)
+
+        await callback.message.answer(
+            "✅ Ты вышел из турнира.\nМожно вернуться в любой момент кнопкой «🔄 Вернуться в турнир».",
+            reply_markup=build_main_menu_keyboard(
+                default_round=default_round,
+                is_joined=False,
+                join_cta_text=join_cta_text,
+            ),
+        )
+        await callback.answer()
+
     @dp.message(F.text == "📅 Матчи тура")
     async def btn_round(message: types.Message):
         await _send_default_round_text(message, message.from_user.id)
@@ -2209,6 +2365,12 @@ def register_user_handlers(dp: Dispatcher):
                 tournament.id,
                 display_name=display_name,
             )
+            await _set_setting(
+                session,
+                _left_tournament_name_key(tournament.id, message.from_user.id),
+                display_name,
+            )
+            await _delete_setting(session, _left_tournament_key(tournament.id, message.from_user.id))
             new_join = not exists_before
             await session.commit()
 
@@ -2237,6 +2399,7 @@ def register_user_handlers(dp: Dispatcher):
         tournament, default_round = await _get_user_tournament_context(message.from_user.id)
         async with SessionLocal() as session:
             is_joined = await is_user_in_tournament(session, message.from_user.id, tournament.id)
+            join_cta_text = await _get_join_cta_text(session, message.from_user.id, tournament.id)
         await message.answer(
             "🏆 Добро пожаловать в бот прогнозов РПЛ.\n\n"
             "Как начать (3 шага):\n"
@@ -2254,7 +2417,11 @@ def register_user_handlers(dp: Dispatcher):
             "🕒 Время матчей и дедлайны — по Москве (МСК).\n"
             "⛔️ После начала матча прогноз ставить/менять нельзя.\n"
             "✅ Можно вводить счет как 2:0 или 2-0.",
-            reply_markup=build_main_menu_keyboard(default_round=default_round, is_joined=is_joined),
+            reply_markup=build_main_menu_keyboard(
+                default_round=default_round,
+                is_joined=is_joined,
+                join_cta_text=join_cta_text,
+            ),
         )
 
     @dp.message(Command("help"))
