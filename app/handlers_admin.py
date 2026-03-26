@@ -1095,26 +1095,88 @@ async def admin_manual_only_cleanup(message: types.Message):
     async with SessionLocal() as session:
         rpl_q = await session.execute(select(Tournament).where(Tournament.code == "RPL"))
         rpl = rpl_q.scalar_one_or_none()
-        if rpl is not None:
-            rpl.round_min = 19
-            rpl.round_max = 30
+        if rpl is None:
+            await message.answer("❌ Турнир RPL не найден. Операция остановлена.")
+            return
 
-        await session.execute(delete(Tournament).where(Tournament.code != "RPL"))
+        rpl.round_min = 19
+        rpl.round_max = 30
+
+        non_rpl_ids_q = await session.execute(select(Tournament.id).where(Tournament.id != rpl.id))
+        non_rpl_ids = [int(x[0]) for x in non_rpl_ids_q.all()]
+
         bad_ids_subq = select(Match.id).where(
-            (Match.source != "manual") | Match.api_fixture_id.isnot(None) | (Match.tournament_id != (rpl.id if rpl else -1))
+            (Match.source != "manual")
+            | Match.api_fixture_id.isnot(None)
+            | (Match.tournament_id != rpl.id)
         )
-        await session.execute(delete(Point).where(Point.match_id.in_(bad_ids_subq)))
-        await session.execute(delete(Prediction).where(Prediction.match_id.in_(bad_ids_subq)))
+        del_points = await session.execute(delete(Point).where(Point.match_id.in_(bad_ids_subq)))
+        del_preds = await session.execute(delete(Prediction).where(Prediction.match_id.in_(bad_ids_subq)))
         del_matches = await session.execute(delete(Match).where(Match.id.in_(bad_ids_subq)))
+
+        del_ut_non_rpl = 0
+        del_tournaments = 0
+        if non_rpl_ids:
+            del_ut_res = await session.execute(delete(UserTournament).where(UserTournament.tournament_id.in_(non_rpl_ids)))
+            del_ut_non_rpl = int(del_ut_res.rowcount or 0)
+
+            del_t_res = await session.execute(delete(Tournament).where(Tournament.id.in_(non_rpl_ids)))
+            del_tournaments = int(del_t_res.rowcount or 0)
+
+        rpl_member_ids_subq = select(UserTournament.tg_user_id).where(UserTournament.tournament_id == rpl.id)
+
+        # Удаляем пользователей, не состоящих в RPL (включая следы их данных).
+        del_user_points = await session.execute(delete(Point).where(Point.tg_user_id.not_in(rpl_member_ids_subq)))
+        del_user_preds = await session.execute(delete(Prediction).where(Prediction.tg_user_id.not_in(rpl_member_ids_subq)))
+        del_users = await session.execute(delete(User).where(User.tg_user_id.not_in(rpl_member_ids_subq)))
+
+        # Чистим настройки выхода из не-RPL турниров.
+        left_keys_q = await session.execute(select(Setting).where(Setting.key.like("LEFT_T%_U%")))
+        removed_left_keys = 0
+        for row in left_keys_q.scalars().all():
+            key = str(row.key or "")
+            if key.startswith(f"LEFT_T{rpl.id}_"):
+                continue
+            await session.delete(row)
+            removed_left_keys += 1
+
         await session.commit()
 
-        left_matches = int((await session.execute(select(func.count(Match.id)))).scalar_one() or 0)
+        left_matches = int(
+            (
+                await session.execute(
+                    select(func.count(Match.id)).where(
+                        Match.tournament_id == rpl.id,
+                    )
+                )
+            ).scalar_one()
+            or 0
+        )
+        left_members = int(
+            (
+                await session.execute(
+                    select(func.count(func.distinct(UserTournament.tg_user_id))).where(
+                        UserTournament.tournament_id == rpl.id
+                    )
+                )
+            ).scalar_one()
+            or 0
+        )
 
     await message.answer(
         "✅ Manual-only cleanup завершён.\n"
-        f"Удалено матчей: {int(del_matches.rowcount or 0)}\n"
-        f"Осталось матчей: {left_matches}\n"
-        "Теперь бот работает только в ручном режиме RPL."
+        f"Удалено матчей (не-RPL/API): {int(del_matches.rowcount or 0)}\n"
+        f"Удалено прогнозов по матчам: {int(del_preds.rowcount or 0)}\n"
+        f"Удалено очков по матчам: {int(del_points.rowcount or 0)}\n"
+        f"Удалено участий в не-RPL: {del_ut_non_rpl}\n"
+        f"Удалено турниров не-RPL: {del_tournaments}\n"
+        f"Удалено прогнозов пользователей вне RPL: {int(del_user_preds.rowcount or 0)}\n"
+        f"Удалено очков пользователей вне RPL: {int(del_user_points.rowcount or 0)}\n"
+        f"Удалено пользователей вне RPL: {int(del_users.rowcount or 0)}\n"
+        f"Удалено LEFT-настроек не-RPL: {removed_left_keys}\n"
+        f"Осталось матчей в RPL: {left_matches}\n"
+        f"Осталось участников в RPL: {left_members}\n"
+        "Теперь бот полностью очищен от других турниров."
     )
 
 
@@ -1208,12 +1270,33 @@ async def admin_audience(message: types.Message):
         await message.answer("⛔️ У вас нет прав на эту команду.")
         return
 
+    now = _now_msk_naive()
+    sleep_rounds = 2
+
     async with SessionLocal() as session:
+        rpl_q = await session.execute(select(Tournament).where(Tournament.code == "RPL"))
+        rpl = rpl_q.scalar_one_or_none()
+        if rpl is None:
+            await message.answer("Турнир RPL не найден.")
+            return
+
         total_users_q = await session.execute(select(func.count(User.id)))
         total_users = int(total_users_q.scalar_one() or 0)
 
-        active_users_q = await session.execute(select(func.count(func.distinct(UserTournament.tg_user_id))))
-        active_users = int(active_users_q.scalar_one() or 0)
+        all_user_ids_q = await session.execute(select(User.tg_user_id))
+        all_user_ids = {int(x[0]) for x in all_user_ids_q.all()}
+
+        any_members_q = await session.execute(select(func.distinct(UserTournament.tg_user_id)))
+        any_member_ids = {int(x[0]) for x in any_members_q.all()}
+
+        rpl_members_q = await session.execute(
+            select(func.distinct(UserTournament.tg_user_id)).where(UserTournament.tournament_id == rpl.id)
+        )
+        rpl_member_ids = {int(x[0]) for x in rpl_members_q.all()}
+        in_tournament_now = len(rpl_member_ids)
+
+        never_joined_ids = all_user_ids - any_member_ids
+        never_joined = len(never_joined_ids)
 
         blocked_q = await session.execute(
             select(Setting.key).where(Setting.key.like("BOT_BLOCKED_U%"))
@@ -1224,27 +1307,104 @@ async def admin_audience(message: types.Message):
             suffix = key.replace("BOT_BLOCKED_U", "", 1).strip()
             if suffix.isdigit():
                 blocked_user_ids.add(int(suffix))
-        blocked_users = len(blocked_user_ids)
+        blocked_users = len(blocked_user_ids & all_user_ids)
 
-        left_q = await session.execute(select(Setting.key).where(Setting.key.like(LEFT_KEY_PATTERN), Setting.value == "1"))
+        left_q = await session.execute(
+            select(Setting.key).where(
+                Setting.key.like(f"LEFT_T{int(rpl.id)}_U%"),
+                Setting.value == "1",
+            )
+        )
         left_user_ids: set[int] = set()
         for key_raw, in left_q.all():
             uid = extract_left_user_id(str(key_raw or ""))
             if uid is not None:
                 left_user_ids.add(uid)
+        left_user_ids = left_user_ids & all_user_ids
         left_users = len(left_user_ids)
 
-        sleeping_users = max(total_users - active_users - blocked_users, 0)
+        outside_were_before_ids = left_user_ids - rpl_member_ids
+        outside_were_before = len(outside_were_before_ids)
+
+        rounds_q = await session.execute(
+            select(
+                Match.round_number,
+                func.max(Match.kickoff_time).label("ends_at"),
+            )
+            .where(
+                Match.tournament_id == rpl.id,
+                Match.source == "manual",
+                Match.round_number >= rpl.round_min,
+                Match.round_number <= rpl.round_max,
+            )
+            .group_by(Match.round_number)
+            .order_by(Match.round_number.asc())
+        )
+        round_rows = rounds_q.all()
+        current_round = int(rpl.round_min)
+        for r, ends_at in round_rows:
+            if now <= ends_at:
+                current_round = int(r)
+                break
+        else:
+            if round_rows:
+                current_round = int(round_rows[-1][0])
+
+        recent_round_min = max(int(rpl.round_min), int(current_round) - (sleep_rounds - 1))
+        recent_round_max = int(current_round)
+
+        active_now_q = await session.execute(
+            select(func.distinct(Prediction.tg_user_id))
+            .select_from(Prediction)
+            .join(Match, Match.id == Prediction.match_id)
+            .where(
+                Match.tournament_id == rpl.id,
+                Match.round_number == current_round,
+            )
+        )
+        active_now_ids = {int(x[0]) for x in active_now_q.all()} & rpl_member_ids
+        active_now = len(active_now_ids)
+
+        recent_preds_q = await session.execute(
+            select(func.distinct(Prediction.tg_user_id))
+            .select_from(Prediction)
+            .join(Match, Match.id == Prediction.match_id)
+            .where(
+                Match.tournament_id == rpl.id,
+                Match.round_number >= recent_round_min,
+                Match.round_number <= recent_round_max,
+            )
+        )
+        recent_pred_ids = {int(x[0]) for x in recent_preds_q.all()}
+        sleeping_ids = rpl_member_ids - recent_pred_ids
+        sleeping = len(sleeping_ids)
+
+        season_pred_users_q = await session.execute(
+            select(func.count(func.distinct(Prediction.tg_user_id)))
+            .select_from(Prediction)
+            .join(Match, Match.id == Prediction.match_id)
+            .where(
+                Match.tournament_id == rpl.id,
+                Match.source == "manual",
+                Match.round_number >= rpl.round_min,
+                Match.round_number <= rpl.round_max,
+            )
+        )
+        with_preds_season = int(season_pred_users_q.scalar_one() or 0)
 
     lines = [
         "👥 Аудитория бота",
-        f"Всего запустили бота: {total_users}",
-        f"Активные в турнирах сейчас: {active_users}",
-        f"Спящие: {sleeping_users}",
-        f"Остановили/заблокировали (зафиксировано): {blocked_users}",
+        f"Всего пользователей: {total_users}",
+        f"В турнире сейчас: {in_tournament_now}",
+        f"Никогда не вступали: {never_joined}",
+        f"Вне турнира (были раньше): {outside_were_before}",
+        f"Активные (тур {current_round}): {active_now}",
+        f"Спящие (нет прогнозов {sleep_rounds} последних тура): {sleeping}",
+        f"С прогнозами в сезоне: {with_preds_season}",
+        f"Заблокировали бота (зафиксировано): {blocked_users}",
         f"Покинули турнир: {left_users}",
         "",
-        "Примечание: blocked считается по фактам неуспешной отправки пушей.",
+        "Примечание: «Заблокировали» считаем по недоставленным push-сообщениям.",
     ]
     await message.answer("\n".join(lines))
 
