@@ -727,6 +727,7 @@ def register_admin_handlers(dp: Dispatcher) -> None:
     dp.message.register(admin_set_window, Command("admin_set_window"))
     dp.message.register(admin_remove_user, Command("admin_remove_user"))
     dp.message.register(admin_audience, Command("admin_audience"))
+    dp.message.register(admin_audience_list, Command("admin_audience_list"))
 
 
 async def admin_add_match(message: types.Message):
@@ -1407,6 +1408,136 @@ async def admin_audience(message: types.Message):
         "Примечание: «Заблокировали» считаем по недоставленным push-сообщениям.",
     ]
     await message.answer("\n".join(lines))
+
+
+async def admin_audience_list(message: types.Message):
+    """/admin_audience_list — именные списки аудитории по RPL"""
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("⛔️ У вас нет прав на эту команду.")
+        return
+
+    now = _now_msk_naive()
+    sleep_rounds = 2
+
+    async with SessionLocal() as session:
+        rpl_q = await session.execute(select(Tournament).where(Tournament.code == "RPL"))
+        rpl = rpl_q.scalar_one_or_none()
+        if rpl is None:
+            await message.answer("Турнир RPL не найден.")
+            return
+
+        members_q = await session.execute(
+            select(UserTournament.tg_user_id, UserTournament.display_name).where(UserTournament.tournament_id == rpl.id)
+        )
+        member_rows = members_q.all()
+        rpl_member_ids = {int(uid) for uid, _dn in member_rows}
+        dn_map = {int(uid): (dn or "").strip() for uid, dn in member_rows}
+
+        users_q = await session.execute(
+            select(User.tg_user_id, User.display_name, User.username, User.full_name).where(User.tg_user_id.in_(rpl_member_ids))
+        )
+        user_map = {int(uid): (udn, un, fn) for uid, udn, un, fn in users_q.all()}
+
+        def name_of(uid: int) -> str:
+            dn = dn_map.get(uid) or ""
+            if dn:
+                return dn
+            udn, un, fn = user_map.get(uid, (None, None, None))
+            if udn:
+                return udn
+            if un:
+                return f"@{un}"
+            if fn:
+                return fn
+            return str(uid)
+
+        rounds_q = await session.execute(
+            select(
+                Match.round_number,
+                func.max(Match.kickoff_time).label("ends_at"),
+            )
+            .where(
+                Match.tournament_id == rpl.id,
+                Match.source == "manual",
+                Match.round_number >= rpl.round_min,
+                Match.round_number <= rpl.round_max,
+            )
+            .group_by(Match.round_number)
+            .order_by(Match.round_number.asc())
+        )
+        round_rows = rounds_q.all()
+        current_round = int(rpl.round_min)
+        for r, ends_at in round_rows:
+            if now <= ends_at:
+                current_round = int(r)
+                break
+        else:
+            if round_rows:
+                current_round = int(round_rows[-1][0])
+
+        active_now_q = await session.execute(
+            select(func.distinct(Prediction.tg_user_id))
+            .select_from(Prediction)
+            .join(Match, Match.id == Prediction.match_id)
+            .where(
+                Match.tournament_id == rpl.id,
+                Match.round_number == current_round,
+            )
+        )
+        active_now_ids = {int(x[0]) for x in active_now_q.all()} & rpl_member_ids
+
+        recent_round_min = max(int(rpl.round_min), int(current_round) - (sleep_rounds - 1))
+        recent_round_max = int(current_round)
+        recent_preds_q = await session.execute(
+            select(func.distinct(Prediction.tg_user_id))
+            .select_from(Prediction)
+            .join(Match, Match.id == Prediction.match_id)
+            .where(
+                Match.tournament_id == rpl.id,
+                Match.round_number >= recent_round_min,
+                Match.round_number <= recent_round_max,
+            )
+        )
+        recent_pred_ids = {int(x[0]) for x in recent_preds_q.all()}
+        sleeping_ids = rpl_member_ids - recent_pred_ids
+
+        season_preds_q = await session.execute(
+            select(func.distinct(Prediction.tg_user_id))
+            .select_from(Prediction)
+            .join(Match, Match.id == Prediction.match_id)
+            .where(
+                Match.tournament_id == rpl.id,
+                Match.source == "manual",
+                Match.round_number >= rpl.round_min,
+                Match.round_number <= rpl.round_max,
+            )
+        )
+        season_pred_ids = {int(x[0]) for x in season_preds_q.all()}
+        no_preds_ids = rpl_member_ids - season_pred_ids
+
+    def section(title: str, ids: set[int], limit: int = 50) -> list[str]:
+        lines = [f"{title}: {len(ids)}"]
+        if not ids:
+            lines.append("—")
+            return lines
+        names = sorted((name_of(uid) for uid in ids), key=lambda x: x.lower())
+        for i, name in enumerate(names[:limit], start=1):
+            lines.append(f"{i}. {name}")
+        if len(names) > limit:
+            lines.append(f"... и ещё {len(names) - limit}")
+        return lines
+
+    out: list[str] = [
+        f"👥 Аудитория RPL — списки",
+        f"Текущий тур: {current_round}",
+        "",
+    ]
+    out.extend(section("🟢 Активные (текущий тур)", active_now_ids))
+    out.append("")
+    out.extend(section(f"😴 Спящие (нет прогнозов {sleep_rounds} последних тура)", sleeping_ids))
+    out.append("")
+    out.extend(section("🕳 В турнире без прогнозов в сезоне", no_preds_ids))
+    await message.answer("\n".join(out))
 
 
 async def _build_admin_status_text() -> str:
