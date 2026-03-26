@@ -318,7 +318,8 @@ def build_quick_nav_keyboard(kind: str) -> types.InlineKeyboardMarkup:
             [
                 types.InlineKeyboardButton(text="🎯 Поставить прогноз", callback_data="qnav:predict"),
                 types.InlineKeyboardButton(text="🗂 Мои прогнозы", callback_data="qnav:my"),
-            ]
+            ],
+            [types.InlineKeyboardButton(text="📅 Таблица по турам", callback_data="qnav:table_pick")],
         ]
         return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -1725,6 +1726,12 @@ def register_user_handlers(dp: Dispatcher):
                 )
                 await send_long(callback.message, "\n".join(lines))
                 await callback.message.answer("Быстрые действия:", reply_markup=build_quick_nav_keyboard("after_table"))
+        elif action == "table_pick":
+            tournament, _default_round = await _get_user_tournament_context(callback.from_user.id)
+            await callback.message.answer(
+                f"Выбери тур для таблицы ({display_tournament_name(tournament.name)}):",
+                reply_markup=build_round_picker_inline("qnav_table_round", tournament.round_min, tournament.round_max),
+            )
         elif action == "mvp_pick":
             tournament, _default_round = await _get_user_tournament_context(callback.from_user.id)
             await callback.message.answer(
@@ -1762,6 +1769,39 @@ def register_user_handlers(dp: Dispatcher):
             tournament=tournament,
             round_number=round_number,
         )
+        await callback.answer()
+
+    @dp.callback_query(F.data.startswith("qnav_table_round:"))
+    async def on_qnav_table_round(callback: types.CallbackQuery):
+        try:
+            round_number = int((callback.data or "").split(":", 1)[1])
+        except Exception:
+            await callback.answer("Не удалось выбрать тур", show_alert=True)
+            return
+
+        tournament, _default_round = await _get_user_tournament_context(callback.from_user.id)
+        if not _round_in_tournament(round_number, tournament):
+            await callback.answer("Этот тур недоступен", show_alert=True)
+            return
+
+        rows, participants = await build_round_leaderboard(round_number, tournament_id=tournament.id)
+        if not rows:
+            await callback.message.answer("На этот тур пока нет прогнозов. Можно стать первым 😉")
+            await callback.answer()
+            return
+
+        played, total = await get_round_matches_played_stats(round_number=round_number, tournament_id=tournament.id)
+        lines = _build_round_table_lines(
+            tournament_name=tournament.name,
+            round_number=round_number,
+            rows=rows,
+            participants=participants,
+            played=played,
+            total=total,
+            limit=20,
+        )
+        await send_long(callback.message, "\n".join(lines))
+        await callback.message.answer("Быстрые действия:", reply_markup=build_quick_nav_keyboard("after_table"))
         await callback.answer()
 
     @dp.callback_query(F.data.startswith("qnav_mvp_round:"))
