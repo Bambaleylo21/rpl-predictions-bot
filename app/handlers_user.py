@@ -2953,7 +2953,7 @@ def register_user_handlers(dp: Dispatcher):
         await send_long(message, text)
         await message.answer("Что дальше?", reply_markup=build_stats_followup_keyboard())
 
-    @dp.message(F.text)
+    @dp.message(F.text & ~F.text.startswith("/"))
     async def fallback_menu_text(message: types.Message):
         """
         Страховочный роутер: не даём боту молчать на кнопках/старых подписях.
