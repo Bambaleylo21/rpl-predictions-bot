@@ -927,7 +927,7 @@ async def admin_season_status(message: types.Message):
         f"Вступили в РПЛ: {joined_total}",
         f"Не распределены по лигам: {unassigned_total}",
     ]
-    await message.answer("\\n".join(lines))
+    await message.answer("\n".join(lines))
 
 
 def register_admin_handlers(dp: Dispatcher) -> None:
