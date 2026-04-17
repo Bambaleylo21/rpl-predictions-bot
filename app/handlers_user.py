@@ -2067,11 +2067,11 @@ async def _ensure_enrollment_open_for_join(target: types.Message) -> bool:
     async def btn_round(message: types.Message):
         await _send_default_round_text(message, message.from_user.id)
 
-    @dp.message(F.text == "🗂 Мои прогнозы")
+    @dp.message(F.text.regexp(r"(?i).*(мои|мой)\s+прогноз.*"))
     async def btn_my(message: types.Message):
         await _send_default_my_text(message, message.from_user.id)
 
-    @dp.message(F.text == "🏆 Общая таблица")
+    @dp.message(F.text.regexp(r"(?i).*общая\s+таблиц.*"))
     async def btn_table(message: types.Message):
         rows, meta = await build_active_stage_league_table(message.from_user.id)
         if meta is None:
@@ -2102,7 +2102,7 @@ async def _ensure_enrollment_open_for_join(target: types.Message) -> bool:
         await send_long(message, "\n".join(lines))
         await message.answer("Быстрые действия:", reply_markup=build_quick_nav_keyboard("after_table"))
 
-    @dp.message(F.text == "📊 Статистика")
+    @dp.message(F.text.regexp(r"(?i).*статистик.*"))
     async def btn_stats(message: types.Message):
         tournament, _default_round = await _get_user_tournament_context(message.from_user.id)
         scope = await get_user_stage_scope(message.from_user.id)
@@ -2121,7 +2121,7 @@ async def _ensure_enrollment_open_for_join(target: types.Message) -> bool:
             )
         await message.answer("Что дальше?", reply_markup=build_stats_followup_keyboard())
 
-    @dp.message(F.text == "👤 Мой профиль")
+    @dp.message(F.text.regexp(r"(?i).*мой\s+профил.*"))
     async def btn_profile(message: types.Message):
         async with SessionLocal() as session:
             await upsert_user_from_message(session, message)
@@ -2306,7 +2306,7 @@ async def _ensure_enrollment_open_for_join(target: types.Message) -> bool:
         )
         await message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_info"))
 
-    @dp.message(F.text == "🎯 Поставить прогноз")
+    @dp.message(F.text.regexp(r"(?i).*(поставить|сделать)\s+прогноз.*"))
     async def quick_predict_hint(message: types.Message):
         await _send_quick_predict_picker(message, message.from_user.id)
 
