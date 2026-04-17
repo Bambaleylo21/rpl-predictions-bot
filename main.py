@@ -4,8 +4,9 @@ import logging
 
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
+from sqlalchemy import text
 
-from app.db import SessionLocal, init_db
+from app.db import SessionLocal, engine, init_db
 from app.handlers import register_handlers
 
 try:
@@ -60,6 +61,30 @@ async def main():
     bot = Bot(token=bot_token.strip())
     dp = Dispatcher(storage=MemoryStorage())
 
+    lock_conn = None
+    try:
+        # Защита от двойного polling на Render:
+        # если второй инстанс стартует одновременно, он не пойдёт в getUpdates.
+        if str(engine.url).startswith("postgresql+asyncpg://"):
+            lock_conn = await engine.connect()
+            lock_key = 8093666505  # стабильный ключ под этого бота
+            lock_q = await lock_conn.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": lock_key})
+            got_lock = bool(lock_q.scalar())
+            if not got_lock:
+                logging.error("Another bot instance already holds polling lock. Exiting this instance.")
+                await bot.session.close()
+                await lock_conn.close()
+                return
+    except Exception as e:
+        logging.error("Failed to acquire singleton polling lock: %r", e)
+        if lock_conn is not None:
+            try:
+                await lock_conn.close()
+            except Exception:
+                pass
+        await bot.session.close()
+        return
+
     # 3) Подключаем твои хендлеры (твоя логика)
     register_handlers(dp)
 
@@ -71,7 +96,17 @@ async def main():
         asyncio.create_task(run_match_reminders_loop(bot, SessionLocal))
 
     # 6) Polling (жёсткий ручной режим: без фоновой синхронизации API)
-    await dp.start_polling(bot)
+    try:
+        # На всякий случай сбрасываем webhook-режим перед long polling.
+        await bot.delete_webhook(drop_pending_updates=False)
+        await dp.start_polling(bot)
+    finally:
+        if lock_conn is not None:
+            try:
+                await lock_conn.close()
+            except Exception:
+                pass
+        await bot.session.close()
 
 
 if __name__ == "__main__":
