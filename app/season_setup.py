@@ -23,6 +23,12 @@ class FoundationSummary:
     low_league_id: int
 
 
+@dataclass
+class EnrolledUser:
+    tg_user_id: int
+    display_name: str
+
+
 async def _get_or_create_setting(session: AsyncSession, key: str, default_value: str) -> Setting:
     q = await session.execute(select(Setting).where(Setting.key == key))
     row = q.scalar_one_or_none()
@@ -208,6 +214,67 @@ async def assign_user_to_active_stage_league(
         row.is_active = 1
 
     return display_name, league.name
+
+
+async def list_unassigned_enrolled_users(session: AsyncSession) -> list[EnrolledUser]:
+    season = await get_active_season(session)
+    if season is None:
+        return []
+
+    stage = await get_active_stage(session, season.id)
+    if stage is None:
+        return []
+
+    rpl_q = await session.execute(select(Tournament).where(Tournament.code == "RPL"))
+    rpl = rpl_q.scalar_one_or_none()
+    if rpl is None:
+        return []
+
+    members_q = await session.execute(
+        select(UserTournament.tg_user_id, UserTournament.display_name)
+        .where(UserTournament.tournament_id == rpl.id)
+        .order_by(UserTournament.tg_user_id.asc())
+    )
+    members = members_q.all()
+    if not members:
+        return []
+
+    assigned_q = await session.execute(
+        select(LeagueParticipant.tg_user_id).where(
+            LeagueParticipant.stage_id == stage.id,
+            LeagueParticipant.is_active == 1,
+        )
+    )
+    assigned_ids = {int(x[0]) for x in assigned_q.all()}
+
+    users_q = await session.execute(
+        select(User.tg_user_id, User.display_name, User.full_name, User.username).where(
+            User.tg_user_id.in_([int(m[0]) for m in members])
+        )
+    )
+    user_map = {
+        int(tg_id): (u_dn, full_name, username)
+        for tg_id, u_dn, full_name, username in users_q.all()
+    }
+
+    out: list[EnrolledUser] = []
+    for tg_user_id_raw, ut_display_name in members:
+        tg_user_id = int(tg_user_id_raw)
+        if tg_user_id in assigned_ids:
+            continue
+        display_name = (ut_display_name or "").strip()
+        if not display_name:
+            u_dn, full_name, username = user_map.get(tg_user_id, (None, None, None))
+            display_name = (
+                (u_dn or "").strip()
+                or (full_name or "").strip()
+                or (f"@{username}" if username else "")
+                or str(tg_user_id)
+            )
+        out.append(EnrolledUser(tg_user_id=tg_user_id, display_name=display_name))
+
+    out.sort(key=lambda x: x.display_name.lower())
+    return out
 
 
 # Import placed at end to avoid circular import in type checking/runtime ordering.

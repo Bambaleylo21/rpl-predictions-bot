@@ -33,6 +33,7 @@ from app.season_setup import (
     get_active_season,
     get_active_stage,
     is_enrollment_open,
+    list_unassigned_enrolled_users,
     set_active_season_name,
     set_enrollment_open,
     setup_new_season_foundation,
@@ -57,6 +58,8 @@ try:
     EXACT_HIT_PUSH_DELAY_SEC = max(0.0, float(EXACT_HIT_PUSH_DELAY_RAW))
 except ValueError:
     EXACT_HIT_PUSH_DELAY_SEC = 0.12
+
+ENROLL_LIST_PAGE_SIZE = 8
 
 
 class AdminSetResultStates(StatesGroup):
@@ -725,6 +728,207 @@ async def _maybe_send_exact_hit_pushes(bot, match_id: int) -> int:
     return sent
 
 
+def _enroll_page_bounds(total: int, page: int) -> tuple[int, int, int]:
+    if total <= 0:
+        return 1, 0, 0
+    total_pages = (total + ENROLL_LIST_PAGE_SIZE - 1) // ENROLL_LIST_PAGE_SIZE
+    page = max(1, min(page, total_pages))
+    start = (page - 1) * ENROLL_LIST_PAGE_SIZE
+    end = min(start + ENROLL_LIST_PAGE_SIZE, total)
+    return page, start, end
+
+
+def _admin_enroll_keyboard(rows: list, page: int, total_pages: int) -> types.InlineKeyboardMarkup:
+    kb_rows: list[list[types.InlineKeyboardButton]] = []
+    for item in rows:
+        uid = int(item.tg_user_id)
+        name = str(item.display_name)
+        if len(name) > 22:
+            name = name[:21].rstrip() + "…"
+        kb_rows.append(
+            [
+                types.InlineKeyboardButton(text=f"⬆️ {name}", callback_data=f"admin_enroll_set:{uid}:HIGH:{page}"),
+                types.InlineKeyboardButton(text=f"⬇️ {name}", callback_data=f"admin_enroll_set:{uid}:LOW:{page}"),
+            ]
+        )
+    nav: list[types.InlineKeyboardButton] = []
+    if page > 1:
+        nav.append(types.InlineKeyboardButton(text="◀️", callback_data=f"admin_enroll_page:{page-1}"))
+    nav.append(types.InlineKeyboardButton(text=f"{page}/{total_pages}", callback_data="admin_enroll_page:0"))
+    if page < total_pages:
+        nav.append(types.InlineKeyboardButton(text="▶️", callback_data=f"admin_enroll_page:{page+1}"))
+    kb_rows.append(nav)
+    return types.InlineKeyboardMarkup(inline_keyboard=kb_rows)
+
+
+async def _render_admin_enroll_list(target, page: int = 1) -> None:
+    async with SessionLocal() as session:
+        users = await list_unassigned_enrolled_users(session)
+    total = len(users)
+    if total == 0:
+        await target.answer("✅ Все вступившие уже распределены по лигам.")
+        return
+    page, start, end = _enroll_page_bounds(total, page)
+    page_rows = users[start:end]
+    total_pages = (total + ENROLL_LIST_PAGE_SIZE - 1) // ENROLL_LIST_PAGE_SIZE
+    text_lines = [
+        f"🧩 Нераспределённые участники: {total}",
+        f"Страница: {page}/{total_pages}",
+        "",
+        "Нажми ⬆️ или ⬇️ напротив имени:",
+    ]
+    await target.answer(
+        "\n".join(text_lines),
+        reply_markup=_admin_enroll_keyboard(page_rows, page=page, total_pages=total_pages),
+    )
+
+
+async def admin_enroll_list(message: types.Message):
+    """/admin_enroll_list — список вступивших и нераспределённых по лигам."""
+    if not _is_admin(message):
+        await message.answer("⛔️ У вас нет прав на эту команду.")
+        return
+    await _render_admin_enroll_list(message, page=1)
+
+
+async def admin_enroll_page(callback: types.CallbackQuery):
+    if not _is_admin(callback):
+        await callback.answer("Нет прав", show_alert=True)
+        return
+    data = callback.data or ""
+    try:
+        page = int(data.split(":")[1])
+    except Exception:
+        await callback.answer("Ошибка страницы", show_alert=True)
+        return
+    if page == 0:
+        await callback.answer()
+        return
+    await _render_admin_enroll_list(callback.message, page=page)
+    await callback.answer()
+
+
+async def admin_enroll_assign_from_list(callback: types.CallbackQuery):
+    if not _is_admin(callback):
+        await callback.answer("Нет прав", show_alert=True)
+        return
+    data = callback.data or ""
+    try:
+        _, uid_s, league_code, page_s = data.split(":")
+        tg_user_id = int(uid_s)
+        page = int(page_s)
+    except Exception:
+        await callback.answer("Ошибка назначения", show_alert=True)
+        return
+    league_code = league_code.upper().strip()
+    if league_code not in {"HIGH", "LOW"}:
+        await callback.answer("Неверная лига", show_alert=True)
+        return
+
+    async with SessionLocal() as session:
+        result = await assign_user_to_active_stage_league(session, tg_user_id=tg_user_id, league_code=league_code)
+        await session.commit()
+
+    if result is None:
+        await callback.message.answer("Не удалось назначить участника. Проверь /admin_season_init.")
+        await callback.answer("Ошибка")
+        return
+    display_name, league_name = result
+    await callback.message.answer(f"✅ {display_name} -> {league_name}")
+    await _render_admin_enroll_list(callback.message, page=page)
+    await callback.answer("Назначено")
+
+
+async def admin_league_assign_name(message: types.Message):
+    """
+    /admin_league_assign_name <display_name> <HIGH|LOW>
+    Пример: /admin_league_assign_name Слава HIGH
+    """
+    if not _is_admin(message):
+        await message.answer("⛔️ У вас нет прав на эту команду.")
+        return
+
+    raw = (message.text or "").strip()
+    prefix = "/admin_league_assign_name"
+    payload = raw[len(prefix):].strip() if raw.startswith(prefix) else ""
+    if not payload:
+        await message.answer("Формат: /admin_league_assign_name <имя в боте> <HIGH|LOW>")
+        return
+
+    try:
+        name_part, league_code = payload.rsplit(maxsplit=1)
+    except ValueError:
+        await message.answer("Формат: /admin_league_assign_name <имя в боте> <HIGH|LOW>")
+        return
+    league_code = league_code.upper().strip()
+    if league_code not in {"HIGH", "LOW"}:
+        await message.answer("Лига должна быть HIGH или LOW.")
+        return
+
+    target_name = name_part.strip().strip("\"'").strip()
+    if not target_name:
+        await message.answer("Имя пустое. Пример: /admin_league_assign_name Слава HIGH")
+        return
+
+    async with SessionLocal() as session:
+        season = await get_active_season(session)
+        if season is None:
+            await message.answer("Активный сезон не найден. Сначала /admin_season_init")
+            return
+        stage = await get_active_stage(session, season.id)
+        if stage is None:
+            await message.answer("Активный этап не найден. Сначала /admin_season_init")
+            return
+        rpl_q = await session.execute(select(Tournament).where(Tournament.code == "RPL"))
+        rpl = rpl_q.scalar_one_or_none()
+        if rpl is None:
+            await message.answer("Турнир RPL не найден.")
+            return
+
+        exact_q = await session.execute(
+            select(UserTournament.tg_user_id, UserTournament.display_name)
+            .where(
+                UserTournament.tournament_id == rpl.id,
+                func.lower(UserTournament.display_name) == target_name.lower(),
+            )
+            .order_by(UserTournament.tg_user_id.asc())
+        )
+        exact_rows = [(int(uid), str(name or uid)) for uid, name in exact_q.all()]
+
+        if not exact_rows:
+            like_pattern = f"%{target_name.lower()}%"
+            like_q = await session.execute(
+                select(UserTournament.tg_user_id, UserTournament.display_name)
+                .where(
+                    UserTournament.tournament_id == rpl.id,
+                    func.lower(UserTournament.display_name).like(like_pattern),
+                )
+                .order_by(UserTournament.tg_user_id.asc())
+            )
+            exact_rows = [(int(uid), str(name or uid)) for uid, name in like_q.all()]
+
+        if not exact_rows:
+            await message.answer("Совпадений по имени не найдено.")
+            return
+
+        if len(exact_rows) > 1:
+            opts = "\n".join([f"• {name} (id: {uid})" for uid, name in exact_rows[:20]])
+            await message.answer(
+                "Найдено несколько совпадений. Уточни имя точнее или назначь по id:\n"
+                f"{opts}"
+            )
+            return
+
+        tg_user_id, _name = exact_rows[0]
+        result = await assign_user_to_active_stage_league(session, tg_user_id=tg_user_id, league_code=league_code)
+        await session.commit()
+        if result is None:
+            await message.answer("Не удалось назначить. Проверь /admin_season_init.")
+            return
+        display_name, league_name = result
+        await message.answer(f"✅ {display_name} назначен(а) в «{league_name}».")
+
+
 async def admin_season_init(message: types.Message):
     """
     /admin_season_init [Название сезона]
@@ -959,7 +1163,11 @@ def register_admin_handlers(dp: Dispatcher) -> None:
     dp.message.register(admin_set_season_name, Command("admin_set_season_name"))
     dp.message.register(admin_enroll_open, Command("admin_enroll_open"))
     dp.message.register(admin_enroll_close, Command("admin_enroll_close"))
+    dp.message.register(admin_enroll_list, Command("admin_enroll_list"))
+    dp.callback_query.register(admin_enroll_page, F.data.startswith("admin_enroll_page:"))
+    dp.callback_query.register(admin_enroll_assign_from_list, F.data.startswith("admin_enroll_set:"))
     dp.message.register(admin_league_assign, Command("admin_league_assign"))
+    dp.message.register(admin_league_assign_name, Command("admin_league_assign_name"))
     dp.message.register(admin_season_status, Command("admin_season_status"))
 
 
