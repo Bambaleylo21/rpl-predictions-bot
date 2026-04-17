@@ -1489,26 +1489,25 @@ def register_user_handlers(dp: Dispatcher):
         await state.update_data(round_number=round_number)
         await send_long(target, "\n".join(lines))
 
-async def _request_display_name_for_join(message: types.Message, state: FSMContext, tournament: Tournament) -> None:
+    async def _request_display_name_for_join(message: types.Message, state: FSMContext, tournament: Tournament) -> None:
         await state.set_state(PredictRoundStates.waiting_for_display_name)
         await state.update_data(join_tournament_id=tournament.id, join_tournament_name=tournament.name)
         await message.answer(
             f"Вступление в {tournament.name}.\n"
             "Введи имя для таблицы (2-24 символа).\n"
-        "Пример: Роман"
-    )
+            "Пример: Роман"
+        )
 
-
-async def _ensure_enrollment_open_for_join(target: types.Message) -> bool:
-    async with SessionLocal() as session:
-        opened = await is_enrollment_open(session)
-    if opened:
-        return True
-    await target.answer(
-        "🔒 Набор участников сейчас закрыт.\n"
-        "Дождись открытия набора от администратора."
-    )
-    return False
+    async def _ensure_enrollment_open_for_join(target: types.Message) -> bool:
+        async with SessionLocal() as session:
+            opened = await is_enrollment_open(session)
+        if opened:
+            return True
+        await target.answer(
+            "🔒 Набор участников сейчас закрыт.\n"
+            "Дождись открытия набора от администратора."
+        )
+        return False
 
     async def _send_default_round_text(target: types.Message, tg_user_id: int) -> None:
         tournament, default_round = await _get_user_tournament_context(tg_user_id)
@@ -2979,11 +2978,7 @@ async def _ensure_enrollment_open_for_join(target: types.Message) -> bool:
             await quick_rules(message)
             return
         if "вступ" in txt or "вернут" in txt:
-            if not await _ensure_enrollment_open_for_join(message):
-                return
-            async with SessionLocal() as session:
-                tournament = await get_selected_tournament_for_user(session, message.from_user.id)
-            await _request_display_name_for_join(message, state, tournament)
+            await message.answer("Для вступления нажми кнопку «✅ Вступить в турнир» или команду /join.")
             return
 
         # Последний fallback: подсказываем старт и возвращаем клавиатуру.
