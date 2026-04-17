@@ -64,17 +64,18 @@ async def main():
     lock_conn = None
     try:
         # Защита от двойного polling на Render:
-        # если второй инстанс стартует одновременно, он не пойдёт в getUpdates.
+        # если второй инстанс стартует одновременно, он ждёт освобождения lock,
+        # а не завершает процесс (чтобы Render не слал false-positive "Application exited early").
         if str(engine.url).startswith("postgresql+asyncpg://"):
             lock_conn = await engine.connect()
             lock_key = 8093666505  # стабильный ключ под этого бота
-            lock_q = await lock_conn.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": lock_key})
-            got_lock = bool(lock_q.scalar())
-            if not got_lock:
-                logging.error("Another bot instance already holds polling lock. Exiting this instance.")
-                await bot.session.close()
-                await lock_conn.close()
-                return
+            while True:
+                lock_q = await lock_conn.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": lock_key})
+                got_lock = bool(lock_q.scalar())
+                if got_lock:
+                    break
+                logging.warning("Another bot instance holds polling lock. Waiting 5s before retry...")
+                await asyncio.sleep(5)
     except Exception as e:
         logging.error("Failed to acquire singleton polling lock: %r", e)
         if lock_conn is not None:
