@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 from datetime import datetime, timedelta
 from aiogram import Dispatcher, F, types
 from aiogram.filters import Command
@@ -15,6 +16,7 @@ from app.db import SessionLocal
 from app.display import display_team_name, display_tournament_name
 from app.models import (
     League,
+    LeagueMovement,
     LeagueParticipant,
     Match,
     Prediction,
@@ -26,9 +28,12 @@ from app.models import (
     User,
     UserTournament,
 )
+from app.league_table import build_active_stage_league_table
 from app.scoring import calculate_points
 from app.season_setup import (
     DEFAULT_SEASON_NAME,
+    DEFAULT_STAGE_1_NAME,
+    DEFAULT_STAGE_2_NAME,
     assign_user_to_active_stage_league,
     get_active_season,
     get_active_stage,
@@ -1155,6 +1160,230 @@ async def admin_season_status(message: types.Message):
     await message.answer("\n".join(lines))
 
 
+def _derive_next_season_name(current_name: str) -> str:
+    # "РПЛ 2026/27" -> "РПЛ 2027/28"
+    m = re.search(r"(\d{4})\s*/\s*(\d{2,4})", current_name or "")
+    if not m:
+        return f"{(current_name or 'РПЛ').strip()} (новый сезон)"
+    y1 = int(m.group(1))
+    y2_raw = m.group(2)
+    if len(y2_raw) == 2:
+        century = (y1 // 100) * 100
+        y2 = century + int(y2_raw)
+    else:
+        y2 = int(y2_raw)
+    next_y1 = y1 + 1
+    next_y2 = y2 + 1
+    tail = str(next_y2 % 100).zfill(2)
+    return re.sub(r"(\d{4})\s*/\s*(\d{2,4})", f"{next_y1}/{tail}", current_name, count=1)
+
+
+async def admin_stage_finish(message: types.Message):
+    """
+    /admin_stage_finish
+    Закрывает активный этап, делает 2↑/2↓, открывает следующий этап
+    (или создаёт новый сезон и открывает его этап 1).
+    """
+    if not _is_admin(message):
+        await message.answer("⛔️ У вас нет прав на эту команду.")
+        return
+
+    # Рейтинг по активному этапу и лигам считаем тем же движком, что и таблицу пользователя.
+    high_rows, high_meta = await build_active_stage_league_table(message.from_user.id, requested_league_code="HIGH")
+    low_rows, low_meta = await build_active_stage_league_table(message.from_user.id, requested_league_code="LOW")
+
+    async with SessionLocal() as session:
+        season = await get_active_season(session)
+        if season is None:
+            await message.answer("Активный сезон не найден. Сначала /admin_season_init")
+            return
+        stage = await get_active_stage(session, season.id)
+        if stage is None:
+            await message.answer("Активный этап не найден. Сначала /admin_season_init")
+            return
+        if int(stage.is_completed or 0) == 1:
+            await message.answer("Этот этап уже завершён.")
+            return
+
+        # Не закрываем этап, пока есть матчи без итогов в его окне.
+        rpl_q = await session.execute(select(Tournament).where(Tournament.code == "RPL"))
+        rpl = rpl_q.scalar_one_or_none()
+        if rpl is None:
+            await message.answer("Турнир RPL не найден.")
+            return
+        pending_q = await session.execute(
+            select(func.count(Match.id)).where(
+                Match.tournament_id == rpl.id,
+                Match.round_number >= int(stage.round_min),
+                Match.round_number <= int(stage.round_max),
+                (Match.home_score.is_(None) | Match.away_score.is_(None)),
+            )
+        )
+        pending = int(pending_q.scalar_one() or 0)
+        if pending > 0:
+            await message.answer(
+                "Нельзя завершить этап: есть матчи без результатов.\n"
+                f"Незаполненных матчей в окне этапа: {pending}"
+            )
+            return
+
+        leagues_q = await session.execute(
+            select(League).where(League.season_id == season.id, League.is_active == 1)
+        )
+        leagues = leagues_q.scalars().all()
+        by_code = {str(x.code).upper(): x for x in leagues}
+        high_league = by_code.get("HIGH")
+        low_league = by_code.get("LOW")
+        if high_league is None or low_league is None:
+            await message.answer("Не найдены лиги HIGH/LOW в активном сезоне.")
+            return
+
+        move_up_count = min(int(stage.promote_count or 2), len(low_rows))
+        move_down_count = min(int(stage.relegate_count or 2), len(high_rows))
+        move_up_ids = [int(r["tg_user_id"]) for r in low_rows[:move_up_count]]
+        move_down_ids = [int(r["tg_user_id"]) for r in high_rows[-move_down_count:]] if move_down_count > 0 else []
+
+        # Текущий состав активного этапа.
+        curr_rows_q = await session.execute(
+            select(LeagueParticipant).where(
+                LeagueParticipant.stage_id == stage.id,
+                LeagueParticipant.is_active == 1,
+            )
+        )
+        curr_rows = curr_rows_q.scalars().all()
+        if not curr_rows:
+            await message.answer("В активном этапе нет участников.")
+            return
+
+        next_stage_q = await session.execute(
+            select(Stage)
+            .where(Stage.season_id == season.id, Stage.stage_order == int(stage.stage_order) + 1)
+            .order_by(Stage.id.asc())
+        )
+        next_stage = next_stage_q.scalars().first()
+
+        target_season = season
+        if next_stage is None:
+            # Этап 2 закрыт -> запускаем новый сезон с этапами 1/2.
+            season.is_active = 0
+            new_name = _derive_next_season_name(str(season.name))
+            target_season = Season(name=new_name, is_active=1)
+            session.add(target_season)
+            await session.flush()
+
+            next_stage = Stage(
+                season_id=target_season.id,
+                name=DEFAULT_STAGE_1_NAME,
+                stage_order=1,
+                round_min=1,
+                round_max=17,
+                is_active=1,
+                is_completed=0,
+                promote_count=int(stage.promote_count or 2),
+                relegate_count=int(stage.relegate_count or 2),
+            )
+            stage2 = Stage(
+                season_id=target_season.id,
+                name=DEFAULT_STAGE_2_NAME,
+                stage_order=2,
+                round_min=18,
+                round_max=30,
+                is_active=0,
+                is_completed=0,
+                promote_count=int(stage.promote_count or 2),
+                relegate_count=int(stage.relegate_count or 2),
+            )
+            session.add_all([next_stage, stage2])
+            await session.flush()
+
+            new_high = League(season_id=target_season.id, code="HIGH", name="Высшая лига", is_active=1)
+            new_low = League(season_id=target_season.id, code="LOW", name="Низшая лига", is_active=1)
+            session.add_all([new_high, new_low])
+            await session.flush()
+            target_high_id = int(new_high.id)
+            target_low_id = int(new_low.id)
+        else:
+            # Внутри текущего сезона: следующий этап уже есть.
+            next_stage.is_active = 1
+            target_high_id = int(high_league.id)
+            target_low_id = int(low_league.id)
+
+        # Закрываем активный этап.
+        stage.is_active = 0
+        stage.is_completed = 1
+
+        # Перенос состава в next_stage с учётом обменов.
+        moved_up_names: list[str] = []
+        moved_down_names: list[str] = []
+        move_up_set = set(move_up_ids)
+        move_down_set = set(move_down_ids)
+
+        for row in curr_rows:
+            uid = int(row.tg_user_id)
+            to_league_id = int(row.league_id)
+            reason = "stay"
+            if uid in move_up_set:
+                to_league_id = target_high_id
+                reason = "promotion"
+                moved_up_names.append(str(row.display_name or uid))
+            elif uid in move_down_set:
+                to_league_id = target_low_id
+                reason = "relegation"
+                moved_down_names.append(str(row.display_name or uid))
+            else:
+                if int(row.league_id) == int(high_league.id):
+                    to_league_id = target_high_id
+                elif int(row.league_id) == int(low_league.id):
+                    to_league_id = target_low_id
+
+            existing_q = await session.execute(
+                select(LeagueParticipant).where(
+                    LeagueParticipant.stage_id == next_stage.id,
+                    LeagueParticipant.tg_user_id == uid,
+                )
+            )
+            existing = existing_q.scalar_one_or_none()
+            if existing is None:
+                session.add(
+                    LeagueParticipant(
+                        season_id=target_season.id,
+                        stage_id=next_stage.id,
+                        league_id=to_league_id,
+                        tg_user_id=uid,
+                        display_name=row.display_name,
+                        is_active=1,
+                    )
+                )
+            else:
+                existing.league_id = to_league_id
+                existing.display_name = row.display_name
+                existing.is_active = 1
+
+            if reason in {"promotion", "relegation"}:
+                session.add(
+                    LeagueMovement(
+                        season_id=target_season.id,
+                        from_stage_id=stage.id,
+                        to_stage_id=next_stage.id,
+                        tg_user_id=uid,
+                        from_league_id=int(row.league_id),
+                        to_league_id=to_league_id,
+                        reason=reason,
+                    )
+                )
+
+        await session.commit()
+
+    up_text = ", ".join(moved_up_names) if moved_up_names else "—"
+    down_text = ", ".join(moved_down_names) if moved_down_names else "—"
+    await message.answer(
+        "✅ Этап завершён.\n"
+        f"Повышены: {up_text}\n"
+        f"Понижены: {down_text}\n\n"
+        "Текущий статус проверь через /admin_season_status"
+    )
+
+
 def register_admin_handlers(dp: Dispatcher) -> None:
     dp.message.register(admin_panel, Command("admin_panel"))
     dp.message.register(admin_status, Command("admin_status"))
@@ -1190,6 +1419,7 @@ def register_admin_handlers(dp: Dispatcher) -> None:
     dp.message.register(admin_league_assign, Command("admin_league_assign"))
     dp.message.register(admin_league_assign_name, Command("admin_league_assign_name"))
     dp.message.register(admin_season_status, Command("admin_season_status"))
+    dp.message.register(admin_stage_finish, Command("admin_stage_finish"))
 
 
 async def admin_add_match(message: types.Message):
