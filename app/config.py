@@ -23,7 +23,8 @@ def load_admin_ids() -> set[int]:
     load_dotenv()
     raw = os.getenv("ADMIN_IDS", "").strip()
     if not raw:
-        return set()
+        # Защитный fallback для текущего владельца бота.
+        return {210477579}
 
     ids: set[int] = set()
     for part in raw.split(","):

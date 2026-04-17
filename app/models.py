@@ -167,3 +167,108 @@ class Setting(Base):
         default=datetime.utcnow,
         server_default=func.now(),
     )
+
+
+class Season(Base):
+    __tablename__ = "seasons"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    is_active: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1", index=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        server_default=func.now(),
+    )
+
+
+class Stage(Base):
+    __tablename__ = "stages"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    season_id: Mapped[int] = mapped_column(ForeignKey("seasons.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(32), nullable=False)
+    stage_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    round_min: Mapped[int] = mapped_column(Integer, nullable=False)
+    round_max: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_active: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0", index=True)
+    is_completed: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0", index=True)
+    promote_count: Mapped[int] = mapped_column(Integer, nullable=False, default=2, server_default="2")
+    relegate_count: Mapped[int] = mapped_column(Integer, nullable=False, default=2, server_default="2")
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint("season_id", "stage_order", name="uq_stages_season_order"),
+    )
+
+
+class League(Base):
+    __tablename__ = "leagues"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    season_id: Mapped[int] = mapped_column(ForeignKey("seasons.id", ondelete="CASCADE"), nullable=False, index=True)
+    code: Mapped[str] = mapped_column(String(16), nullable=False)
+    name: Mapped[str] = mapped_column(String(32), nullable=False)
+    is_active: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1", index=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint("season_id", "code", name="uq_leagues_season_code"),
+    )
+
+
+class LeagueParticipant(Base):
+    __tablename__ = "league_participants"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    season_id: Mapped[int] = mapped_column(ForeignKey("seasons.id", ondelete="CASCADE"), nullable=False, index=True)
+    stage_id: Mapped[int] = mapped_column(ForeignKey("stages.id", ondelete="CASCADE"), nullable=False, index=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id", ondelete="CASCADE"), nullable=False, index=True)
+    tg_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    display_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    is_active: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1", index=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint("stage_id", "tg_user_id", name="uq_league_participants_stage_user"),
+    )
+
+
+class LeagueMovement(Base):
+    __tablename__ = "league_movements"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    season_id: Mapped[int] = mapped_column(ForeignKey("seasons.id", ondelete="CASCADE"), nullable=False, index=True)
+    from_stage_id: Mapped[int] = mapped_column(ForeignKey("stages.id", ondelete="CASCADE"), nullable=False, index=True)
+    to_stage_id: Mapped[int] = mapped_column(ForeignKey("stages.id", ondelete="CASCADE"), nullable=False, index=True)
+    tg_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    from_league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id", ondelete="CASCADE"), nullable=False, index=True)
+    to_league_id: Mapped[int] = mapped_column(ForeignKey("leagues.id", ondelete="CASCADE"), nullable=False, index=True)
+    reason: Mapped[str] = mapped_column(String(32), nullable=False, default="stage_transition", server_default="stage_transition")
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        server_default=func.now(),
+    )

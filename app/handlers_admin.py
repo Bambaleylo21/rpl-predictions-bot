@@ -13,8 +13,30 @@ from sqlalchemy import case, delete, select, func
 from app.config import load_admin_ids
 from app.db import SessionLocal
 from app.display import display_team_name, display_tournament_name
-from app.models import Match, Prediction, Point, User, Setting, Tournament, UserTournament
+from app.models import (
+    League,
+    LeagueParticipant,
+    Match,
+    Prediction,
+    Point,
+    Season,
+    Setting,
+    Stage,
+    Tournament,
+    User,
+    UserTournament,
+)
 from app.scoring import calculate_points
+from app.season_setup import (
+    DEFAULT_SEASON_NAME,
+    assign_user_to_active_stage_league,
+    get_active_season,
+    get_active_stage,
+    is_enrollment_open,
+    set_active_season_name,
+    set_enrollment_open,
+    setup_new_season_foundation,
+)
 from app.tournament import ROUND_DEFAULT, ROUND_MAX, ROUND_MIN, is_tournament_round
 from app.audience import (
     extract_left_user_id,
@@ -703,6 +725,211 @@ async def _maybe_send_exact_hit_pushes(bot, match_id: int) -> int:
     return sent
 
 
+async def admin_season_init(message: types.Message):
+    """
+    /admin_season_init [Название сезона]
+    Полный Week1-reset для новой структуры: сезоны/этапы/лиги.
+    """
+    if not _is_admin(message):
+        await message.answer("⛔️ У вас нет прав на эту команду.")
+        return
+
+    raw = (message.text or "").strip()
+    parts = raw.split(maxsplit=1)
+    season_name = parts[1].strip() if len(parts) > 1 and parts[1].strip() else DEFAULT_SEASON_NAME
+
+    async with SessionLocal() as session:
+        summary = await setup_new_season_foundation(
+            session=session,
+            season_name=season_name,
+            stage_1_round_min=1,
+            stage_1_round_max=17,
+            stage_2_round_min=18,
+            stage_2_round_max=30,
+        )
+        await session.commit()
+
+    await message.answer(
+        "✅ Основа нового цикла создана.\n"
+        f"Сезон: {summary.season_name}\n"
+        "Этапы: 1-17 (Осенний), 18-30 (Весенний)\n"
+        "Лиги: Высшая / Низшая\n"
+        "Набор участников: закрыт"
+    )
+
+
+async def admin_set_season_name(message: types.Message):
+    """/admin_set_season_name Новое название"""
+    if not _is_admin(message):
+        await message.answer("⛔️ У вас нет прав на эту команду.")
+        return
+
+    raw = (message.text or "").strip()
+    parts = raw.split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await message.answer("Формат: /admin_set_season_name РПЛ 2026/27")
+        return
+
+    async with SessionLocal() as session:
+        season = await set_active_season_name(session, parts[1].strip())
+        await session.commit()
+        if season is None:
+            await message.answer("Активный сезон не найден. Сначала запусти /admin_season_init")
+            return
+
+    await message.answer(f"✅ Название активного сезона обновлено: {parts[1].strip()}")
+
+
+async def admin_enroll_open(message: types.Message):
+    """/admin_enroll_open — открыть набор участников в сезон."""
+    if not _is_admin(message):
+        await message.answer("⛔️ У вас нет прав на эту команду.")
+        return
+
+    async with SessionLocal() as session:
+        await set_enrollment_open(session, True)
+        await session.commit()
+    await message.answer("🟢 Набор участников открыт.")
+
+
+async def admin_enroll_close(message: types.Message):
+    """/admin_enroll_close — закрыть набор участников в сезон."""
+    if not _is_admin(message):
+        await message.answer("⛔️ У вас нет прав на эту команду.")
+        return
+
+    async with SessionLocal() as session:
+        await set_enrollment_open(session, False)
+        await session.commit()
+    await message.answer("🔒 Набор участников закрыт.")
+
+
+async def admin_league_assign(message: types.Message):
+    """
+    /admin_league_assign <tg_user_id> <HIGH|LOW>
+    Пример: /admin_league_assign 210477579 HIGH
+    """
+    if not _is_admin(message):
+        await message.answer("⛔️ У вас нет прав на эту команду.")
+        return
+
+    raw = (message.text or "").strip()
+    parts = raw.split()
+    if len(parts) != 3:
+        await message.answer("Формат: /admin_league_assign <tg_user_id> <HIGH|LOW>")
+        return
+
+    try:
+        tg_user_id = int(parts[1])
+    except ValueError:
+        await message.answer("tg_user_id должен быть числом.")
+        return
+
+    league_code = parts[2].upper().strip()
+    if league_code not in {"HIGH", "LOW"}:
+        await message.answer("Лига должна быть HIGH или LOW.")
+        return
+
+    async with SessionLocal() as session:
+        result = await assign_user_to_active_stage_league(session, tg_user_id=tg_user_id, league_code=league_code)
+        await session.commit()
+        if result is None:
+            await message.answer("Не удалось назначить. Сначала запусти /admin_season_init.")
+            return
+        display_name, league_name = result
+    await message.answer(f"✅ {display_name} назначен(а) в «{league_name}».")
+
+
+async def admin_season_status(message: types.Message):
+    """/admin_season_status — статус нового контура: сезон/этап/лиги/набор."""
+    if not _is_admin(message):
+        await message.answer("⛔️ У вас нет прав на эту команду.")
+        return
+
+    async with SessionLocal() as session:
+        season = await get_active_season(session)
+        if season is None:
+            await message.answer("Активный сезон не найден. Запусти /admin_season_init.")
+            return
+
+        stage = await get_active_stage(session, season.id)
+        enroll_open = await is_enrollment_open(session)
+
+        stages_q = await session.execute(
+            select(Stage).where(Stage.season_id == season.id).order_by(Stage.stage_order.asc())
+        )
+        stages = stages_q.scalars().all()
+
+        leagues_q = await session.execute(
+            select(League).where(League.season_id == season.id, League.is_active == 1).order_by(League.code.asc())
+        )
+        leagues = leagues_q.scalars().all()
+        league_ids = [int(x.id) for x in leagues]
+
+        counts: dict[int, int] = {}
+        joined_total = 0
+        unassigned_total = 0
+        if stage is not None and league_ids:
+            c_q = await session.execute(
+                select(LeagueParticipant.league_id, func.count(LeagueParticipant.id))
+                .where(
+                    LeagueParticipant.stage_id == stage.id,
+                    LeagueParticipant.league_id.in_(league_ids),
+                    LeagueParticipant.is_active == 1,
+                )
+                .group_by(LeagueParticipant.league_id)
+            )
+            counts = {int(league_id): int(cnt) for league_id, cnt in c_q.all()}
+
+            rpl_q = await session.execute(select(Tournament).where(Tournament.code == "RPL"))
+            rpl = rpl_q.scalar_one_or_none()
+            if rpl is not None:
+                joined_q = await session.execute(
+                    select(func.count(UserTournament.id)).where(UserTournament.tournament_id == rpl.id)
+                )
+                joined_total = int(joined_q.scalar_one() or 0)
+
+                assigned_ids_q = await session.execute(
+                    select(LeagueParticipant.tg_user_id).where(
+                        LeagueParticipant.stage_id == stage.id,
+                        LeagueParticipant.is_active == 1,
+                    )
+                )
+                assigned_ids = {int(x[0]) for x in assigned_ids_q.all()}
+
+                member_ids_q = await session.execute(
+                    select(UserTournament.tg_user_id).where(UserTournament.tournament_id == rpl.id)
+                )
+                member_ids = {int(x[0]) for x in member_ids_q.all()}
+                unassigned_total = len(member_ids - assigned_ids)
+
+    stage_lines = []
+    for st in stages:
+        marker = "⭐" if stage and int(st.id) == int(stage.id) else "•"
+        stage_lines.append(f"{marker} {st.name}: туры {st.round_min}-{st.round_max}")
+
+    league_lines = []
+    for lg in leagues:
+        cnt = counts.get(int(lg.id), 0)
+        league_lines.append(f"• {lg.name}: {cnt} участ.")
+
+    lines = [
+        "🏁 Новый формат — Week1 статус",
+        f"Сезон: {season.name}",
+        f"Набор в сезон: {'ОТКРЫТ' if enroll_open else 'закрыт'}",
+        "",
+        "Этапы:",
+        *stage_lines,
+        "",
+        "Лиги (в активном этапе):",
+        *league_lines,
+        "",
+        f"Вступили в РПЛ: {joined_total}",
+        f"Не распределены по лигам: {unassigned_total}",
+    ]
+    await message.answer("\\n".join(lines))
+
+
 def register_admin_handlers(dp: Dispatcher) -> None:
     dp.message.register(admin_panel, Command("admin_panel"))
     dp.message.register(admin_status, Command("admin_status"))
@@ -728,6 +955,12 @@ def register_admin_handlers(dp: Dispatcher) -> None:
     dp.message.register(admin_remove_user, Command("admin_remove_user"))
     dp.message.register(admin_audience, Command("admin_audience"))
     dp.message.register(admin_audience_list, Command("admin_audience_list"))
+    dp.message.register(admin_season_init, Command("admin_season_init"))
+    dp.message.register(admin_set_season_name, Command("admin_set_season_name"))
+    dp.message.register(admin_enroll_open, Command("admin_enroll_open"))
+    dp.message.register(admin_enroll_close, Command("admin_enroll_close"))
+    dp.message.register(admin_league_assign, Command("admin_league_assign"))
+    dp.message.register(admin_season_status, Command("admin_season_status"))
 
 
 async def admin_add_match(message: types.Message):

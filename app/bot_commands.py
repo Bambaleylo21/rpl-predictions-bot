@@ -17,6 +17,12 @@ def get_admin_bot_commands() -> list[types.BotCommand]:
         types.BotCommand(command="admin_audience_list", description="Админ: списки аудитории"),
         types.BotCommand(command="admin_set_window", description="Админ: окно туров"),
         types.BotCommand(command="admin_remove_user", description="Админ: удалить участника"),
+        types.BotCommand(command="admin_season_init", description="Админ: reset сезона (Week1)"),
+        types.BotCommand(command="admin_set_season_name", description="Админ: имя сезона"),
+        types.BotCommand(command="admin_enroll_open", description="Админ: открыть набор"),
+        types.BotCommand(command="admin_enroll_close", description="Админ: закрыть набор"),
+        types.BotCommand(command="admin_league_assign", description="Админ: назначить в лигу"),
+        types.BotCommand(command="admin_season_status", description="Админ: статус сезона/этапа"),
     ]
 
 
