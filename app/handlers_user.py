@@ -2953,3 +2953,49 @@ async def _ensure_enrollment_open_for_join(target: types.Message) -> bool:
             )
         await send_long(message, text)
         await message.answer("Что дальше?", reply_markup=build_stats_followup_keyboard())
+
+    @dp.message(F.text)
+    async def fallback_menu_text(message: types.Message):
+        """
+        Страховочный роутер: не даём боту молчать на кнопках/старых подписях.
+        """
+        txt = (message.text or "").strip().lower()
+        if not txt:
+            return
+
+        if "прогноз" in txt:
+            await _send_quick_predict_picker(message, message.from_user.id)
+            return
+        if "таблиц" in txt:
+            await btn_table(message)
+            return
+        if "профил" in txt:
+            await btn_profile(message)
+            return
+        if "статист" in txt:
+            await btn_stats(message)
+            return
+        if "правил" in txt:
+            await quick_rules(message)
+            return
+        if "вступ" in txt or "вернут" in txt:
+            if not await _ensure_enrollment_open_for_join(message):
+                return
+            async with SessionLocal() as session:
+                tournament = await get_selected_tournament_for_user(session, message.from_user.id)
+            await _request_display_name_for_join(message, state, tournament)
+            return
+
+        # Последний fallback: подсказываем старт и возвращаем клавиатуру.
+        tournament, default_round = await _get_user_tournament_context(message.from_user.id)
+        async with SessionLocal() as session:
+            is_joined = await is_user_in_tournament(session, message.from_user.id, tournament.id)
+            join_cta_text = await _get_join_cta_text(session, message.from_user.id, tournament.id)
+        await message.answer(
+            "Не распознал действие. Нажми /start, если меню пропало, или выбери кнопку ниже.",
+            reply_markup=build_main_menu_keyboard(
+                default_round=default_round,
+                is_joined=is_joined,
+                join_cta_text=join_cta_text,
+            ),
+        )
