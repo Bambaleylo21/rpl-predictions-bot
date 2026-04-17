@@ -3001,20 +3001,28 @@ def register_user_handlers(dp: Dispatcher):
         Абсолютный fallback: если прилетело не-текстовое сообщение,
         всё равно отвечаем и не оставляем update в "not handled".
         """
+        # В channel/private-channel бот часто не может отвечать -> CHANNEL_PRIVATE.
+        # Просто игнорируем такие обновления без ошибок.
+        if (getattr(message.chat, "type", None) or "") == "channel":
+            return
         if message.text:
             return
         tournament, default_round = await _get_user_tournament_context(message.from_user.id)
         async with SessionLocal() as session:
             is_joined = await is_user_in_tournament(session, message.from_user.id, tournament.id)
             join_cta_text = await _get_join_cta_text(session, message.from_user.id, tournament.id)
-        await message.answer(
-            "Получил сообщение. Для действий используй кнопки меню ниже.",
-            reply_markup=build_main_menu_keyboard(
-                default_round=default_round,
-                is_joined=is_joined,
-                join_cta_text=join_cta_text,
-            ),
-        )
+        try:
+            await message.answer(
+                "Получил сообщение. Для действий используй кнопки меню ниже.",
+                reply_markup=build_main_menu_keyboard(
+                    default_round=default_round,
+                    is_joined=is_joined,
+                    join_cta_text=join_cta_text,
+                ),
+            )
+        except Exception:
+            # Тихий фейл для чатов, где бот не имеет права отправки.
+            return
 
     @dp.callback_query()
     async def fallback_any_callback(callback: types.CallbackQuery):

@@ -57,6 +57,8 @@ try:
     ROUND_DIGEST_CHAT_ID = int(ROUND_DIGEST_CHAT_ID_RAW) if ROUND_DIGEST_CHAT_ID_RAW else None
 except ValueError:
     ROUND_DIGEST_CHAT_ID = None
+# Публичный digest-чат отключён: итоги тура отправляются только участникам в ЛС.
+ROUND_DIGEST_CHAT_ID = None
 
 EXACT_HIT_PUSH_DELAY_RAW = os.getenv("EXACT_HIT_PUSH_DELAY_SEC", "0.12").strip()
 try:
