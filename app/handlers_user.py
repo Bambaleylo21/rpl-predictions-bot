@@ -2995,7 +2995,7 @@ def register_user_handlers(dp: Dispatcher):
             ),
         )
 
-    @dp.message()
+    @dp.message(~F.text)
     async def fallback_any_message(message: types.Message):
         """
         Абсолютный fallback: если прилетело не-текстовое сообщение,
