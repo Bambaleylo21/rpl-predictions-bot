@@ -80,6 +80,9 @@ async def _apply_postgres_schema_fixes(conn) -> None:
         "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT NOW()",
         "ALTER TABLE predictions ALTER COLUMN created_at SET DEFAULT NOW()",
         "UPDATE predictions SET created_at = NOW() WHERE created_at IS NULL",
+        "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT NOW()",
+        "ALTER TABLE predictions ALTER COLUMN updated_at SET DEFAULT NOW()",
+        "UPDATE predictions SET updated_at = created_at WHERE updated_at IS NULL",
 
         # points
         "ALTER TABLE points ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT NOW()",
@@ -128,6 +131,9 @@ async def _apply_sqlite_schema_fixes(conn) -> None:
 
         # backfill memberships for existing users into RPL
         "INSERT OR IGNORE INTO user_tournaments (tg_user_id, tournament_id) SELECT u.tg_user_id, t.id FROM users u CROSS JOIN tournaments t WHERE t.code = 'RPL'",
+        # predictions.updated_at
+        "ALTER TABLE predictions ADD COLUMN updated_at TIMESTAMP",
+        "UPDATE predictions SET updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)",
         # manual-only режим: удаляем API-матчи
         "DELETE FROM points WHERE match_id IN (SELECT id FROM matches WHERE source <> 'manual' OR api_fixture_id IS NOT NULL)",
         "DELETE FROM predictions WHERE match_id IN (SELECT id FROM matches WHERE source <> 'manual' OR api_fixture_id IS NOT NULL)",

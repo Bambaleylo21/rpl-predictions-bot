@@ -11,6 +11,7 @@ import re
 from app.config import load_admin_ids
 from app.db import SessionLocal
 from app.display import display_team_name, display_tournament_name
+from app.league_table import build_active_stage_league_table
 from app.models import Match, Point, Prediction, Tournament, User, UserTournament, Setting
 from app.stats import build_stats_text
 from app.my_predictions import build_my_round_text
@@ -26,7 +27,7 @@ class PredictRoundStates(StatesGroup):
 
 
 DEFAULT_TOURNAMENT_CODE = "RPL"
-DEFAULT_RPL_ROUND_MIN = 19
+DEFAULT_RPL_ROUND_MIN = 1
 DEFAULT_RPL_ROUND_MAX = 30
 
 
@@ -453,6 +454,33 @@ def _build_overall_table_lines(
         lines.append(me_line)
     else:
         lines.append("Хочешь проверить свои ставки? Жми «🗂 Мои прогнозы».")
+    return lines
+
+
+def _build_stage_league_table_lines(
+    season_name: str,
+    stage_name: str,
+    league_name: str,
+    rows: list[dict],
+    participants: int,
+    played: int,
+    total: int,
+    current_user_id: int,
+    limit: int = 20,
+) -> list[str]:
+    lines = [f"🏆 {league_name} · {stage_name}"]
+    lines.append(f"Сезон: {season_name}")
+    lines.append(f"Участников в лиге: {participants}")
+    lines.append(f"Матчей сыграно: {played} / {total}")
+    lines.append("")
+    lines.append(_overall_table_story_line(rows, played, total))
+    lines.append("")
+    for i, r in enumerate(rows[:limit], start=1):
+        lines.append(_format_leaderboard_row(i, r))
+    lines.append("")
+    me_line = _build_overall_user_summary(rows, current_user_id=current_user_id)
+    if me_line:
+        lines.append(me_line)
     return lines
 
 
@@ -1698,27 +1726,28 @@ def register_user_handlers(dp: Dispatcher):
         elif action == "predict":
             await _send_quick_predict_picker(callback.message, callback.from_user.id)
         elif action == "table":
+            rows, meta = await build_active_stage_league_table(callback.from_user.id)
+            if meta is None:
+                await callback.message.answer("Сезон/этап пока не инициализирован. Обратись к администратору.")
+                await callback.answer()
+                return
             tournament, _default_round = await _get_user_tournament_context(callback.from_user.id)
             played, total = await get_matches_played_stats(
                 tournament_id=tournament.id,
-                round_min=tournament.round_min,
-                round_max=tournament.round_max,
-            )
-            rows, participants = await build_overall_leaderboard(
-                tournament_id=tournament.id,
-                round_min=tournament.round_min,
-                round_max=tournament.round_max,
+                round_min=meta.stage_round_min,
+                round_max=meta.stage_round_max,
             )
             if not rows:
                 await callback.message.answer(
-                    "Пока в таблице пусто — ещё нет прогнозов.\n"
-                    "Можешь открыть сезон первым через «🎯 Поставить прогноз»."
+                    f"В лиге «{meta.league_name}» пока нет участников активного этапа."
                 )
             else:
-                lines = _build_overall_table_lines(
-                    tournament_name=tournament.name,
+                lines = _build_stage_league_table_lines(
+                    season_name=meta.season_name,
+                    stage_name=meta.stage_name,
+                    league_name=meta.league_name,
                     rows=rows,
-                    participants=participants,
+                    participants=meta.participants,
                     played=played,
                     total=total,
                     current_user_id=callback.from_user.id,
@@ -1974,27 +2003,27 @@ def register_user_handlers(dp: Dispatcher):
 
     @dp.message(F.text == "🏆 Общая таблица")
     async def btn_table(message: types.Message):
+        rows, meta = await build_active_stage_league_table(message.from_user.id)
+        if meta is None:
+            await message.answer("Сезон/этап пока не инициализирован. Обратись к администратору.")
+            return
         tournament, _default_round = await _get_user_tournament_context(message.from_user.id)
         played, total = await get_matches_played_stats(
             tournament_id=tournament.id,
-            round_min=tournament.round_min,
-            round_max=tournament.round_max,
-        )
-        rows, participants = await build_overall_leaderboard(
-            tournament_id=tournament.id,
-            round_min=tournament.round_min,
-            round_max=tournament.round_max,
+            round_min=meta.stage_round_min,
+            round_max=meta.stage_round_max,
         )
         if not rows:
             await message.answer(
-                "Пока в таблице пусто — никто ещё не поставил прогнозы.\n"
-                "Ты можешь открыть гонку первым: «🎯 Поставить прогноз»."
+                f"В лиге «{meta.league_name}» пока нет участников активного этапа."
             )
             return
-        lines = _build_overall_table_lines(
-            tournament_name=tournament.name,
+        lines = _build_stage_league_table_lines(
+            season_name=meta.season_name,
+            stage_name=meta.stage_name,
+            league_name=meta.league_name,
             rows=rows,
-            participants=participants,
+            participants=meta.participants,
             played=played,
             total=total,
             current_user_id=message.from_user.id,
@@ -2358,6 +2387,7 @@ def register_user_handlers(dp: Dispatcher):
             else:
                 pred.pred_home = pred_home
                 pred.pred_away = pred_away
+                pred.updated_at = datetime.utcnow()
 
             await session.commit()
 
@@ -2574,6 +2604,7 @@ def register_user_handlers(dp: Dispatcher):
             else:
                 pred.pred_home = pred_home
                 pred.pred_away = pred_away
+                pred.updated_at = datetime.utcnow()
 
             await session.commit()
 
@@ -2676,6 +2707,7 @@ def register_user_handlers(dp: Dispatcher):
                 else:
                     pred.pred_home = pred_home
                     pred.pred_away = pred_away
+                    pred.updated_at = datetime.utcnow()
 
                 saved += 1
                 accepted_lines.append(
@@ -2732,29 +2764,29 @@ def register_user_handlers(dp: Dispatcher):
 
     @dp.message(Command("table"))
     async def cmd_table(message: types.Message):
+        rows, meta = await build_active_stage_league_table(message.from_user.id)
+        if meta is None:
+            await message.answer("Сезон/этап пока не инициализирован. Обратись к администратору.")
+            return
         tournament, _default_round = await _get_user_tournament_context(message.from_user.id)
         played, total = await get_matches_played_stats(
             tournament_id=tournament.id,
-            round_min=tournament.round_min,
-            round_max=tournament.round_max,
-        )
-        rows, participants = await build_overall_leaderboard(
-            tournament_id=tournament.id,
-            round_min=tournament.round_min,
-            round_max=tournament.round_max,
+            round_min=meta.stage_round_min,
+            round_max=meta.stage_round_max,
         )
 
         if not rows:
             await message.answer(
-                "Пока в таблице пусто — ещё нет прогнозов.\n"
-                "Можешь открыть сезон первым через «🎯 Поставить прогноз»."
+                f"В лиге «{meta.league_name}» пока нет участников активного этапа."
             )
             return
 
-        lines = _build_overall_table_lines(
-            tournament_name=tournament.name,
+        lines = _build_stage_league_table_lines(
+            season_name=meta.season_name,
+            stage_name=meta.stage_name,
+            league_name=meta.league_name,
             rows=rows,
-            participants=participants,
+            participants=meta.participants,
             played=played,
             total=total,
             current_user_id=message.from_user.id,

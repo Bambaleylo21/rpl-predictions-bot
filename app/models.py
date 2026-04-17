@@ -125,6 +125,12 @@ class Prediction(Base):
         default=datetime.utcnow,
         server_default=func.now(),
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        server_default=func.now(),
+    )
 
     __table_args__ = (
         UniqueConstraint("match_id", "tg_user_id", name="uq_predictions_match_user"),
