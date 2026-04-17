@@ -11,8 +11,9 @@ import re
 from app.config import load_admin_ids
 from app.db import SessionLocal
 from app.display import display_team_name, display_tournament_name
-from app.league_table import build_active_stage_league_table
-from app.models import Match, Point, Prediction, Tournament, User, UserTournament, Setting
+from app.league_table import build_active_stage_league_table, get_user_stage_scope
+from app.models import League, LeagueMovement, Match, Point, Prediction, Setting, Stage, Tournament, User, UserTournament
+from app.season_setup import is_enrollment_open
 from app.stats import build_stats_text
 from app.my_predictions import build_my_round_text
 from app.audience import unmark_user_blocked
@@ -954,6 +955,11 @@ async def build_profile_text(
     round_min: int | None = None,
     round_max: int | None = None,
 ) -> str:
+    scope = await get_user_stage_scope(tg_user_id)
+    if scope is not None:
+        round_min = scope.stage_round_min
+        round_max = scope.stage_round_max
+
     async with SessionLocal() as session:
         user_q = await session.execute(select(User).where(User.tg_user_id == tg_user_id))
         user = user_q.scalar_one_or_none()
@@ -1016,23 +1022,19 @@ async def build_profile_text(
         )
         ut = ut_q.scalar_one_or_none()
 
-    leaderboard_rows, _participants = await build_overall_leaderboard(
-        tournament_id=tournament_id,
-        round_min=round_min,
-        round_max=round_max,
-    )
-    place = None
+    leaderboard_rows, meta = await build_active_stage_league_table(tg_user_id)
+
+    place = "—"
     total = exact = diff = outcome = 0
-    for i, row in enumerate(leaderboard_rows, start=1):
-        if int(row["tg_user_id"]) == int(tg_user_id):
-            place = i
-            total = int(row["total"])
-            exact = int(row["exact"])
-            diff = int(row["diff"])
-            outcome = int(row["outcome"])
-            break
-    if place is None:
-        place = "—"
+    if meta is not None:
+        for i, row in enumerate(leaderboard_rows, start=1):
+            if int(row["tg_user_id"]) == int(tg_user_id):
+                place = i
+                total = int(row["total"])
+                exact = int(row["exact"])
+                diff = int(row["diff"])
+                outcome = int(row["outcome"])
+                break
 
     avg_per_round = round((total / len(rounds)), 2) if rounds else 0.0
     form = " | ".join([f"Т{int(r[0])}:{int(r[1])}" for r in rounds[:3]]) if rounds else "нет данных"
@@ -1065,10 +1067,18 @@ async def build_profile_text(
         profile_status = "🆕 Вход в игру"
         profile_hint = "Сделай первый прогноз через «🎯 Поставить прогноз» — и сразу включишься в гонку."
 
+    stage_line = "нет данных"
+    league_line = "нет данных"
+    if scope is not None:
+        stage_line = f"{scope.stage_name} (туры {scope.stage_round_min}-{scope.stage_round_max})"
+        league_line = scope.league_name
+
     return (
         f"👤 Профиль: {name}\n"
-        f"Место в общем зачёте: {place}\n"
-        f"Очки: {total}\n"
+        f"Лига: {league_line}\n"
+        f"Этап: {stage_line}\n"
+        f"Место в лиге: {place}\n"
+        f"Очки этапа: {total}\n"
         f"Прогнозов: {preds_count}\n"
         f"🎯{exact} | 📏{diff} | ✅{outcome}\n"
         f"🔥 Текущая серия (матчи с очками): {current_streak}\n"
@@ -1236,6 +1246,37 @@ async def get_round_prediction_progress_for_user(
         total_open = len(open_match_ids)
         missed_closed = sum(1 for mid, kickoff in rows if kickoff <= now and mid not in predicted_match_ids)
         return predicted_open, total_open, missed_closed
+
+
+async def build_my_moves_text(tg_user_id: int, limit: int = 8) -> str:
+    async with SessionLocal() as session:
+        q = await session.execute(
+            select(LeagueMovement)
+            .where(LeagueMovement.tg_user_id == tg_user_id)
+            .order_by(LeagueMovement.id.desc())
+            .limit(limit)
+        )
+        moves = q.scalars().all()
+        if not moves:
+            return "Пока нет переходов между лигами."
+
+        stage_ids = {int(m.from_stage_id) for m in moves} | {int(m.to_stage_id) for m in moves}
+        league_ids = {int(m.from_league_id) for m in moves} | {int(m.to_league_id) for m in moves}
+        stages_q = await session.execute(select(Stage.id, Stage.name).where(Stage.id.in_(stage_ids)))
+        leagues_q = await session.execute(select(League.id, League.name).where(League.id.in_(league_ids)))
+        stage_map = {int(sid): str(name) for sid, name in stages_q.all()}
+        league_map = {int(lid): str(name) for lid, name in leagues_q.all()}
+
+    lines = ["🔁 Мои переходы между лигами:"]
+    for m in moves:
+        reason = str(m.reason or "")
+        icon = "⬆️" if reason == "promotion" else "⬇️" if reason == "relegation" else "➡️"
+        from_league = league_map.get(int(m.from_league_id), str(m.from_league_id))
+        to_league = league_map.get(int(m.to_league_id), str(m.to_league_id))
+        from_stage = stage_map.get(int(m.from_stage_id), str(m.from_stage_id))
+        to_stage = stage_map.get(int(m.to_stage_id), str(m.to_stage_id))
+        lines.append(f"{icon} {from_league} -> {to_league} ({from_stage} -> {to_stage})")
+    return "\n".join(lines)
 
 
 def register_user_handlers(dp: Dispatcher):
@@ -1448,14 +1489,26 @@ def register_user_handlers(dp: Dispatcher):
         await state.update_data(round_number=round_number)
         await send_long(target, "\n".join(lines))
 
-    async def _request_display_name_for_join(message: types.Message, state: FSMContext, tournament: Tournament) -> None:
+async def _request_display_name_for_join(message: types.Message, state: FSMContext, tournament: Tournament) -> None:
         await state.set_state(PredictRoundStates.waiting_for_display_name)
         await state.update_data(join_tournament_id=tournament.id, join_tournament_name=tournament.name)
         await message.answer(
             f"Вступление в {tournament.name}.\n"
             "Введи имя для таблицы (2-24 символа).\n"
-            "Пример: Роман"
-        )
+        "Пример: Роман"
+    )
+
+
+async def _ensure_enrollment_open_for_join(target: types.Message) -> bool:
+    async with SessionLocal() as session:
+        opened = await is_enrollment_open(session)
+    if opened:
+        return True
+    await target.answer(
+        "🔒 Набор участников сейчас закрыт.\n"
+        "Дождись открытия набора от администратора."
+    )
+    return False
 
     async def _send_default_round_text(target: types.Message, tg_user_id: int) -> None:
         tournament, default_round = await _get_user_tournament_context(tg_user_id)
@@ -1775,7 +1828,20 @@ def register_user_handlers(dp: Dispatcher):
             )
         elif action == "stats_full":
             tournament, _default_round = await _get_user_tournament_context(callback.from_user.id)
-            await send_long(callback.message, await build_stats_text(tournament_id=tournament.id))
+            scope = await get_user_stage_scope(callback.from_user.id)
+            if scope is None:
+                await send_long(callback.message, await build_stats_text(tournament_id=tournament.id))
+            else:
+                await send_long(
+                    callback.message,
+                    await build_stats_text(
+                        tournament_id=tournament.id,
+                        round_min=scope.stage_round_min,
+                        round_max=scope.stage_round_max,
+                        allowed_user_ids=set(scope.member_ids),
+                        title=f"📊 Статистика · {scope.league_name} · {scope.stage_name}",
+                    ),
+                )
             await callback.message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_info"))
         await callback.answer()
 
@@ -1875,6 +1941,8 @@ def register_user_handlers(dp: Dispatcher):
 
     @dp.message(F.text == "✅ Вступить в турнир")
     async def btn_join(message: types.Message, state: FSMContext):
+        if not await _ensure_enrollment_open_for_join(message):
+            return
         async with SessionLocal() as session:
             await upsert_user_from_message(session, message)
             tournament = await get_selected_tournament_for_user(session, message.from_user.id)
@@ -1882,6 +1950,8 @@ def register_user_handlers(dp: Dispatcher):
 
     @dp.message(F.text == "🔄 Вернуться в турнир")
     async def btn_rejoin(message: types.Message, state: FSMContext):
+        if not await _ensure_enrollment_open_for_join(message):
+            return
         async with SessionLocal() as session:
             await upsert_user_from_message(session, message)
             tournament = await get_selected_tournament_for_user(session, message.from_user.id)
@@ -2035,7 +2105,20 @@ def register_user_handlers(dp: Dispatcher):
     @dp.message(F.text == "📊 Статистика")
     async def btn_stats(message: types.Message):
         tournament, _default_round = await _get_user_tournament_context(message.from_user.id)
-        await send_long(message, await build_stats_text(tournament_id=tournament.id))
+        scope = await get_user_stage_scope(message.from_user.id)
+        if scope is None:
+            await send_long(message, await build_stats_text(tournament_id=tournament.id))
+        else:
+            await send_long(
+                message,
+                await build_stats_text(
+                    tournament_id=tournament.id,
+                    round_min=scope.stage_round_min,
+                    round_max=scope.stage_round_max,
+                    allowed_user_ids=set(scope.member_ids),
+                    title=f"📊 Статистика · {scope.league_name} · {scope.stage_name}",
+                ),
+            )
         await message.answer("Что дальше?", reply_markup=build_stats_followup_keyboard())
 
     @dp.message(F.text == "👤 Мой профиль")
@@ -2120,6 +2203,13 @@ def register_user_handlers(dp: Dispatcher):
             round_max=tournament.round_max,
         )
         await message.answer(text)
+        await message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_info"))
+
+    @dp.message(Command("my_moves"))
+    async def cmd_my_moves(message: types.Message):
+        async with SessionLocal() as session:
+            await upsert_user_from_message(session, message)
+        await message.answer(await build_my_moves_text(message.from_user.id))
         await message.answer("Что дальше?", reply_markup=build_quick_nav_keyboard("after_info"))
 
     @dp.message(Command("mvp_round"))
@@ -2409,6 +2499,16 @@ def register_user_handlers(dp: Dispatcher):
             await message.answer("Имя должно быть длиной 2-24 символа. Попробуй ещё раз.")
             return
 
+        async with SessionLocal() as check_session:
+            enrollment_open = await is_enrollment_open(check_session)
+        if not enrollment_open:
+            await state.clear()
+            await message.answer(
+                "🔒 Набор уже закрыт, сохранить вступление сейчас нельзя.\n"
+                "Дождись следующего открытия набора."
+            )
+            return
+
         data = await state.get_data()
         tournament_id = int(data.get("join_tournament_id") or 0)
         tournament_name = str(data.get("join_tournament_name") or "")
@@ -2517,6 +2617,8 @@ def register_user_handlers(dp: Dispatcher):
 
     @dp.message(Command("join"))
     async def cmd_join(message: types.Message, state: FSMContext):
+        if not await _ensure_enrollment_open_for_join(message):
+            return
         async with SessionLocal() as session:
             await upsert_user_from_message(session, message)
             tournament = await get_selected_tournament_for_user(session, message.from_user.id)
@@ -2838,6 +2940,16 @@ def register_user_handlers(dp: Dispatcher):
     @dp.message(Command("stats"))
     async def cmd_stats(message: types.Message):
         tournament, _default_round = await _get_user_tournament_context(message.from_user.id)
-        text = await build_stats_text(tournament_id=tournament.id)
+        scope = await get_user_stage_scope(message.from_user.id)
+        if scope is None:
+            text = await build_stats_text(tournament_id=tournament.id)
+        else:
+            text = await build_stats_text(
+                tournament_id=tournament.id,
+                round_min=scope.stage_round_min,
+                round_max=scope.stage_round_max,
+                allowed_user_ids=set(scope.member_ids),
+                title=f"📊 Статистика · {scope.league_name} · {scope.stage_name}",
+            )
         await send_long(message, text)
         await message.answer("Что дальше?", reply_markup=build_stats_followup_keyboard())

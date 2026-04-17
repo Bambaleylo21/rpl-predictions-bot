@@ -1384,6 +1384,62 @@ async def admin_stage_finish(message: types.Message):
     )
 
 
+async def admin_stage_moves(message: types.Message):
+    """/admin_stage_moves — показывает последний пакет переходов между лигами."""
+    if not _is_admin(message):
+        await message.answer("⛔️ У вас нет прав на эту команду.")
+        return
+
+    async with SessionLocal() as session:
+        last_q = await session.execute(select(LeagueMovement).order_by(LeagueMovement.id.desc()).limit(1))
+        last = last_q.scalar_one_or_none()
+        if last is None:
+            await message.answer("Переходов пока нет.")
+            return
+
+        pack_q = await session.execute(
+            select(LeagueMovement).where(
+                LeagueMovement.from_stage_id == last.from_stage_id,
+                LeagueMovement.to_stage_id == last.to_stage_id,
+            )
+        )
+        pack = pack_q.scalars().all()
+        if not pack:
+            await message.answer("Переходов пока нет.")
+            return
+
+        user_ids = {int(x.tg_user_id) for x in pack}
+        stage_ids = {int(last.from_stage_id), int(last.to_stage_id)}
+        league_ids = {int(x.from_league_id) for x in pack} | {int(x.to_league_id) for x in pack}
+
+        users_q = await session.execute(
+            select(User.tg_user_id, UserTournament.display_name, User.display_name, User.username, User.full_name)
+            .select_from(User)
+            .outerjoin(UserTournament, UserTournament.tg_user_id == User.tg_user_id)
+            .where(User.tg_user_id.in_(user_ids))
+        )
+        name_map = {}
+        for uid, ut_name, u_name, username, full_name in users_q.all():
+            name_map[int(uid)] = _format_person_name(int(uid), ut_name, u_name, username, full_name)
+
+        stages_q = await session.execute(select(Stage.id, Stage.name).where(Stage.id.in_(stage_ids)))
+        leagues_q = await session.execute(select(League.id, League.name).where(League.id.in_(league_ids)))
+        stage_map = {int(i): str(n) for i, n in stages_q.all()}
+        league_map = {int(i): str(n) for i, n in leagues_q.all()}
+
+    ups = [name_map.get(int(x.tg_user_id), str(x.tg_user_id)) for x in pack if str(x.reason) == "promotion"]
+    downs = [name_map.get(int(x.tg_user_id), str(x.tg_user_id)) for x in pack if str(x.reason) == "relegation"]
+    from_stage = stage_map.get(int(last.from_stage_id), str(last.from_stage_id))
+    to_stage = stage_map.get(int(last.to_stage_id), str(last.to_stage_id))
+    lines = [
+        "🔁 Последние переходы",
+        f"{from_stage} -> {to_stage}",
+        f"⬆️ Повышены: {', '.join(ups) if ups else '—'}",
+        f"⬇️ Понижены: {', '.join(downs) if downs else '—'}",
+    ]
+    await message.answer("\n".join(lines))
+
+
 def register_admin_handlers(dp: Dispatcher) -> None:
     dp.message.register(admin_panel, Command("admin_panel"))
     dp.message.register(admin_status, Command("admin_status"))
@@ -1420,6 +1476,7 @@ def register_admin_handlers(dp: Dispatcher) -> None:
     dp.message.register(admin_league_assign_name, Command("admin_league_assign_name"))
     dp.message.register(admin_season_status, Command("admin_season_status"))
     dp.message.register(admin_stage_finish, Command("admin_stage_finish"))
+    dp.message.register(admin_stage_moves, Command("admin_stage_moves"))
 
 
 async def admin_add_match(message: types.Message):

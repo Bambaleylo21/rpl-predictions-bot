@@ -30,6 +30,20 @@ class LeagueTableMeta:
     participants: int
 
 
+@dataclass
+class UserStageScope:
+    season_id: int
+    season_name: str
+    stage_id: int
+    stage_name: str
+    stage_round_min: int
+    stage_round_max: int
+    league_id: int
+    league_code: str
+    league_name: str
+    member_ids: set[int]
+
+
 def _resolve_name(
     lp_display_name: str | None,
     ut_display_name: str | None,
@@ -74,6 +88,53 @@ async def get_user_active_league_name(tg_user_id: int) -> str | None:
         if not row:
             return None
         return str(row[0])
+
+
+async def get_user_stage_scope(tg_user_id: int) -> UserStageScope | None:
+    async with SessionLocal() as session:
+        season = await get_active_season(session)
+        if season is None:
+            return None
+        stage = await get_active_stage(session, season.id)
+        if stage is None:
+            return None
+
+        mine_q = await session.execute(
+            select(League.id, League.code, League.name)
+            .select_from(LeagueParticipant)
+            .join(League, League.id == LeagueParticipant.league_id)
+            .where(
+                LeagueParticipant.stage_id == stage.id,
+                LeagueParticipant.tg_user_id == tg_user_id,
+                LeagueParticipant.is_active == 1,
+            )
+        )
+        mine = mine_q.first()
+        if mine is None:
+            return None
+        league_id, league_code, league_name = mine
+
+        members_q = await session.execute(
+            select(LeagueParticipant.tg_user_id).where(
+                LeagueParticipant.stage_id == stage.id,
+                LeagueParticipant.league_id == int(league_id),
+                LeagueParticipant.is_active == 1,
+            )
+        )
+        member_ids = {int(x[0]) for x in members_q.all()}
+
+        return UserStageScope(
+            season_id=int(season.id),
+            season_name=str(season.name),
+            stage_id=int(stage.id),
+            stage_name=str(stage.name),
+            stage_round_min=int(stage.round_min),
+            stage_round_max=int(stage.round_max),
+            league_id=int(league_id),
+            league_code=str(league_code),
+            league_name=str(league_name),
+            member_ids=member_ids,
+        )
 
 
 async def build_active_stage_league_table(

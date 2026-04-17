@@ -63,7 +63,13 @@ def _format_rate_metric(
     return ", ".join(f"{names.get(uid, str(uid))} — {pct}% ({hits}/{total})" for uid, hits, total, pct in picked)
 
 
-async def build_stats_text(tournament_id: int | None = None) -> str:
+async def build_stats_text(
+    tournament_id: int | None = None,
+    round_min: int | None = None,
+    round_max: int | None = None,
+    allowed_user_ids: set[int] | None = None,
+    title: str = "📊 Статистика сезона:",
+) -> str:
     async with SessionLocal() as session:
         res_users = await session.execute(select(User))
         users = res_users.scalars().all()
@@ -79,6 +85,10 @@ async def build_stats_text(tournament_id: int | None = None) -> str:
                 .join(Match, Match.id == Point.match_id)
                 .where(Match.tournament_id == tournament_id)
             )
+        if round_min is not None:
+            points_q = points_q.where(Match.round_number >= round_min)
+        if round_max is not None:
+            points_q = points_q.where(Match.round_number <= round_max)
         res_points = await session.execute(points_q)
         points_rows = res_points.scalars().all()
         matches_q = select(Match.id, Match.round_number, Match.home_score, Match.away_score)
@@ -90,6 +100,12 @@ async def build_stats_text(tournament_id: int | None = None) -> str:
                 .join(Match, Match.id == Prediction.match_id)
                 .where(Match.tournament_id == tournament_id)
             )
+        if round_min is not None:
+            matches_q = matches_q.where(Match.round_number >= round_min)
+            preds_q = preds_q.where(Match.round_number >= round_min)
+        if round_max is not None:
+            matches_q = matches_q.where(Match.round_number <= round_max)
+            preds_q = preds_q.where(Match.round_number <= round_max)
         matches_rows = (await session.execute(matches_q)).all()
         preds_rows = (await session.execute(preds_q)).all()
 
@@ -111,6 +127,8 @@ async def build_stats_text(tournament_id: int | None = None) -> str:
 
     for r in points_rows:
         uid = int(r.tg_user_id)
+        if allowed_user_ids is not None and uid not in allowed_user_ids:
+            continue
         cat = (r.category or "").strip().lower()
         if cat in ("exact", "diff", "outcome", "none"):
             per_user[uid][cat] += 1
@@ -135,6 +153,8 @@ async def build_stats_text(tournament_id: int | None = None) -> str:
 
     for uid_raw, match_id_raw in preds_rows:
         uid = int(uid_raw)
+        if allowed_user_ids is not None and uid not in allowed_user_ids:
+            continue
         mid = int(match_id_raw)
         rnd = match_round_map.get(mid)
         if rnd is None:
@@ -171,7 +191,7 @@ async def build_stats_text(tournament_id: int | None = None) -> str:
         pct = round(hits * 100 / total) if total > 0 else 0
         rate_rows.append((uid, hits, int(total), int(pct)))
 
-    lines = ["📊 Статистика сезона:"]
+    lines = [title]
     if best_in_round_count:
         lines.append(f"Лучший в туре: {_format_names_with_optional_counts(names, best_in_round_count)}")
     if worst_in_round_count:
