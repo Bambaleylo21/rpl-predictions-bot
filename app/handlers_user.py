@@ -1,5 +1,5 @@
 from aiogram import Dispatcher, F, types
-from aiogram.filters import CommandStart, Command, StateFilter
+from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
@@ -1297,56 +1297,6 @@ def register_user_handlers(dp: Dispatcher):
 
     def _round_in_tournament(round_number: int, tournament: Tournament) -> bool:
         return tournament.round_min <= round_number <= tournament.round_max
-
-    @dp.message(StateFilter("*"), F.text)
-    async def universal_menu_router(message: types.Message, state: FSMContext):
-        """
-        Глобальный роутер меню: работает из любого FSM-состояния.
-        Если пользователь нажал кнопку навигации, очищаем state и ведём дальше.
-        """
-        txt_raw = (message.text or "").strip()
-        txt = txt_raw.lower()
-        if not txt or txt.startswith("/"):
-            return
-
-        if (
-            "прогноз" not in txt
-            and "таблиц" not in txt
-            and "профил" not in txt
-            and "статист" not in txt
-            and "правил" not in txt
-            and "вступ" not in txt
-            and "вернут" not in txt
-            and "покин" not in txt
-        ):
-            return
-
-        await state.clear()
-
-        if "покин" in txt:
-            await btn_leave(message)
-            return
-        if "вступ" in txt:
-            await btn_join(message, state)
-            return
-        if "вернут" in txt:
-            await btn_rejoin(message, state)
-            return
-        if "профил" in txt:
-            await btn_profile(message)
-            return
-        if "статист" in txt:
-            await btn_stats(message)
-            return
-        if "таблиц" in txt:
-            await btn_table(message)
-            return
-        if "правил" in txt:
-            await quick_rules(message)
-            return
-        if "прогноз" in txt:
-            await quick_predict_hint(message)
-            return
 
     def _my_round_followup_line(predicted_open: int, total_open: int, missed_closed: int) -> str:
         if total_open <= 0:
