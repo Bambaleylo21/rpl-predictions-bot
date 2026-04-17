@@ -2999,3 +2999,31 @@ async def _ensure_enrollment_open_for_join(target: types.Message) -> bool:
                 join_cta_text=join_cta_text,
             ),
         )
+
+    @dp.message()
+    async def fallback_any_message(message: types.Message):
+        """
+        Абсолютный fallback: если прилетело не-текстовое сообщение,
+        всё равно отвечаем и не оставляем update в "not handled".
+        """
+        if message.text:
+            return
+        tournament, default_round = await _get_user_tournament_context(message.from_user.id)
+        async with SessionLocal() as session:
+            is_joined = await is_user_in_tournament(session, message.from_user.id, tournament.id)
+            join_cta_text = await _get_join_cta_text(session, message.from_user.id, tournament.id)
+        await message.answer(
+            "Получил сообщение. Для действий используй кнопки меню ниже.",
+            reply_markup=build_main_menu_keyboard(
+                default_round=default_round,
+                is_joined=is_joined,
+                join_cta_text=join_cta_text,
+            ),
+        )
+
+    @dp.callback_query()
+    async def fallback_any_callback(callback: types.CallbackQuery):
+        """
+        Fallback для неизвестных callback_data.
+        """
+        await callback.answer("Эта кнопка устарела. Открой /start и попробуй ещё раз.", show_alert=False)
