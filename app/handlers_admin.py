@@ -885,27 +885,48 @@ async def admin_league_assign_name(message: types.Message):
             await message.answer("Турнир RPL не найден.")
             return
 
-        exact_q = await session.execute(
+        members_q = await session.execute(
             select(UserTournament.tg_user_id, UserTournament.display_name)
-            .where(
-                UserTournament.tournament_id == rpl.id,
-                func.lower(UserTournament.display_name) == target_name.lower(),
-            )
+            .where(UserTournament.tournament_id == rpl.id)
             .order_by(UserTournament.tg_user_id.asc())
         )
-        exact_rows = [(int(uid), str(name or uid)) for uid, name in exact_q.all()]
+        members = members_q.all()
+        if not members:
+            await message.answer("В турнире пока нет участников.")
+            return
 
-        if not exact_rows:
-            like_pattern = f"%{target_name.lower()}%"
-            like_q = await session.execute(
-                select(UserTournament.tg_user_id, UserTournament.display_name)
-                .where(
-                    UserTournament.tournament_id == rpl.id,
-                    func.lower(UserTournament.display_name).like(like_pattern),
-                )
-                .order_by(UserTournament.tg_user_id.asc())
+        member_ids = [int(x[0]) for x in members]
+        users_q = await session.execute(
+            select(User.tg_user_id, User.display_name, User.full_name, User.username).where(
+                User.tg_user_id.in_(member_ids)
             )
-            exact_rows = [(int(uid), str(name or uid)) for uid, name in like_q.all()]
+        )
+        user_map = {
+            int(tg_id): {
+                "display_name": u_display_name,
+                "full_name": full_name,
+                "username": username,
+            }
+            for tg_id, u_display_name, full_name, username in users_q.all()
+        }
+
+        candidates: list[tuple[int, str]] = []
+        for tg_user_id_raw, ut_display_name in members:
+            uid = int(tg_user_id_raw)
+            u = user_map.get(uid, {})
+            effective_name = (
+                (ut_display_name or "").strip()
+                or (str(u.get("display_name") or "").strip())
+                or (str(u.get("full_name") or "").strip())
+                or (f"@{u.get('username')}" if u.get("username") else "")
+                or str(uid)
+            )
+            candidates.append((uid, effective_name))
+
+        target_lc = target_name.lower()
+        exact_rows = [(uid, nm) for uid, nm in candidates if nm.lower() == target_lc]
+        if not exact_rows:
+            exact_rows = [(uid, nm) for uid, nm in candidates if target_lc in nm.lower()]
 
         if not exact_rows:
             await message.answer("Совпадений по имени не найдено.")
