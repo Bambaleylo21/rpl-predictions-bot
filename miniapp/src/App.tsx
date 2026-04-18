@@ -37,7 +37,31 @@ type ProfileResponse = {
   message?: string
 }
 
-type Screen = 'home' | 'profile'
+type PredictionsResponse = {
+  ok: boolean
+  error?: string
+  reason?: string
+  trusted?: boolean
+  tournament?: string
+  round_number?: number
+  round_min?: number
+  round_max?: number
+  total_points_closed?: number
+  items?: Array<{
+    match_id: number
+    home_team: string
+    away_team: string
+    kickoff: string
+    status: 'open' | 'closed'
+    result: string | null
+    prediction: string | null
+    points: number | null
+    category: string | null
+    emoji: string
+  }>
+}
+
+type Screen = 'home' | 'profile' | 'predictions'
 
 function App() {
   const [screen, setScreen] = useState<Screen>('home')
@@ -49,6 +73,8 @@ function App() {
   const [apiError, setApiError] = useState<string | null>(null)
   const [profileData, setProfileData] = useState<ProfileResponse | null>(null)
   const [profileError, setProfileError] = useState<string | null>(null)
+  const [predictionsData, setPredictionsData] = useState<PredictionsResponse | null>(null)
+  const [predictionsError, setPredictionsError] = useState<string | null>(null)
   const showDebugPanels = import.meta.env.DEV || import.meta.env.VITE_DEBUG_PANELS === '1'
 
   useEffect(() => {
@@ -100,6 +126,19 @@ function App() {
         .catch((err) => {
           setProfileError(String(err))
         })
+
+      fetch(`${apiBase}/api/miniapp/predictions/current`, { headers })
+        .then(async (res) => {
+          const data = (await res.json()) as PredictionsResponse
+          if (!res.ok) {
+            throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+          }
+          setPredictionsData(data)
+          setPredictionsError(null)
+        })
+        .catch((err) => {
+          setPredictionsError(String(err))
+        })
     }
 
     run()
@@ -121,7 +160,7 @@ function App() {
               <div className="card-text">Выбрать тур и матчи</div>
             </button>
 
-            <button className="card">
+            <button className="card" onClick={() => setScreen('predictions')}>
               <div className="card-title">🗂 Мои прогнозы</div>
               <div className="card-text">Текущий и другие туры</div>
             </button>
@@ -137,7 +176,7 @@ function App() {
             </button>
           </section>
         </>
-      ) : (
+      ) : screen === 'profile' ? (
         <>
           <header className="topbar">
             <button className="back-btn" onClick={() => setScreen('home')}>
@@ -181,6 +220,66 @@ function App() {
                 )}
               </div>
             </div>
+          </section>
+        </>
+      ) : (
+        <>
+          <header className="topbar">
+            <button className="back-btn" onClick={() => setScreen('home')}>
+              ← Назад
+            </button>
+            <h1>🗂 Мои прогнозы</h1>
+            <p>Текущий тур и твои ставки по матчам.</p>
+          </header>
+
+          <section className="cards">
+            <div className="card">
+              <div className="card-title">
+                {predictionsData?.tournament || 'РПЛ'} · Тур {predictionsData?.round_number ?? '—'}
+              </div>
+              <div className="card-text">
+                {predictionsError ? (
+                  <>Ошибка загрузки прогнозов: {predictionsError}</>
+                ) : !predictionsData ? (
+                  'Загружаю прогнозы...'
+                ) : (
+                  <>
+                    Итого по завершённым: <b>{predictionsData.total_points_closed ?? 0}</b> очк.
+                    <br />
+                    Матчей в туре: <b>{predictionsData.items?.length ?? 0}</b>
+                  </>
+                )}
+              </div>
+            </div>
+          </section>
+
+          <section className="cards" style={{ marginTop: 10 }}>
+            {(predictionsData?.items || []).map((m) => (
+              <div className="card" key={m.match_id}>
+                <div className="card-title">
+                  {m.home_team} — {m.away_team}
+                </div>
+                <div className="card-text">
+                  {m.kickoff} МСК
+                  <br />
+                  {m.status === 'open' ? (
+                    m.prediction ? (
+                      <>Прогноз: <b>{m.prediction}</b> (матч ещё открыт)</>
+                    ) : (
+                      'Без прогноза (матч ещё открыт)'
+                    )
+                  ) : m.prediction ? (
+                    <>
+                      Итог: <b>{m.result}</b> · Прогноз: <b>{m.prediction}</b> · {m.emoji} {m.points ?? 0}
+                    </>
+                  ) : (
+                    <>
+                      Итог: <b>{m.result}</b> · Без прогноза
+                    </>
+                  )}
+                </div>
+              </div>
+            ))}
           </section>
         </>
       )}

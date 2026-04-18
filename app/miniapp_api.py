@@ -13,7 +13,7 @@ from aiohttp import web
 from sqlalchemy import case, func, select
 
 from app.db import SessionLocal
-from app.models import League, LeagueParticipant, Point, Prediction, Stage, User
+from app.models import League, LeagueParticipant, Match, Point, Prediction, Stage, Tournament, User
 
 logger = logging.getLogger(__name__)
 
@@ -253,6 +253,174 @@ async def profile(request: web.Request) -> web.Response:
         )
 
 
+def _point_category_emoji(category: str | None, points: int | None) -> str:
+    cat = (category or "").strip().lower()
+    if cat == "exact":
+        return "🎯"
+    if cat == "diff":
+        return "📏"
+    if cat == "outcome":
+        return "✅"
+    if int(points or 0) <= 0:
+        return "❌"
+    return "✅"
+
+
+async def predictions_current(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = user.get("id") if isinstance(user, dict) else None
+        if not tg_user_id:
+            return web.json_response({"ok": False, "error": "user_not_found_in_init_data"}, status=400)
+
+        async with SessionLocal() as session:
+            tournament = (
+                await session.execute(
+                    select(Tournament).where(Tournament.code == "RPL").limit(1)
+                )
+            ).scalar_one_or_none()
+            if tournament is None:
+                return web.json_response({"ok": False, "error": "tournament_not_found"}, status=404)
+
+            round_min = int(tournament.round_min)
+            round_max = int(tournament.round_max)
+
+            stage_row = (
+                await session.execute(
+                    select(
+                        Stage.round_min.label("round_min"),
+                        Stage.round_max.label("round_max"),
+                        Stage.name.label("stage_name"),
+                    )
+                    .select_from(LeagueParticipant)
+                    .join(Stage, Stage.id == LeagueParticipant.stage_id)
+                    .where(
+                        LeagueParticipant.tg_user_id == int(tg_user_id),
+                        LeagueParticipant.is_active == 1,
+                        Stage.is_active == 1,
+                    )
+                    .order_by(LeagueParticipant.id.desc())
+                    .limit(1)
+                )
+            ).one_or_none()
+            if stage_row is not None:
+                round_min = int(stage_row.round_min)
+                round_max = int(stage_row.round_max)
+
+            rounds_rows = (
+                await session.execute(
+                    select(
+                        Match.round_number.label("round_number"),
+                        func.sum(case((Match.home_score.is_(None), 1), else_=0)).label("open_cnt"),
+                    )
+                    .where(
+                        Match.tournament_id == int(tournament.id),
+                        Match.round_number >= int(round_min),
+                        Match.round_number <= int(round_max),
+                    )
+                    .group_by(Match.round_number)
+                    .order_by(Match.round_number.asc())
+                )
+            ).all()
+
+            if not rounds_rows:
+                current_round = int(round_min)
+            else:
+                current_round = int(rounds_rows[-1].round_number)
+                for r in rounds_rows:
+                    if int(r.open_cnt or 0) > 0:
+                        current_round = int(r.round_number)
+                        break
+
+            matches = (
+                await session.execute(
+                    select(Match)
+                    .where(
+                        Match.tournament_id == int(tournament.id),
+                        Match.round_number == int(current_round),
+                    )
+                    .order_by(Match.kickoff_time.asc(), Match.id.asc())
+                )
+            ).scalars().all()
+
+            match_ids = [int(m.id) for m in matches]
+            preds_map: dict[int, Prediction] = {}
+            points_map: dict[int, Point] = {}
+
+            if match_ids:
+                preds = (
+                    await session.execute(
+                        select(Prediction).where(
+                            Prediction.tg_user_id == int(tg_user_id),
+                            Prediction.match_id.in_(match_ids),
+                        )
+                    )
+                ).scalars().all()
+                preds_map = {int(p.match_id): p for p in preds}
+
+                points = (
+                    await session.execute(
+                        select(Point).where(
+                            Point.tg_user_id == int(tg_user_id),
+                            Point.match_id.in_(match_ids),
+                        )
+                    )
+                ).scalars().all()
+                points_map = {int(p.match_id): p for p in points}
+
+            items: list[dict[str, Any]] = []
+            total_points = 0
+            for m in matches:
+                pred = preds_map.get(int(m.id))
+                pt = points_map.get(int(m.id))
+                points_val = int(pt.points or 0) if pt is not None else None
+                if points_val is not None:
+                    total_points += points_val
+
+                is_closed = m.home_score is not None and m.away_score is not None
+                items.append(
+                    {
+                        "match_id": int(m.id),
+                        "home_team": m.home_team,
+                        "away_team": m.away_team,
+                        "kickoff": m.kickoff_time.strftime("%d.%m %H:%M"),
+                        "status": "closed" if is_closed else "open",
+                        "result": f"{m.home_score}:{m.away_score}" if is_closed else None,
+                        "prediction": f"{pred.pred_home}:{pred.pred_away}" if pred is not None else None,
+                        "points": points_val,
+                        "category": pt.category if pt is not None else None,
+                        "emoji": _point_category_emoji(pt.category if pt is not None else None, points_val),
+                    }
+                )
+
+            return web.json_response(
+                {
+                    "ok": True,
+                    "trusted": True,
+                    "tournament": tournament.name,
+                    "round_number": int(current_round),
+                    "round_min": int(round_min),
+                    "round_max": int(round_max),
+                    "total_points_closed": int(total_points),
+                    "items": items,
+                }
+            )
+    except Exception as e:
+        logger.exception("miniapp predictions_current error")
+        return web.json_response(
+            {
+                "ok": False,
+                "error": "predictions_query_failed",
+                "reason": str(e),
+                "signature_checked": True,
+            },
+            status=500,
+        )
+
+
 @web.middleware
 async def cors_middleware(request: web.Request, handler):
     if request.method == "OPTIONS":
@@ -271,6 +439,7 @@ def build_app() -> web.Application:
     app.router.add_get("/healthz", health)
     app.router.add_get("/api/miniapp/me", me)
     app.router.add_get("/api/miniapp/profile", profile)
+    app.router.add_get("/api/miniapp/predictions/current", predictions_current)
     return app
 
 
