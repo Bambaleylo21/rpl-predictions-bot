@@ -107,81 +107,106 @@ def _detect_columns(header_cells: list[Any]) -> dict[str, int]:
             continue
         if "груп" in h:
             out["group"] = i
-        elif "раунд" in h or "тур" in h or "этап" in h:
+        elif "раунд" in h or "тур" in h or "этап" in h or "round" in h or "stage" in h:
             out["round"] = i
-        elif "дат" in h:
+        elif "дат" in h or "date" in h or "day" in h:
             out["date"] = i
-        elif "врем" in h or "начал" in h:
+        elif "врем" in h or "начал" in h or "time" in h or "kickoff" in h:
             out["time"] = i
-        elif "матч" in h or ("команда" in h and "гост" in h) or ("дом" in h and "гост" in h):
+        elif "матч" in h or "match" in h:
+            out["match"] = i
+        elif "дом" in h or "home" in h:
+            out["home"] = i
+        elif "гост" in h or "away" in h:
+            out["away"] = i
+        elif h == "команды":
             out["match"] = i
     return out
 
 
 async def run_import(xlsx_path: Path, clear_wc_matches: bool = False) -> None:
     wb = load_workbook(filename=str(xlsx_path), data_only=True)
-    ws = wb.active
 
-    rows = list(ws.iter_rows(values_only=True))
+    rows: list[tuple[list[Any], dict[str, int], str, int]] = []
+    for ws in wb.worksheets:
+        sheet_rows = list(ws.iter_rows(values_only=True))
+        if not sheet_rows:
+            continue
+        header_idx = None
+        mapping: dict[str, int] = {}
+        for i, r in enumerate(sheet_rows[:100]):
+            m = _detect_columns(list(r))
+            has_round = "round" in m
+            has_date = "date" in m
+            has_time = "time" in m
+            has_match = "match" in m or ("home" in m and "away" in m)
+            if has_round and has_date and has_time and has_match:
+                header_idx = i
+                mapping = m
+                break
+        if header_idx is None:
+            continue
+        rows.append((sheet_rows, mapping, ws.title, header_idx))
+
     if not rows:
-        raise RuntimeError("Пустой Excel-файл")
-
-    header_idx = None
-    mapping: dict[str, int] = {}
-    for i, r in enumerate(rows[:20]):
-        m = _detect_columns(list(r))
-        if {"round", "date", "time", "match"}.issubset(set(m.keys())):
-            header_idx = i
-            mapping = m
-            break
-    if header_idx is None:
-        raise RuntimeError("Не смог найти строку заголовков. Нужны колонки: группа, раунд, дата, время, матч")
+        raise RuntimeError(
+            "Не смог найти строку заголовков ни на одном листе. "
+            "Нужны колонки: раунд, дата, время и матч (или отдельно home/away)."
+        )
 
     parsed: list[dict[str, Any]] = []
     skipped_no_match = 0
     skipped_bad_round = 0
     skipped_bad_datetime = 0
 
-    for r in rows[header_idx + 1 :]:
-        if r is None:
-            continue
-        round_raw = r[mapping["round"]] if mapping.get("round") is not None else None
-        round_number = _round_to_number(round_raw)
-        if round_number is None:
-            if any(x is not None and str(x).strip() for x in r):
-                skipped_bad_round += 1
-            continue
+    for sheet_rows, mapping, _sheet_title, header_idx in rows:
+        for r in sheet_rows[header_idx + 1 :]:
+            if r is None:
+                continue
+            round_raw = r[mapping["round"]] if mapping.get("round") is not None else None
+            round_number = _round_to_number(round_raw)
+            if round_number is None:
+                if any(x is not None and str(x).strip() for x in r):
+                    skipped_bad_round += 1
+                continue
 
-        match_raw = r[mapping["match"]] if mapping.get("match") is not None else None
-        pair = _parse_match_pair(match_raw)
-        if pair is None:
-            skipped_no_match += 1
-            continue
+            pair = None
+            if mapping.get("match") is not None:
+                match_raw = r[mapping["match"]]
+                pair = _parse_match_pair(match_raw)
+            elif mapping.get("home") is not None and mapping.get("away") is not None:
+                home_raw = str(r[mapping["home"]] or "").strip()
+                away_raw = str(r[mapping["away"]] or "").strip()
+                if home_raw and away_raw:
+                    pair = (home_raw, away_raw)
+            if pair is None:
+                skipped_no_match += 1
+                continue
 
-        date_raw = r[mapping["date"]] if mapping.get("date") is not None else None
-        time_raw = r[mapping["time"]] if mapping.get("time") is not None else None
-        d = _parse_date(date_raw)
-        t = _parse_time(time_raw)
-        if d is None or t is None:
-            skipped_bad_datetime += 1
-            continue
-        kickoff = datetime.combine(d, t)
+            date_raw = r[mapping["date"]] if mapping.get("date") is not None else None
+            time_raw = r[mapping["time"]] if mapping.get("time") is not None else None
+            d = _parse_date(date_raw)
+            t = _parse_time(time_raw)
+            if d is None or t is None:
+                skipped_bad_datetime += 1
+                continue
+            kickoff = datetime.combine(d, t)
 
-        group_label = ""
-        if mapping.get("group") is not None:
-            group_label = str(r[mapping["group"]] or "").strip()
-            if group_label == "-":
-                group_label = ""
+            group_label = ""
+            if mapping.get("group") is not None:
+                group_label = str(r[mapping["group"]] or "").strip()
+                if group_label == "-":
+                    group_label = ""
 
-        parsed.append(
-            {
-                "round_number": round_number,
-                "kickoff_time": kickoff,
-                "home_team": pair[0],
-                "away_team": pair[1],
-                "group_label": group_label or None,
-            }
-        )
+            parsed.append(
+                {
+                    "round_number": round_number,
+                    "kickoff_time": kickoff,
+                    "home_team": pair[0],
+                    "away_team": pair[1],
+                    "group_label": group_label or None,
+                }
+            )
 
     async with SessionLocal() as session:
         tq = await session.execute(select(Tournament).where(Tournament.code == WC_CODE).limit(1))
