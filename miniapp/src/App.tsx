@@ -12,6 +12,8 @@ type MeResponse = {
   first_name: string | null
   auth_date: string | null
   signature_checked: boolean
+  selected_tournament_code?: string | null
+  selected_tournament_name?: string | null
   trusted?: boolean
   note: string
 }
@@ -108,6 +110,21 @@ type TableResponse = {
   }>
 }
 
+type TournamentsResponse = {
+  ok: boolean
+  trusted?: boolean
+  selected_tournament_code?: string
+  items?: Array<{
+    code: string
+    name: string
+    round_min: number
+    round_max: number
+    selected: boolean
+  }>
+  error?: string
+  reason?: string
+}
+
 type Screen = 'home' | 'predict' | 'profile' | 'predictions' | 'table'
 
 function App() {
@@ -129,6 +146,9 @@ function App() {
   const [predictNotice, setPredictNotice] = useState<string | null>(null)
   const [tableData, setTableData] = useState<TableResponse | null>(null)
   const [tableError, setTableError] = useState<string | null>(null)
+  const [tournamentsData, setTournamentsData] = useState<TournamentsResponse | null>(null)
+  const [selectedTournamentCode, setSelectedTournamentCode] = useState<string>('RPL')
+  const [tournamentNotice, setTournamentNotice] = useState<string | null>(null)
   const showDebugPanels = import.meta.env.DEV || import.meta.env.VITE_DEBUG_PANELS === '1'
 
   const getInitData = () => {
@@ -136,11 +156,12 @@ function App() {
     return tgWebApp?.initData || WebApp.initData || ''
   }
 
-  const loadPredictCurrent = async (apiBase: string, initData: string) => {
+  const loadPredictCurrent = async (apiBase: string, initData: string, tournamentCode: string) => {
     const headers = {
       'X-Telegram-Init-Data': initData,
     }
-    const res = await fetch(`${apiBase}/api/miniapp/predict/current`, { headers })
+    const tParam = encodeURIComponent(tournamentCode || 'RPL')
+    const res = await fetch(`${apiBase}/api/miniapp/predict/current?t=${tParam}`, { headers })
     const data = (await res.json()) as PredictCurrentResponse
     if (!res.ok) {
       throw new Error(data.reason || data.error || `HTTP ${res.status}`)
@@ -178,6 +199,20 @@ function App() {
         'X-Telegram-Init-Data': initData,
       }
 
+      fetch(`${apiBase}/api/miniapp/tournaments`, { headers })
+        .then(async (res) => {
+          const data = (await res.json()) as TournamentsResponse
+          if (!res.ok) {
+            throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+          }
+          setTournamentsData(data)
+          const selected = data.selected_tournament_code || data.items?.find((x) => x.selected)?.code || 'RPL'
+          setSelectedTournamentCode(selected)
+        })
+        .catch(() => {
+          // silent: fallback to default tournament code
+        })
+
       fetch(`${apiBase}/api/miniapp/me`, { headers })
         .then(async (res) => {
           const data = (await res.json()) as MeResponse
@@ -186,57 +221,109 @@ function App() {
           }
           setMeData(data)
           setApiError(null)
+          if (data.selected_tournament_code) {
+            setSelectedTournamentCode(data.selected_tournament_code)
+          }
         })
         .catch((err) => {
           setApiError(String(err))
-        })
-
-      fetch(`${apiBase}/api/miniapp/profile`, { headers })
-        .then(async (res) => {
-          const data = (await res.json()) as ProfileResponse
-          if (!res.ok) {
-            throw new Error(data.reason || data.error || `HTTP ${res.status}`)
-          }
-          setProfileData(data)
-          setProfileError(null)
-        })
-        .catch((err) => {
-          setProfileError(String(err))
-        })
-
-      fetch(`${apiBase}/api/miniapp/predictions/current`, { headers })
-        .then(async (res) => {
-          const data = (await res.json()) as PredictionsResponse
-          if (!res.ok) {
-            throw new Error(data.reason || data.error || `HTTP ${res.status}`)
-          }
-          setPredictionsData(data)
-          setPredictionsError(null)
-        })
-        .catch((err) => {
-          setPredictionsError(String(err))
-        })
-
-      loadPredictCurrent(apiBase, initData).catch((err) => {
-        setPredictError(String(err))
-      })
-
-      fetch(`${apiBase}/api/miniapp/table/current`, { headers })
-        .then(async (res) => {
-          const data = (await res.json()) as TableResponse
-          if (!res.ok) {
-            throw new Error(data.reason || data.error || `HTTP ${res.status}`)
-          }
-          setTableData(data)
-          setTableError(null)
-        })
-        .catch((err) => {
-          setTableError(String(err))
         })
     }
 
     run()
   }, [])
+
+  useEffect(() => {
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    if (!initData) {
+      return
+    }
+    const headers = {
+      'X-Telegram-Init-Data': initData,
+    }
+    const tParam = encodeURIComponent(selectedTournamentCode || 'RPL')
+
+    fetch(`${apiBase}/api/miniapp/profile?t=${tParam}`, { headers })
+      .then(async (res) => {
+        const data = (await res.json()) as ProfileResponse
+        if (!res.ok) {
+          throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+        }
+        setProfileData(data)
+        setProfileError(null)
+      })
+      .catch((err) => {
+        setProfileError(String(err))
+      })
+
+    fetch(`${apiBase}/api/miniapp/predictions/current?t=${tParam}`, { headers })
+      .then(async (res) => {
+        const data = (await res.json()) as PredictionsResponse
+        if (!res.ok) {
+          throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+        }
+        setPredictionsData(data)
+        setPredictionsError(null)
+      })
+      .catch((err) => {
+        setPredictionsError(String(err))
+      })
+
+    loadPredictCurrent(apiBase, initData, selectedTournamentCode).catch((err) => {
+      setPredictError(String(err))
+    })
+
+    fetch(`${apiBase}/api/miniapp/table/current?t=${tParam}`, { headers })
+      .then(async (res) => {
+        const data = (await res.json()) as TableResponse
+        if (!res.ok) {
+          throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+        }
+        setTableData(data)
+        setTableError(null)
+      })
+      .catch((err) => {
+        setTableError(String(err))
+      })
+  }, [selectedTournamentCode])
+
+  const selectTournament = async (code: string) => {
+    if (!code || code === selectedTournamentCode) {
+      return
+    }
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-Telegram-Init-Data': initData,
+    }
+    setTournamentNotice(null)
+    try {
+      const res = await fetch(`${apiBase}/api/miniapp/tournament/select`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ tournament_code: code }),
+      })
+      const data = (await res.json()) as { ok?: boolean; error?: string; reason?: string; selected_tournament_code?: string }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      const nextCode = data.selected_tournament_code || code
+      setSelectedTournamentCode(nextCode)
+      setTournamentNotice(`Выбран турнир: ${nextCode}`)
+      setTournamentsData((prev) => {
+        if (!prev?.items) return prev
+        return {
+          ...prev,
+          selected_tournament_code: nextCode,
+          items: prev.items.map((x) => ({ ...x, selected: x.code === nextCode })),
+        }
+      })
+    } catch (err) {
+      setTournamentNotice(`Ошибка выбора турнира: ${String(err)}`)
+    }
+  }
 
   const savePrediction = async (matchId: number) => {
     const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
@@ -252,7 +339,8 @@ function App() {
     setSavingMatchId(matchId)
     setPredictNotice(null)
     try {
-      const res = await fetch(`${apiBase}/api/miniapp/predict/set`, {
+      const tParam = encodeURIComponent(selectedTournamentCode || 'RPL')
+      const res = await fetch(`${apiBase}/api/miniapp/predict/set?t=${tParam}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -269,7 +357,7 @@ function App() {
         throw new Error(data.reason || data.error || `HTTP ${res.status}`)
       }
       setPredictNotice(`Ставка сохранена: ${data.prediction}`)
-      await loadPredictCurrent(apiBase, initData)
+      await loadPredictCurrent(apiBase, initData, selectedTournamentCode)
     } catch (err) {
       setPredictNotice(`Ошибка сохранения: ${String(err)}`)
     } finally {
@@ -288,6 +376,30 @@ function App() {
           </header>
 
           <section className="cards">
+            <div className="card card-static">
+              <div className="card-title">🏁 Турнир</div>
+              <div className="card-text">
+                Активный: <b>{selectedTournamentCode || 'RPL'}</b>
+                {tournamentNotice ? (
+                  <>
+                    <br />
+                    {tournamentNotice}
+                  </>
+                ) : null}
+              </div>
+              <div className="tournament-row">
+                {(tournamentsData?.items || []).map((t) => (
+                  <button
+                    key={t.code}
+                    className={`tournament-chip ${selectedTournamentCode === t.code ? 'is-active' : ''}`}
+                    onClick={() => selectTournament(t.code)}
+                  >
+                    {t.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <button className="card" onClick={() => setScreen('predict')}>
               <div className="card-title">🎯 Поставить прогноз</div>
               <div className="card-text">Выбрать тур и матчи</div>
@@ -322,7 +434,7 @@ function App() {
           <section className="cards">
             <div className="card">
               <div className="card-title">
-                {predictData?.tournament || 'РПЛ'} · Тур {predictData?.round_number ?? '—'}
+                {predictData?.tournament || selectedTournamentCode} · Тур {predictData?.round_number ?? '—'}
               </div>
               <div className="card-text">
                 {predictError ? (
@@ -445,7 +557,7 @@ function App() {
           <section className="cards">
             <div className="card">
               <div className="card-title">
-                {predictionsData?.tournament || 'РПЛ'} · Тур {predictionsData?.round_number ?? '—'}
+                {predictionsData?.tournament || selectedTournamentCode} · Тур {predictionsData?.round_number ?? '—'}
               </div>
               <div className="card-text">
                 {predictionsError ? (

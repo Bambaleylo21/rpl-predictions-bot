@@ -61,8 +61,33 @@
   cursor: pointer;
 }
 
+.card-static {
+  cursor: default;
+}
+
 .card:active {
   transform: translateY(1px);
+}
+
+.tournament-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.tournament-chip {
+  border: 1px solid #2f4777;
+  border-radius: 999px;
+  background: #122345;
+  color: #dce9ff;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.tournament-chip.is-active {
+  border-color: #4d79d8;
+  background: #1d3d78;
 }
 
 .predict-row {

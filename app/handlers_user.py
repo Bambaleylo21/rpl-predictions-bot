@@ -30,6 +30,10 @@ class PredictRoundStates(StatesGroup):
 DEFAULT_TOURNAMENT_CODE = "RPL"
 DEFAULT_RPL_ROUND_MIN = 1
 DEFAULT_RPL_ROUND_MAX = 30
+WC_TOURNAMENT_CODE = "WC2026"
+DEFAULT_WC_ROUND_MIN = 1
+DEFAULT_WC_ROUND_MAX = 64
+TOURNAMENT_SELECTED_KEY_PREFIX = "TOURNAMENT_SELECTED_U"
 
 
 def build_main_menu_keyboard(
@@ -45,6 +49,7 @@ def build_main_menu_keyboard(
             [types.KeyboardButton(text="🎯 Поставить прогноз")],
             [types.KeyboardButton(text="🗂 Мои прогнозы"), types.KeyboardButton(text="🏆 Общая таблица")],
             [types.KeyboardButton(text="👤 Мой профиль"), types.KeyboardButton(text="📊 Статистика")],
+            [types.KeyboardButton(text="🏁 Выбрать турнир")],
             [types.KeyboardButton(text="📘 Правила")],
         ]
     )
@@ -135,25 +140,91 @@ async def _get_join_cta_text(session, tg_user_id: int, tournament_id: int) -> st
     return "✅ Вступить в турнир"
 
 
-async def get_selected_tournament_for_user(session, tg_user_id: int) -> Tournament:
-    # Для участников оставляем только РПЛ.
-    t = await get_tournament_by_code(session, DEFAULT_TOURNAMENT_CODE)
+def _selected_tournament_key(tg_user_id: int) -> str:
+    return f"{TOURNAMENT_SELECTED_KEY_PREFIX}{int(tg_user_id)}"
+
+
+async def _ensure_tournament(
+    session,
+    code: str,
+    name: str,
+    round_min: int,
+    round_max: int,
+) -> Tournament:
+    q = await session.execute(select(Tournament).where(Tournament.code == code))
+    t = q.scalar_one_or_none()
     if t is None:
-        # fallback safety for corrupted DB
-        t = Tournament(
-            code=DEFAULT_TOURNAMENT_CODE,
-            name="РПЛ",
-            round_min=DEFAULT_RPL_ROUND_MIN,
-            round_max=DEFAULT_RPL_ROUND_MAX,
-            is_active=1,
-        )
+        t = Tournament(code=code, name=name, round_min=round_min, round_max=round_max, is_active=1)
         session.add(t)
-        await session.commit()
-        await session.refresh(t)
-    elif (t.code or "").upper() == DEFAULT_TOURNAMENT_CODE and (
+        await session.flush()
+    return t
+
+
+async def ensure_default_tournaments(session) -> tuple[Tournament, Tournament]:
+    rpl = await _ensure_tournament(
+        session=session,
+        code=DEFAULT_TOURNAMENT_CODE,
+        name="РПЛ",
+        round_min=DEFAULT_RPL_ROUND_MIN,
+        round_max=DEFAULT_RPL_ROUND_MAX,
+    )
+    wc = await _ensure_tournament(
+        session=session,
+        code=WC_TOURNAMENT_CODE,
+        name="ЧМ 2026",
+        round_min=DEFAULT_WC_ROUND_MIN,
+        round_max=DEFAULT_WC_ROUND_MAX,
+    )
+    return rpl, wc
+
+
+async def get_available_tournaments(session) -> list[Tournament]:
+    await ensure_default_tournaments(session)
+    q = await session.execute(
+        select(Tournament)
+        .where(Tournament.is_active == 1)
+        .order_by(case((Tournament.code == DEFAULT_TOURNAMENT_CODE, 0), else_=1), Tournament.code.asc())
+    )
+    return list(q.scalars().all())
+
+
+async def set_selected_tournament_for_user(session, tg_user_id: int, tournament_code: str) -> None:
+    code = (tournament_code or "").strip().upper()
+    await _set_setting(session, _selected_tournament_key(tg_user_id), code)
+
+
+async def get_selected_tournament_for_user(session, tg_user_id: int) -> Tournament:
+    await ensure_default_tournaments(session)
+    selected_code = (await _get_setting(session, _selected_tournament_key(tg_user_id)) or "").strip().upper()
+    if not selected_code:
+        selected_code = DEFAULT_TOURNAMENT_CODE
+
+    q = await session.execute(
+        select(Tournament).where(Tournament.code == selected_code, Tournament.is_active == 1).limit(1)
+    )
+    t = q.scalar_one_or_none()
+    if t is None:
+        fallback_q = await session.execute(
+            select(Tournament)
+            .where(Tournament.is_active == 1)
+            .order_by(case((Tournament.code == DEFAULT_TOURNAMENT_CODE, 0), else_=1), Tournament.code.asc())
+            .limit(1)
+        )
+        t = fallback_q.scalar_one_or_none()
+        if t is None:
+            # safety fallback
+            t = await _ensure_tournament(
+                session=session,
+                code=DEFAULT_TOURNAMENT_CODE,
+                name="РПЛ",
+                round_min=DEFAULT_RPL_ROUND_MIN,
+                round_max=DEFAULT_RPL_ROUND_MAX,
+            )
+        await set_selected_tournament_for_user(session, tg_user_id, t.code)
+
+    if (t.code or "").upper() == DEFAULT_TOURNAMENT_CODE and (
         int(t.round_min) != DEFAULT_RPL_ROUND_MIN or int(t.round_max) != DEFAULT_RPL_ROUND_MAX
     ):
-        # Самолечение: если в БД границы РПЛ съехали, возвращаем рабочий диапазон.
         t.round_min = DEFAULT_RPL_ROUND_MIN
         t.round_max = DEFAULT_RPL_ROUND_MAX
         await session.commit()
@@ -279,6 +350,20 @@ def build_round_picker_inline(prefix: str, round_min: int, round_max: int) -> ty
             row = []
     if row:
         rows.append(row)
+    return types.InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_tournament_picker_inline(
+    tournaments: list[Tournament],
+    selected_code: str | None = None,
+) -> types.InlineKeyboardMarkup:
+    rows: list[list[types.InlineKeyboardButton]] = []
+    selected = (selected_code or "").strip().upper()
+    for t in tournaments:
+        code = (t.code or "").strip().upper()
+        marker = "⭐ " if code == selected else ""
+        title = f"{marker}{display_tournament_name(t.name)} ({code})"
+        rows.append([types.InlineKeyboardButton(text=title, callback_data=f"pick_tournament:{code}")])
     return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -2152,6 +2237,59 @@ def register_user_handlers(dp: Dispatcher):
             )
         await message.answer("Что дальше?", reply_markup=build_stats_followup_keyboard())
 
+    @dp.message(F.text == "🏁 Выбрать турнир")
+    async def btn_pick_tournament(message: types.Message):
+        async with SessionLocal() as session:
+            tournaments = await get_available_tournaments(session)
+            selected = await get_selected_tournament_for_user(session, message.from_user.id)
+        await message.answer(
+            "🏁 Выбери турнир:",
+            reply_markup=build_tournament_picker_inline(tournaments, selected_code=selected.code),
+        )
+
+    @dp.message(Command("tournament"))
+    async def cmd_tournament(message: types.Message):
+        async with SessionLocal() as session:
+            tournaments = await get_available_tournaments(session)
+            selected = await get_selected_tournament_for_user(session, message.from_user.id)
+        await message.answer(
+            "🏁 Выбери турнир:",
+            reply_markup=build_tournament_picker_inline(tournaments, selected_code=selected.code),
+        )
+
+    @dp.callback_query(F.data.startswith("pick_tournament:"))
+    async def on_pick_tournament(callback: types.CallbackQuery):
+        data = callback.data or ""
+        code = (data.split(":", 1)[1] if ":" in data else "").strip().upper()
+        if not code:
+            await callback.answer("Не удалось выбрать турнир", show_alert=True)
+            return
+
+        async with SessionLocal() as session:
+            tournaments = await get_available_tournaments(session)
+            by_code = {(t.code or "").strip().upper(): t for t in tournaments}
+            picked = by_code.get(code)
+            if picked is None:
+                await callback.answer("Турнир недоступен", show_alert=True)
+                return
+            await set_selected_tournament_for_user(session, callback.from_user.id, code)
+            await session.commit()
+
+            is_joined = await is_user_in_tournament(session, callback.from_user.id, picked.id)
+            join_cta_text = await _get_join_cta_text(session, callback.from_user.id, picked.id)
+
+        _tournament, default_round = await _get_user_tournament_context(callback.from_user.id)
+        picked_name = display_tournament_name(picked.name)
+        await callback.message.answer(
+            f"✅ Выбран турнир: {picked_name}\nТекущий тур по умолчанию: {default_round}",
+            reply_markup=build_main_menu_keyboard(
+                default_round=default_round,
+                is_joined=is_joined,
+                join_cta_text=join_cta_text,
+            ),
+        )
+        await callback.answer()
+
     @dp.message(F.text.regexp(r"(?i).*мой\s+профил.*"))
     async def btn_profile(message: types.Message):
         async with SessionLocal() as session:
@@ -2605,7 +2743,7 @@ def register_user_handlers(dp: Dispatcher):
             is_joined = await is_user_in_tournament(session, message.from_user.id, tournament.id)
             join_cta_text = await _get_join_cta_text(session, message.from_user.id, tournament.id)
         await message.answer(
-            "🏆 Добро пожаловать в бот прогнозов РПЛ.\n\n"
+            "🏆 Добро пожаловать в бот прогнозов.\n\n"
             "Как начать (3 шага):\n"
             "1) Нажми «✅ Вступить в турнир» и введи имя для таблицы\n"
             "2) Открой «🎯 Поставить прогноз»\n"
