@@ -14,32 +14,52 @@ type MeResponse = {
 }
 
 function App() {
-  const tgUserId = WebApp.initDataUnsafe?.user?.id ?? null
-  const tgUsername = WebApp.initDataUnsafe?.user?.username ?? null
+  const [tgUserId, setTgUserId] = useState<number | null>(null)
+  const [tgUsername, setTgUsername] = useState<string | null>(null)
+  const [initDataLen, setInitDataLen] = useState<number>(0)
   const inTelegram = tgUserId !== null
   const [meData, setMeData] = useState<MeResponse | null>(null)
   const [apiError, setApiError] = useState<string | null>(null)
 
   useEffect(() => {
     const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
-    const initData = WebApp.initData || ''
+    let attempts = 0
+    const maxAttempts = 30 // ~3s
 
-    fetch(`${apiBase}/api/miniapp/me`, {
-      headers: {
-        'X-Telegram-Init-Data': initData,
-      },
-    })
-      .then(async (res) => {
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`)
-        }
-        const data = (await res.json()) as MeResponse
-        setMeData(data)
-        setApiError(null)
+    const run = () => {
+      const tgWebApp = (window as any).Telegram?.WebApp
+      const initData = tgWebApp?.initData || WebApp.initData || ''
+      const user = tgWebApp?.initDataUnsafe?.user ?? WebApp.initDataUnsafe?.user
+
+      setInitDataLen(initData.length)
+      setTgUserId(user?.id ?? null)
+      setTgUsername(user?.username ?? null)
+
+      if (!initData && attempts < maxAttempts) {
+        attempts += 1
+        setTimeout(run, 100)
+        return
+      }
+
+      fetch(`${apiBase}/api/miniapp/me`, {
+        headers: {
+          'X-Telegram-Init-Data': initData,
+        },
       })
-      .catch((err) => {
-        setApiError(String(err))
-      })
+        .then(async (res) => {
+          if (!res.ok) {
+            throw new Error(`HTTP ${res.status}`)
+          }
+          const data = (await res.json()) as MeResponse
+          setMeData(data)
+          setApiError(null)
+        })
+        .catch((err) => {
+          setApiError(String(err))
+        })
+    }
+
+    run()
   }, [])
 
   return (
@@ -87,7 +107,11 @@ function App() {
                 ) : null}
               </>
             ) : (
-              'Открыто вне Telegram (это нормально для локальной проверки).'
+              <>
+                Открыто вне Telegram или initData ещё не пришёл.
+                <br />
+                initData length: <b>{initDataLen}</b>
+              </>
             )}
           </div>
         </div>
