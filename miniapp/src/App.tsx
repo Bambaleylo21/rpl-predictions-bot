@@ -154,6 +154,12 @@ function App() {
   const [selectedTournamentCode, setSelectedTournamentCode] = useState<string>('RPL')
   const [tournamentNotice, setTournamentNotice] = useState<string | null>(null)
   const [predictionsFilter, setPredictionsFilter] = useState<'open' | 'closed'>('open')
+
+  const formatScoreInput = (raw: string): string => {
+    const digits = raw.replace(/\D/g, '').slice(0, 3)
+    if (digits.length <= 1) return digits
+    return `${digits.slice(0, 1)}-${digits.slice(1)}`
+  }
   const showDebugPanels = import.meta.env.DEV || import.meta.env.VITE_DEBUG_PANELS === '1'
 
   const getInitData = () => {
@@ -477,10 +483,10 @@ function App() {
                       onChange={(e) =>
                         setScoreInputs((prev) => ({
                           ...prev,
-                          [m.match_id]: e.target.value,
+                          [m.match_id]: formatScoreInput(e.target.value),
                         }))
                       }
-                      placeholder="2:1"
+                      placeholder="2-1"
                       inputMode="numeric"
                     />
                     <button
