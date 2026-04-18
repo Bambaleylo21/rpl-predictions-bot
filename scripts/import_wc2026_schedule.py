@@ -3,11 +3,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import re
-from datetime import datetime, time
+from datetime import date, datetime, time
 from pathlib import Path
 from typing import Any
 
 from openpyxl import load_workbook
+from openpyxl.utils.datetime import from_excel
 from sqlalchemy import delete, select
 
 from app.db import SessionLocal
@@ -68,6 +69,15 @@ def _parse_match_pair(raw: Any) -> tuple[str, str] | None:
 def _parse_date(raw: Any) -> datetime.date | None:
     if raw is None:
         return None
+    if isinstance(raw, (int, float)):
+        try:
+            dt = from_excel(raw)
+            if isinstance(dt, datetime):
+                return dt.date()
+            if isinstance(dt, date):
+                return dt
+        except Exception:
+            pass
     if isinstance(raw, datetime):
         return raw.date()
     txt = str(raw).strip()
@@ -84,6 +94,15 @@ def _parse_date(raw: Any) -> datetime.date | None:
 def _parse_time(raw: Any) -> time | None:
     if raw is None:
         return None
+    if isinstance(raw, (int, float)):
+        try:
+            dt = from_excel(raw)
+            if isinstance(dt, datetime):
+                return dt.time().replace(second=0, microsecond=0)
+            if isinstance(dt, time):
+                return dt.replace(second=0, microsecond=0)
+        except Exception:
+            pass
     if isinstance(raw, datetime):
         return raw.time().replace(second=0, microsecond=0)
     if isinstance(raw, time):
@@ -178,12 +197,6 @@ async def run_import(xlsx_path: Path, clear_wc_matches: bool = False) -> None:
         if header_idx is None:
             continue
         rows.append((sheet_rows, mapping, ws.title, header_idx))
-
-    if not rows:
-        raise RuntimeError(
-            "Не смог найти строку заголовков ни на одном листе. "
-            "Нужны колонки: раунд, дата, время и матч (или отдельно home/away)."
-        )
 
     parsed: list[dict[str, Any]] = []
     skipped_no_match = 0
@@ -295,6 +308,12 @@ async def run_import(xlsx_path: Path, clear_wc_matches: bool = False) -> None:
                         "group_label": group_label or None,
                     }
                 )
+
+    if not parsed:
+        raise RuntimeError(
+            "Не смог распознать ни одной строки расписания. "
+            "Проверь формат столбцов: группа | раунд | дата | время | матч."
+        )
 
     async with SessionLocal() as session:
         tq = await session.execute(select(Tournament).where(Tournament.code == WC_CODE).limit(1))
