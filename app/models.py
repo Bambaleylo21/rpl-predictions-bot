@@ -80,6 +80,7 @@ class Match(Base):
 
     home_team: Mapped[str] = mapped_column(String(64), nullable=False)
     away_team: Mapped[str] = mapped_column(String(64), nullable=False)
+    group_label: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
 
     kickoff_time: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
 
@@ -99,6 +100,13 @@ class Match(Base):
 
     # внешний id матча из API (для API-Sport.ru используем match id)
     api_fixture_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    is_placeholder: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+        index=True,
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime,

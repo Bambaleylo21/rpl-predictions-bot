@@ -10,7 +10,7 @@ import re
 
 from app.config import load_admin_ids
 from app.db import SessionLocal
-from app.display import display_team_name, display_tournament_name
+from app.display import display_round_name, display_team_name, display_tournament_name
 from app.league_table import build_active_stage_league_table, get_user_stage_scope
 from app.models import League, LeagueMovement, Match, Point, Prediction, Setting, Stage, Tournament, User, UserTournament
 from app.season_setup import is_enrollment_open
@@ -1018,14 +1018,20 @@ async def build_round_matches_text(round_number: int, tournament_id: int, tourna
             "Проверь соседний тур или загляни позже — расписание может обновиться."
         )
 
-    lines = [f"📅 {tournament_name} · Тур {round_number} (МСК)"]
+    tournament_code = ""
+    async with SessionLocal() as session:
+        tq = await session.execute(select(Tournament.code).where(Tournament.id == tournament_id))
+        tournament_code = str(tq.scalar_one_or_none() or "")
+
+    lines = [f"📅 {tournament_name} · {display_round_name(tournament_code, round_number)} (МСК)"]
     for m in matches:
         icon = match_status_icon(m, now)
         score = ""
         if m.home_score is not None and m.away_score is not None:
             score = f" | {m.home_score}:{m.away_score}"
+        grp = f"[{m.group_label}] " if (m.group_label or "").strip() else ""
         lines.append(
-            f"{icon} {display_team_name(m.home_team)} — {display_team_name(m.away_team)} "
+            f"{icon} {grp}{display_team_name(m.home_team)} — {display_team_name(m.away_team)} "
             f"| {m.kickoff_time.strftime('%d.%m %H:%M')}{score}"
         )
     lines.append("")

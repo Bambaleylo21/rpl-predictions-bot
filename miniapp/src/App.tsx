@@ -45,6 +45,7 @@ type PredictionsResponse = {
   reason?: string
   trusted?: boolean
   tournament?: string
+  round_name?: string
   round_number?: number
   round_min?: number
   round_max?: number
@@ -53,6 +54,7 @@ type PredictionsResponse = {
     match_id: number
     home_team: string
     away_team: string
+    group_label?: string | null
     kickoff: string
     status: 'open' | 'closed'
     result: string | null
@@ -71,6 +73,7 @@ type PredictCurrentResponse = {
   joined?: boolean
   message?: string
   tournament?: string
+  round_name?: string
   round_number?: number
   round_min?: number
   round_max?: number
@@ -78,6 +81,7 @@ type PredictCurrentResponse = {
     match_id: number
     home_team: string
     away_team: string
+    group_label?: string | null
     kickoff: string
     prediction: string | null
   }>
@@ -149,6 +153,7 @@ function App() {
   const [tournamentsData, setTournamentsData] = useState<TournamentsResponse | null>(null)
   const [selectedTournamentCode, setSelectedTournamentCode] = useState<string>('RPL')
   const [tournamentNotice, setTournamentNotice] = useState<string | null>(null)
+  const [predictionsFilter, setPredictionsFilter] = useState<'open' | 'closed'>('open')
   const showDebugPanels = import.meta.env.DEV || import.meta.env.VITE_DEBUG_PANELS === '1'
 
   const getInitData = () => {
@@ -434,7 +439,7 @@ function App() {
           <section className="cards">
             <div className="card">
               <div className="card-title">
-                {predictData?.tournament || selectedTournamentCode} · Тур {predictData?.round_number ?? '—'}
+                {predictData?.tournament || selectedTournamentCode} · {predictData?.round_name || `Тур ${predictData?.round_number ?? '—'}`}
               </div>
               <div className="card-text">
                 {predictError ? (
@@ -460,7 +465,7 @@ function App() {
             {(predictData?.items || []).map((m) => (
               <div className="card" key={m.match_id}>
                 <div className="card-title">
-                  {m.home_team} — {m.away_team}
+                  {(m.group_label ? `[${m.group_label}] ` : '') + m.home_team} — {m.away_team}
                 </div>
                 <div className="card-text">
                   {m.kickoff} МСК
@@ -557,7 +562,7 @@ function App() {
           <section className="cards">
             <div className="card">
               <div className="card-title">
-                {predictionsData?.tournament || selectedTournamentCode} · Тур {predictionsData?.round_number ?? '—'}
+                {predictionsData?.tournament || selectedTournamentCode} · {predictionsData?.round_name || `Тур ${predictionsData?.round_number ?? '—'}`}
               </div>
               <div className="card-text">
                 {predictionsError ? (
@@ -576,10 +581,32 @@ function App() {
           </section>
 
           <section className="cards" style={{ marginTop: 10 }}>
-            {(predictionsData?.items || []).map((m) => (
+            <div className="card card-static">
+              <div className="card-title">Показать матчи</div>
+              <div className="tournament-row">
+                <button
+                  className={`tournament-chip ${predictionsFilter === 'open' ? 'is-active' : ''}`}
+                  onClick={() => setPredictionsFilter('open')}
+                >
+                  Активные
+                </button>
+                <button
+                  className={`tournament-chip ${predictionsFilter === 'closed' ? 'is-active' : ''}`}
+                  onClick={() => setPredictionsFilter('closed')}
+                >
+                  Завершённые
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <section className="cards" style={{ marginTop: 10 }}>
+            {(predictionsData?.items || [])
+              .filter((m) => (predictionsFilter === 'open' ? m.status === 'open' : m.status === 'closed'))
+              .map((m) => (
               <div className="card" key={m.match_id}>
                 <div className="card-title">
-                  {m.home_team} — {m.away_team}
+                  {(m.group_label ? `[${m.group_label}] ` : '') + m.home_team} — {m.away_team}
                 </div>
                 <div className="card-text">
                   {m.kickoff} МСК

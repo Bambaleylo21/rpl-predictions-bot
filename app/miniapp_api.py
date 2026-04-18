@@ -14,6 +14,7 @@ from aiohttp import web
 from sqlalchemy import case, func, select
 
 from app.db import SessionLocal
+from app.display import display_round_name
 from app.league_table import build_active_stage_league_table
 from app.models import League, LeagueParticipant, Match, Point, Prediction, Setting, Stage, Tournament, User, UserTournament
 
@@ -621,6 +622,7 @@ async def predictions_current(request: web.Request) -> web.Response:
                     .where(
                         Match.tournament_id == int(tournament.id),
                         Match.round_number == int(current_round),
+                        Match.is_placeholder == 0,
                     )
                     .order_by(Match.kickoff_time.asc(), Match.id.asc())
                 )
@@ -666,6 +668,7 @@ async def predictions_current(request: web.Request) -> web.Response:
                         "match_id": int(m.id),
                         "home_team": m.home_team,
                         "away_team": m.away_team,
+                        "group_label": m.group_label,
                         "kickoff": m.kickoff_time.strftime("%d.%m %H:%M"),
                         "status": "closed" if is_closed else "open",
                         "result": f"{m.home_score}:{m.away_score}" if is_closed else None,
@@ -682,6 +685,7 @@ async def predictions_current(request: web.Request) -> web.Response:
                     "trusted": True,
                     "tournament_code": tournament.code,
                     "tournament": tournament.name,
+                    "round_name": display_round_name(tournament.code, current_round),
                     "round_number": int(current_round),
                     "round_min": int(round_min),
                     "round_max": int(round_max),
@@ -773,6 +777,7 @@ async def predict_current(request: web.Request) -> web.Response:
                         Match.tournament_id == int(tournament.id),
                         Match.round_number >= int(round_min),
                         Match.round_number <= int(round_max),
+                        Match.is_placeholder == 0,
                     )
                     .group_by(Match.round_number)
                     .order_by(Match.round_number.asc())
@@ -794,6 +799,7 @@ async def predict_current(request: web.Request) -> web.Response:
                         Match.tournament_id == int(tournament.id),
                         Match.round_number == int(current_round),
                         Match.kickoff_time > now,
+                        Match.is_placeholder == 0,
                     )
                     .order_by(Match.kickoff_time.asc(), Match.id.asc())
                 )
@@ -820,6 +826,7 @@ async def predict_current(request: web.Request) -> web.Response:
                         "match_id": int(m.id),
                         "home_team": m.home_team,
                         "away_team": m.away_team,
+                        "group_label": m.group_label,
                         "kickoff": m.kickoff_time.strftime("%d.%m %H:%M"),
                         "prediction": f"{pred.pred_home}:{pred.pred_away}" if pred is not None else None,
                     }
@@ -832,6 +839,7 @@ async def predict_current(request: web.Request) -> web.Response:
                     "joined": True,
                     "tournament_code": tournament.code,
                     "tournament": tournament.name,
+                    "round_name": display_round_name(tournament.code, current_round),
                     "round_number": int(current_round),
                     "round_min": int(round_min),
                     "round_max": int(round_max),
@@ -889,6 +897,7 @@ async def predict_set(request: web.Request) -> web.Response:
                     select(Match).where(
                         Match.id == int(match_id),
                         Match.tournament_id == int(tournament.id),
+                        Match.is_placeholder == 0,
                     )
                 )
             ).scalar_one_or_none()

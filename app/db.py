@@ -69,6 +69,11 @@ async def _apply_postgres_schema_fixes(conn) -> None:
         # внешний id матча из API (для API-Sport.ru используем match id)
         "ALTER TABLE matches ADD COLUMN IF NOT EXISTS api_fixture_id BIGINT",
         "CREATE INDEX IF NOT EXISTS ix_matches_api_fixture_id ON matches (api_fixture_id)",
+        "ALTER TABLE matches ADD COLUMN IF NOT EXISTS group_label VARCHAR(32)",
+        "CREATE INDEX IF NOT EXISTS ix_matches_group_label ON matches (group_label)",
+        "ALTER TABLE matches ADD COLUMN IF NOT EXISTS is_placeholder INTEGER NOT NULL DEFAULT 0",
+        "UPDATE matches SET is_placeholder = 0 WHERE is_placeholder IS NULL",
+        "CREATE INDEX IF NOT EXISTS ix_matches_is_placeholder ON matches (is_placeholder)",
 
         # источник матча: manual / apisport
         "ALTER TABLE matches ADD COLUMN IF NOT EXISTS source VARCHAR(16) NOT NULL DEFAULT 'manual'",
@@ -125,9 +130,14 @@ async def _apply_sqlite_schema_fixes(conn) -> None:
 
         # matches.tournament_id
         "ALTER TABLE matches ADD COLUMN tournament_id INTEGER",
+        "ALTER TABLE matches ADD COLUMN group_label VARCHAR(32)",
+        "ALTER TABLE matches ADD COLUMN is_placeholder INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE users ADD COLUMN display_name VARCHAR(64)",
         "UPDATE matches SET tournament_id = (SELECT id FROM tournaments WHERE code = 'RPL' LIMIT 1) WHERE tournament_id IS NULL",
+        "UPDATE matches SET is_placeholder = COALESCE(is_placeholder, 0)",
         "CREATE INDEX IF NOT EXISTS ix_matches_tournament_id ON matches (tournament_id)",
+        "CREATE INDEX IF NOT EXISTS ix_matches_group_label ON matches (group_label)",
+        "CREATE INDEX IF NOT EXISTS ix_matches_is_placeholder ON matches (is_placeholder)",
 
         # backfill memberships for existing users into RPL
         "INSERT OR IGNORE INTO user_tournaments (tg_user_id, tournament_id) SELECT u.tg_user_id, t.id FROM users u CROSS JOIN tournaments t WHERE t.code = 'RPL'",
