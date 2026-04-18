@@ -99,6 +99,37 @@ def _parse_time(raw: Any) -> time | None:
     return None
 
 
+def _extract_kickoff_from_row(row: list[Any]) -> datetime | None:
+    date_part = None
+    time_part = None
+    for cell in row:
+        if isinstance(cell, datetime):
+            return cell.replace(second=0, microsecond=0)
+        if date_part is None:
+            date_part = _parse_date(cell)
+        if time_part is None:
+            time_part = _parse_time(cell)
+    if date_part is None or time_part is None:
+        return None
+    return datetime.combine(date_part, time_part)
+
+
+def _detect_group_from_row(row: list[Any], skip_indexes: set[int]) -> str | None:
+    for idx, cell in enumerate(row):
+        if idx in skip_indexes:
+            continue
+        txt = str(cell or "").strip()
+        if not txt:
+            continue
+        n = _norm(txt)
+        if n.startswith("группа ") or n.startswith("group "):
+            return txt
+        # Частый формат просто "A", "B", ..., "H"
+        if len(txt) == 1 and txt.upper() in {"A", "B", "C", "D", "E", "F", "G", "H"}:
+            return txt.upper()
+    return None
+
+
 def _detect_columns(header_cells: list[Any]) -> dict[str, int]:
     out: dict[str, int] = {}
     for i, cell in enumerate(header_cells):
@@ -207,6 +238,63 @@ async def run_import(xlsx_path: Path, clear_wc_matches: bool = False) -> None:
                     "group_label": group_label or None,
                 }
             )
+
+    # Fallback: если не нашли ни одной строки через заголовки —
+    # пытаемся вытащить расписание эвристикой по каждой строке.
+    if not parsed:
+        for ws in wb.worksheets:
+            sheet_rows = list(ws.iter_rows(values_only=True))
+            for r_tuple in sheet_rows:
+                if r_tuple is None:
+                    continue
+                r = list(r_tuple)
+                if not any(x is not None and str(x).strip() for x in r):
+                    continue
+
+                round_idx = None
+                round_number = None
+                match_idx = None
+                pair = None
+
+                for idx, cell in enumerate(r):
+                    if round_number is None:
+                        rn = _round_to_number(cell)
+                        if rn is not None:
+                            round_number = rn
+                            round_idx = idx
+                    if pair is None:
+                        p = _parse_match_pair(cell)
+                        if p is not None:
+                            pair = p
+                            match_idx = idx
+
+                if round_number is None:
+                    continue
+                if pair is None:
+                    skipped_no_match += 1
+                    continue
+
+                kickoff = _extract_kickoff_from_row(r)
+                if kickoff is None:
+                    skipped_bad_datetime += 1
+                    continue
+
+                skip_indexes: set[int] = set()
+                if round_idx is not None:
+                    skip_indexes.add(round_idx)
+                if match_idx is not None:
+                    skip_indexes.add(match_idx)
+                group_label = _detect_group_from_row(r, skip_indexes=skip_indexes)
+
+                parsed.append(
+                    {
+                        "round_number": round_number,
+                        "kickoff_time": kickoff,
+                        "home_team": pair[0],
+                        "away_team": pair[1],
+                        "group_label": group_label or None,
+                    }
+                )
 
     async with SessionLocal() as session:
         tq = await session.execute(select(Tournament).where(Tournament.code == WC_CODE).limit(1))
