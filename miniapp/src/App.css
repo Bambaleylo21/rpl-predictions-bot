@@ -2,24 +2,25 @@
   min-height: 100vh;
   background: linear-gradient(180deg, #0b1220 0%, #101a2d 60%, #13223a 100%);
   color: #e8eefb;
-  padding: 20px 16px 28px;
-  box-sizing: border-box;
 }
 
 .topbar {
-  margin-bottom: 18px;
+  padding: 14px 14px 10px;
 }
 
-.back-btn {
-  display: inline-flex;
-  align-items: center;
-  border: 1px solid #2f4777;
-  background: #14233f;
-  color: #dce9ff;
-  border-radius: 10px;
-  padding: 6px 10px;
-  margin-bottom: 10px;
-  cursor: pointer;
+.topbar.sticky {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: rgba(11, 18, 32, 0.92);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid rgba(56, 86, 141, 0.45);
+}
+
+.topbar-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .badge {
@@ -35,20 +36,75 @@
 
 .topbar h1 {
   margin: 0;
-  font-size: 28px;
+  font-size: 24px;
   line-height: 1.1;
 }
 
 .topbar p {
-  margin: 8px 0 0;
+  margin: 7px 0 0;
   color: #b9c8e6;
-  font-size: 14px;
+  font-size: 13px;
+}
+
+.tournament-icons {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.tournament-icon {
+  width: 52px;
+  border: 1px solid #2f4777;
+  border-radius: 12px;
+  background: #122345;
+  color: #dce9ff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 4px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  filter: grayscale(1);
+  opacity: 0.55;
+}
+
+.tournament-icon span {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.tournament-icon small {
+  margin-top: 3px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.tournament-icon.is-active {
+  filter: none;
+  opacity: 1;
+  border-color: #4d79d8;
+  background: #1d3d78;
+}
+
+.notice-line {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #9fb2da;
+}
+
+.content {
+  padding: 10px 14px 90px;
 }
 
 .cards {
   display: grid;
   grid-template-columns: 1fr;
   gap: 10px;
+}
+
+.space-top {
+  margin-top: 10px;
 }
 
 .card {
@@ -58,15 +114,10 @@
   text-align: left;
   padding: 14px;
   color: #ecf2ff;
-  cursor: pointer;
 }
 
 .card-static {
   cursor: default;
-}
-
-.card:active {
-  transform: translateY(1px);
 }
 
 .tournament-row {
@@ -134,10 +185,47 @@
   font-size: 13px;
 }
 
+.bottom-tabs {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  padding: 8px;
+  background: rgba(10, 16, 28, 0.95);
+  backdrop-filter: blur(10px);
+  border-top: 1px solid rgba(56, 86, 141, 0.45);
+}
+
+.tab-btn {
+  border: 1px solid #2f4777;
+  border-radius: 10px;
+  background: #122345;
+  color: #cfe0ff;
+  padding: 9px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tab-btn.is-active {
+  border-color: #4d79d8;
+  background: #1d3d78;
+  color: #ffffff;
+}
+
 @media (min-width: 700px) {
   .app-shell {
-    max-width: 700px;
+    max-width: 760px;
     margin: 0 auto;
+    border-left: 1px solid rgba(56, 86, 141, 0.35);
+    border-right: 1px solid rgba(56, 86, 141, 0.35);
   }
 
   .cards {

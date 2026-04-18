@@ -129,10 +129,10 @@ type TournamentsResponse = {
   reason?: string
 }
 
-type Screen = 'home' | 'predict' | 'profile' | 'predictions' | 'table'
+type Screen = 'predict' | 'profile' | 'predictions' | 'table'
 
 function App() {
-  const [screen, setScreen] = useState<Screen>('home')
+  const [screen, setScreen] = useState<Screen>('predict')
   const [tgUserId, setTgUserId] = useState<number | null>(null)
   const [tgUsername, setTgUsername] = useState<string | null>(null)
   const [initDataLen, setInitDataLen] = useState<number>(0)
@@ -150,8 +150,7 @@ function App() {
   const [predictNotice, setPredictNotice] = useState<string | null>(null)
   const [tableData, setTableData] = useState<TableResponse | null>(null)
   const [tableError, setTableError] = useState<string | null>(null)
-  const [tournamentsData, setTournamentsData] = useState<TournamentsResponse | null>(null)
-  const [selectedTournamentCode, setSelectedTournamentCode] = useState<string>('RPL')
+  const [selectedTournamentCode, setSelectedTournamentCode] = useState<string>('WC2026')
   const [tournamentNotice, setTournamentNotice] = useState<string | null>(null)
   const [predictionsFilter, setPredictionsFilter] = useState<'open' | 'closed'>('open')
 
@@ -216,8 +215,8 @@ function App() {
           if (!res.ok) {
             throw new Error(data.reason || data.error || `HTTP ${res.status}`)
           }
-          setTournamentsData(data)
-          const selected = data.selected_tournament_code || data.items?.find((x) => x.selected)?.code || 'RPL'
+          const wcFirst = data.items?.find((x) => x.code === 'WC2026')?.code
+          const selected = wcFirst || data.selected_tournament_code || data.items?.find((x) => x.selected)?.code || 'WC2026'
           setSelectedTournamentCode(selected)
         })
         .catch(() => {
@@ -232,9 +231,6 @@ function App() {
           }
           setMeData(data)
           setApiError(null)
-          if (data.selected_tournament_code) {
-            setSelectedTournamentCode(data.selected_tournament_code)
-          }
         })
         .catch((err) => {
           setApiError(String(err))
@@ -323,14 +319,6 @@ function App() {
       const nextCode = data.selected_tournament_code || code
       setSelectedTournamentCode(nextCode)
       setTournamentNotice(`Выбран турнир: ${nextCode}`)
-      setTournamentsData((prev) => {
-        if (!prev?.items) return prev
-        return {
-          ...prev,
-          selected_tournament_code: nextCode,
-          items: prev.items.map((x) => ({ ...x, selected: x.code === nextCode })),
-        }
-      })
     } catch (err) {
       setTournamentNotice(`Ошибка выбора турнира: ${String(err)}`)
     }
@@ -376,149 +364,117 @@ function App() {
     }
   }
 
+  const tabMeta: Record<Screen, { title: string; subtitle: string; icon: string }> = {
+    profile: { title: 'Профиль', subtitle: 'Личная статистика участника', icon: '👤' },
+    predict: { title: 'Сделать прогноз', subtitle: 'Открытые матчи текущего тура', icon: '🎯' },
+    predictions: { title: 'Мои прогнозы', subtitle: 'Твои ставки по матчам', icon: '🗂' },
+    table: { title: 'Таблица', subtitle: 'Позиции участников турнира', icon: '🏆' },
+  }
+
+  const tournamentButtons = [
+    { code: 'WC2026', icon: '⚽', label: 'WC' },
+    { code: 'RPL', icon: '🏆', label: 'РПЛ' },
+  ]
+
   return (
     <div className="app-shell">
-      {screen === 'home' ? (
-        <>
-          <header className="topbar">
+      <header className="topbar sticky">
+        <div className="topbar-row">
+          <div>
             <div className="badge">РПЛ Mini App</div>
-            <h1>Бот прогнозов</h1>
-            <p>Новый интерфейс. Дальше подключаем рабочие экраны по шагам.</p>
-          </header>
+            <h1>{tabMeta[screen].icon} {tabMeta[screen].title}</h1>
+            <p>{tabMeta[screen].subtitle}</p>
+          </div>
+          <div className="tournament-icons">
+            {tournamentButtons.map((t) => (
+              <button
+                key={t.code}
+                className={`tournament-icon ${selectedTournamentCode === t.code ? 'is-active' : ''}`}
+                onClick={() => selectTournament(t.code)}
+                title={t.label}
+              >
+                <span>{t.icon}</span>
+                <small>{t.label}</small>
+              </button>
+            ))}
+          </div>
+        </div>
+        {tournamentNotice ? <div className="notice-line">{tournamentNotice}</div> : null}
+      </header>
 
-          <section className="cards">
-            <div className="card card-static">
-              <div className="card-title">🏁 Турнир</div>
-              <div className="card-text">
-                Активный: <b>{selectedTournamentCode || 'RPL'}</b>
-                {tournamentNotice ? (
-                  <>
-                    <br />
-                    {tournamentNotice}
-                  </>
-                ) : null}
-              </div>
-              <div className="tournament-row">
-                {(tournamentsData?.items || []).map((t) => (
-                  <button
-                    key={t.code}
-                    className={`tournament-chip ${selectedTournamentCode === t.code ? 'is-active' : ''}`}
-                    onClick={() => selectTournament(t.code)}
-                  >
-                    {t.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <button className="card" onClick={() => setScreen('predict')}>
-              <div className="card-title">🎯 Поставить прогноз</div>
-              <div className="card-text">Выбрать тур и матчи</div>
-            </button>
-
-            <button className="card" onClick={() => setScreen('predictions')}>
-              <div className="card-title">🗂 Мои прогнозы</div>
-              <div className="card-text">Текущий и другие туры</div>
-            </button>
-
-            <button className="card" onClick={() => setScreen('table')}>
-              <div className="card-title">🏆 Таблица</div>
-              <div className="card-text">Лига и этап</div>
-            </button>
-
-            <button className="card" onClick={() => setScreen('profile')}>
-              <div className="card-title">👤 Профиль</div>
-              <div className="card-text">Открыть личную статистику</div>
-            </button>
-          </section>
-        </>
-      ) : screen === 'predict' ? (
-        <>
-          <header className="topbar">
-            <button className="back-btn" onClick={() => setScreen('home')}>
-              ← Назад
-            </button>
-            <h1>🎯 Поставить прогноз</h1>
-            <p>Открытые матчи текущего тура. Можно менять до начала матча.</p>
-          </header>
-
-          <section className="cards">
-            <div className="card">
-              <div className="card-title">
-                {predictData?.tournament || selectedTournamentCode} · {predictData?.round_name || `Тур ${predictData?.round_number ?? '—'}`}
-              </div>
-              <div className="card-text">
-                {predictError ? (
-                  <>Ошибка: {predictError}</>
-                ) : !predictData ? (
-                  'Загружаю матчи...'
-                ) : predictData.joined === false ? (
-                  predictData.message || 'Нужно вступить в турнир, чтобы ставить прогнозы.'
-                ) : (
-                  <>Открытых матчей: <b>{predictData.items?.length ?? 0}</b></>
-                )}
-                {predictNotice ? (
-                  <>
-                    <br />
-                    {predictNotice}
-                  </>
-                ) : null}
-              </div>
-            </div>
-          </section>
-
-          <section className="cards" style={{ marginTop: 10 }}>
-            {(predictData?.items || []).map((m) => (
-              <div className="card" key={m.match_id}>
+      <main className="content">
+        {screen === 'predict' ? (
+          <>
+            <section className="cards">
+              <div className="card">
                 <div className="card-title">
-                  {(m.group_label ? `[${m.group_label}] ` : '') + m.home_team} — {m.away_team}
+                  {predictData?.tournament || selectedTournamentCode} · {predictData?.round_name || `Тур ${predictData?.round_number ?? '—'}`}
                 </div>
                 <div className="card-text">
-                  {m.kickoff} МСК
-                  <br />
-                  <div className="predict-row">
-                    <input
-                      className="score-input"
-                      value={scoreInputs[m.match_id] || ''}
-                      onChange={(e) =>
-                        setScoreInputs((prev) => ({
-                          ...prev,
-                          [m.match_id]: formatScoreInput(e.target.value),
-                        }))
-                      }
-                      placeholder="2-1"
-                      inputMode="numeric"
-                    />
-                    <button
-                      className="save-btn"
-                      onClick={() => savePrediction(m.match_id)}
-                      disabled={savingMatchId === m.match_id}
-                    >
-                      {savingMatchId === m.match_id ? 'Сохраняю...' : 'Сохранить'}
-                    </button>
-                  </div>
-                  {m.prediction ? (
-                    <>
-                      Текущий прогноз: <b>{m.prediction}</b>
-                    </>
+                  {predictError ? (
+                    <>Ошибка: {predictError}</>
+                  ) : !predictData ? (
+                    'Загружаю матчи...'
+                  ) : predictData.joined === false ? (
+                    predictData.message || 'Нужно вступить в турнир, чтобы ставить прогнозы.'
                   ) : (
-                    'Прогноз пока не поставлен.'
+                    <>Открытых матчей: <b>{predictData.items?.length ?? 0}</b></>
                   )}
+                  {predictNotice ? (
+                    <>
+                      <br />
+                      {predictNotice}
+                    </>
+                  ) : null}
                 </div>
               </div>
-            ))}
-          </section>
-        </>
-      ) : screen === 'profile' ? (
-        <>
-          <header className="topbar">
-            <button className="back-btn" onClick={() => setScreen('home')}>
-              ← Назад
-            </button>
-            <h1>👤 Мой профиль</h1>
-            <p>Личные данные участника из защищённого API.</p>
-          </header>
+            </section>
 
+            <section className="cards space-top">
+              {(predictData?.items || []).map((m) => (
+                <div className="card" key={m.match_id}>
+                  <div className="card-title">
+                    {(m.group_label ? `[${m.group_label}] ` : '') + m.home_team} — {m.away_team}
+                  </div>
+                  <div className="card-text">
+                    {m.kickoff} МСК
+                    <br />
+                    <div className="predict-row">
+                      <input
+                        className="score-input"
+                        value={scoreInputs[m.match_id] || ''}
+                        onChange={(e) =>
+                          setScoreInputs((prev) => ({
+                            ...prev,
+                            [m.match_id]: formatScoreInput(e.target.value),
+                          }))
+                        }
+                        placeholder="2-1"
+                        inputMode="numeric"
+                      />
+                      <button
+                        className="save-btn"
+                        onClick={() => savePrediction(m.match_id)}
+                        disabled={savingMatchId === m.match_id}
+                      >
+                        {savingMatchId === m.match_id ? 'Сохраняю...' : 'Сохранить'}
+                      </button>
+                    </div>
+                    {m.prediction ? (
+                      <>
+                        Текущий прогноз: <b>{m.prediction}</b>
+                      </>
+                    ) : (
+                      'Прогноз пока не поставлен.'
+                    )}
+                  </div>
+                </div>
+              ))}
+            </section>
+          </>
+        ) : null}
+
+        {screen === 'profile' ? (
           <section className="cards">
             <div className="card">
               <div className="card-title">
@@ -554,194 +510,197 @@ function App() {
               </div>
             </div>
           </section>
-        </>
-      ) : screen === 'predictions' ? (
-        <>
-          <header className="topbar">
-            <button className="back-btn" onClick={() => setScreen('home')}>
-              ← Назад
-            </button>
-            <h1>🗂 Мои прогнозы</h1>
-            <p>Текущий тур и твои ставки по матчам.</p>
-          </header>
+        ) : null}
 
-          <section className="cards">
-            <div className="card">
-              <div className="card-title">
-                {predictionsData?.tournament || selectedTournamentCode} · {predictionsData?.round_name || `Тур ${predictionsData?.round_number ?? '—'}`}
-              </div>
-              <div className="card-text">
-                {predictionsError ? (
-                  <>Ошибка загрузки прогнозов: {predictionsError}</>
-                ) : !predictionsData ? (
-                  'Загружаю прогнозы...'
-                ) : (
-                  <>
-                    Итого по завершённым: <b>{predictionsData.total_points_closed ?? 0}</b> очк.
-                    <br />
-                    Матчей в туре: <b>{predictionsData.items?.length ?? 0}</b>
-                  </>
-                )}
-              </div>
-            </div>
-          </section>
-
-          <section className="cards" style={{ marginTop: 10 }}>
-            <div className="card card-static">
-              <div className="card-title">Показать матчи</div>
-              <div className="tournament-row">
-                <button
-                  className={`tournament-chip ${predictionsFilter === 'open' ? 'is-active' : ''}`}
-                  onClick={() => setPredictionsFilter('open')}
-                >
-                  Активные
-                </button>
-                <button
-                  className={`tournament-chip ${predictionsFilter === 'closed' ? 'is-active' : ''}`}
-                  onClick={() => setPredictionsFilter('closed')}
-                >
-                  Завершённые
-                </button>
-              </div>
-            </div>
-          </section>
-
-          <section className="cards" style={{ marginTop: 10 }}>
-            {(predictionsData?.items || [])
-              .filter((m) => (predictionsFilter === 'open' ? m.status === 'open' : m.status === 'closed'))
-              .map((m) => (
-              <div className="card" key={m.match_id}>
+        {screen === 'predictions' ? (
+          <>
+            <section className="cards">
+              <div className="card">
                 <div className="card-title">
-                  {(m.group_label ? `[${m.group_label}] ` : '') + m.home_team} — {m.away_team}
+                  {predictionsData?.tournament || selectedTournamentCode} · {predictionsData?.round_name || `Тур ${predictionsData?.round_number ?? '—'}`}
                 </div>
                 <div className="card-text">
-                  {m.kickoff} МСК
-                  <br />
-                  {m.status === 'open' ? (
-                    m.prediction ? (
-                      <>Прогноз: <b>{m.prediction}</b> (матч ещё открыт)</>
-                    ) : (
-                      'Без прогноза (матч ещё открыт)'
-                    )
-                  ) : m.prediction ? (
-                    <>
-                      Итог: <b>{m.result}</b> · Прогноз: <b>{m.prediction}</b> · {m.emoji} {m.points ?? 0}
-                    </>
+                  {predictionsError ? (
+                    <>Ошибка загрузки прогнозов: {predictionsError}</>
+                  ) : !predictionsData ? (
+                    'Загружаю прогнозы...'
                   ) : (
                     <>
-                      Итог: <b>{m.result}</b> · Без прогноза
+                      Итого по завершённым: <b>{predictionsData.total_points_closed ?? 0}</b> очк.
+                      <br />
+                      Матчей в туре: <b>{predictionsData.items?.length ?? 0}</b>
                     </>
                   )}
                 </div>
               </div>
-            ))}
-          </section>
-        </>
-      ) : (
-        <>
-          <header className="topbar">
-            <button className="back-btn" onClick={() => setScreen('home')}>
-              ← Назад
-            </button>
-            <h1>🏆 Таблица</h1>
-            <p>Текущая лига и позиции участников.</p>
-          </header>
+            </section>
 
-          <section className="cards">
-            <div className="card">
-              <div className="card-title">
-                {tableData?.league_name || 'Лига'} {tableData?.stage_name ? `· ${tableData.stage_name}` : ''}
+            <section className="cards space-top">
+              <div className="card card-static">
+                <div className="card-title">Показать матчи</div>
+                <div className="tournament-row">
+                  <button
+                    className={`tournament-chip ${predictionsFilter === 'open' ? 'is-active' : ''}`}
+                    onClick={() => setPredictionsFilter('open')}
+                  >
+                    Активные
+                  </button>
+                  <button
+                    className={`tournament-chip ${predictionsFilter === 'closed' ? 'is-active' : ''}`}
+                    onClick={() => setPredictionsFilter('closed')}
+                  >
+                    Завершённые
+                  </button>
+                </div>
               </div>
-              <div className="card-text">
-                {tableError ? (
-                  <>Ошибка загрузки таблицы: {tableError}</>
-                ) : !tableData ? (
-                  'Загружаю таблицу...'
-                ) : tableData.has_table ? (
-                  <>
-                    Участников: <b>{tableData.participants ?? 0}</b>
-                    <br />
-                    {tableData.user_place ? (
-                      <>
-                        Твоё место: <b>{tableData.user_place}</b>
-                      </>
-                    ) : (
-                      'Ты пока не в списке лиги этого этапа.'
-                    )}
-                  </>
-                ) : (
-                  tableData.message || 'Таблица пока не сформирована.'
-                )}
-              </div>
-            </div>
-          </section>
+            </section>
 
-          <section className="cards" style={{ marginTop: 10 }}>
-            {(tableData?.rows || []).map((r) => (
-              <div className="card" key={`${r.place}-${r.name}`}>
+            <section className="cards space-top">
+              {(predictionsData?.items || [])
+                .filter((m) => (predictionsFilter === 'open' ? m.status === 'open' : m.status === 'closed'))
+                .map((m) => (
+                  <div className="card" key={m.match_id}>
+                    <div className="card-title">
+                      {(m.group_label ? `[${m.group_label}] ` : '') + m.home_team} — {m.away_team}
+                    </div>
+                    <div className="card-text">
+                      {m.kickoff} МСК
+                      <br />
+                      {m.status === 'open' ? (
+                        m.prediction ? (
+                          <>Прогноз: <b>{m.prediction}</b> (матч ещё открыт)</>
+                        ) : (
+                          'Без прогноза (матч ещё открыт)'
+                        )
+                      ) : m.prediction ? (
+                        <>
+                          Итог: <b>{m.result}</b> · Прогноз: <b>{m.prediction}</b> · {m.emoji} {m.points ?? 0}
+                        </>
+                      ) : (
+                        <>
+                          Итог: <b>{m.result}</b> · Без прогноза
+                        </>
+                      )}
+                    </div>
+                  </div>
+                ))}
+            </section>
+          </>
+        ) : null}
+
+        {screen === 'table' ? (
+          <>
+            <section className="cards">
+              <div className="card">
                 <div className="card-title">
-                  {r.place}. {r.name} — {r.total} очк.
+                  {tableData?.league_name || 'Лига'} {tableData?.stage_name ? `· ${tableData.stage_name}` : ''}
                 </div>
                 <div className="card-text">
-                  🎯{r.exact} · 📏{r.diff} · ✅{r.outcome}
+                  {tableError ? (
+                    <>Ошибка загрузки таблицы: {tableError}</>
+                  ) : !tableData ? (
+                    'Загружаю таблицу...'
+                  ) : tableData.has_table ? (
+                    <>
+                      Участников: <b>{tableData.participants ?? 0}</b>
+                      <br />
+                      {tableData.user_place ? (
+                        <>
+                          Твоё место: <b>{tableData.user_place}</b>
+                        </>
+                      ) : (
+                        'Ты пока не в списке лиги этого этапа.'
+                      )}
+                    </>
+                  ) : (
+                    tableData.message || 'Таблица пока не сформирована.'
+                  )}
                 </div>
               </div>
-            ))}
-          </section>
-        </>
-      )}
+            </section>
 
-      {showDebugPanels ? (
-        <>
-          <section className="cards" style={{ marginTop: 10 }}>
-            <div className="card">
-              <div className="card-title">🔐 Telegram-сессия (debug)</div>
-              <div className="card-text">
-                {inTelegram ? (
-                  <>
-                    Подключено: user_id <b>{tgUserId}</b>
-                    {tgUsername ? (
-                      <>
-                        {' '}
-                        · @{tgUsername}
-                      </>
-                    ) : null}
-                  </>
-                ) : (
-                  <>
-                    Открыто вне Telegram или initData ещё не пришёл.
-                    <br />
-                    initData length: <b>{initDataLen}</b>
-                  </>
-                )}
+            <section className="cards space-top">
+              {(tableData?.rows || []).map((r) => (
+                <div className="card" key={`${r.place}-${r.name}`}>
+                  <div className="card-title">
+                    {r.place}. {r.name} — {r.total} очк.
+                  </div>
+                  <div className="card-text">
+                    🎯{r.exact} · 📏{r.diff} · ✅{r.outcome}
+                  </div>
+                </div>
+              ))}
+            </section>
+          </>
+        ) : null}
+
+        {showDebugPanels ? (
+          <>
+            <section className="cards space-top">
+              <div className="card">
+                <div className="card-title">🔐 Telegram-сессия (debug)</div>
+                <div className="card-text">
+                  {inTelegram ? (
+                    <>
+                      Подключено: user_id <b>{tgUserId}</b>
+                      {tgUsername ? (
+                        <>
+                          {' '}
+                          · @{tgUsername}
+                        </>
+                      ) : null}
+                    </>
+                  ) : (
+                    <>
+                      Открыто вне Telegram или initData ещё не пришёл.
+                      <br />
+                      initData length: <b>{initDataLen}</b>
+                    </>
+                  )}
+                </div>
               </div>
-            </div>
-          </section>
+            </section>
 
-          <section className="cards" style={{ marginTop: 10 }}>
-            <div className="card">
-              <div className="card-title">🧩 API /api/miniapp/me (debug)</div>
-              <div className="card-text">
-                {apiError ? (
-                  <>Ошибка API: {apiError}</>
-                ) : meData ? (
-                  <>
-                    API ok: {String(meData.ok)} · in_telegram: {String(meData.in_telegram)}
-                    <br />
-                    tg_user_id: <b>{String(meData.tg_user_id)}</b>
-                    <br />
-                    signature_checked: <b>{String(meData.signature_checked)}</b>
-                  </>
-                ) : (
-                  'Загружаю данные...'
-                )}
+            <section className="cards space-top">
+              <div className="card">
+                <div className="card-title">🧩 API /api/miniapp/me (debug)</div>
+                <div className="card-text">
+                  {apiError ? (
+                    <>Ошибка API: {apiError}</>
+                  ) : meData ? (
+                    <>
+                      API ok: {String(meData.ok)} · in_telegram: {String(meData.in_telegram)}
+                      <br />
+                      tg_user_id: <b>{String(meData.tg_user_id)}</b>
+                      <br />
+                      signature_checked: <b>{String(meData.signature_checked)}</b>
+                    </>
+                  ) : (
+                    'Загружаю данные...'
+                  )}
+                </div>
               </div>
-            </div>
-          </section>
-        </>
-      ) : null}
+            </section>
+          </>
+        ) : null}
 
-      <footer className="footer-note">Статус: Mini App авторизован и получает профиль из API.</footer>
+        <footer className="footer-note">Статус: Mini App авторизован и получает профиль из API.</footer>
+      </main>
+
+      <nav className="bottom-tabs">
+        <button className={`tab-btn ${screen === 'profile' ? 'is-active' : ''}`} onClick={() => setScreen('profile')}>
+          👤 Профиль
+        </button>
+        <button className={`tab-btn ${screen === 'predict' ? 'is-active' : ''}`} onClick={() => setScreen('predict')}>
+          🎯 Сделать прогноз
+        </button>
+        <button className={`tab-btn ${screen === 'predictions' ? 'is-active' : ''}`} onClick={() => setScreen('predictions')}>
+          🗂 Мои прогнозы
+        </button>
+        <button className={`tab-btn ${screen === 'table' ? 'is-active' : ''}`} onClick={() => setScreen('table')}>
+          🏆 Таблица
+        </button>
+      </nav>
     </div>
   )
 }
