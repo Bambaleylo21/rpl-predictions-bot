@@ -61,6 +61,26 @@ type PredictionsResponse = {
   }>
 }
 
+type PredictCurrentResponse = {
+  ok: boolean
+  error?: string
+  reason?: string
+  trusted?: boolean
+  joined?: boolean
+  message?: string
+  tournament?: string
+  round_number?: number
+  round_min?: number
+  round_max?: number
+  items?: Array<{
+    match_id: number
+    home_team: string
+    away_team: string
+    kickoff: string
+    prediction: string | null
+  }>
+}
+
 type TableResponse = {
   ok: boolean
   error?: string
@@ -88,7 +108,7 @@ type TableResponse = {
   }>
 }
 
-type Screen = 'home' | 'profile' | 'predictions' | 'table'
+type Screen = 'home' | 'predict' | 'profile' | 'predictions' | 'table'
 
 function App() {
   const [screen, setScreen] = useState<Screen>('home')
@@ -102,9 +122,37 @@ function App() {
   const [profileError, setProfileError] = useState<string | null>(null)
   const [predictionsData, setPredictionsData] = useState<PredictionsResponse | null>(null)
   const [predictionsError, setPredictionsError] = useState<string | null>(null)
+  const [predictData, setPredictData] = useState<PredictCurrentResponse | null>(null)
+  const [predictError, setPredictError] = useState<string | null>(null)
+  const [scoreInputs, setScoreInputs] = useState<Record<number, string>>({})
+  const [savingMatchId, setSavingMatchId] = useState<number | null>(null)
+  const [predictNotice, setPredictNotice] = useState<string | null>(null)
   const [tableData, setTableData] = useState<TableResponse | null>(null)
   const [tableError, setTableError] = useState<string | null>(null)
   const showDebugPanels = import.meta.env.DEV || import.meta.env.VITE_DEBUG_PANELS === '1'
+
+  const getInitData = () => {
+    const tgWebApp = (window as any).Telegram?.WebApp
+    return tgWebApp?.initData || WebApp.initData || ''
+  }
+
+  const loadPredictCurrent = async (apiBase: string, initData: string) => {
+    const headers = {
+      'X-Telegram-Init-Data': initData,
+    }
+    const res = await fetch(`${apiBase}/api/miniapp/predict/current`, { headers })
+    const data = (await res.json()) as PredictCurrentResponse
+    if (!res.ok) {
+      throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+    }
+    setPredictData(data)
+    setPredictError(null)
+    const nextInputs: Record<number, string> = {}
+    for (const item of data.items || []) {
+      nextInputs[item.match_id] = item.prediction || ''
+    }
+    setScoreInputs(nextInputs)
+  }
 
   useEffect(() => {
     const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
@@ -169,6 +217,10 @@ function App() {
           setPredictionsError(String(err))
         })
 
+      loadPredictCurrent(apiBase, initData).catch((err) => {
+        setPredictError(String(err))
+      })
+
       fetch(`${apiBase}/api/miniapp/table/current`, { headers })
         .then(async (res) => {
           const data = (await res.json()) as TableResponse
@@ -186,6 +238,45 @@ function App() {
     run()
   }, [])
 
+  const savePrediction = async (matchId: number) => {
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    const raw = (scoreInputs[matchId] || '').trim().replace('-', ':')
+    const m = raw.match(/^(\d+):(\d+)$/)
+    if (!m) {
+      setPredictNotice('Счёт введи в формате 2:1 или 2-1.')
+      return
+    }
+    const predHome = Number(m[1])
+    const predAway = Number(m[2])
+    setSavingMatchId(matchId)
+    setPredictNotice(null)
+    try {
+      const res = await fetch(`${apiBase}/api/miniapp/predict/set`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Telegram-Init-Data': initData,
+        },
+        body: JSON.stringify({
+          match_id: matchId,
+          pred_home: predHome,
+          pred_away: predAway,
+        }),
+      })
+      const data = (await res.json()) as { ok?: boolean; error?: string; reason?: string; prediction?: string }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      setPredictNotice(`Ставка сохранена: ${data.prediction}`)
+      await loadPredictCurrent(apiBase, initData)
+    } catch (err) {
+      setPredictNotice(`Ошибка сохранения: ${String(err)}`)
+    } finally {
+      setSavingMatchId(null)
+    }
+  }
+
   return (
     <div className="app-shell">
       {screen === 'home' ? (
@@ -197,7 +288,7 @@ function App() {
           </header>
 
           <section className="cards">
-            <button className="card">
+            <button className="card" onClick={() => setScreen('predict')}>
               <div className="card-title">🎯 Поставить прогноз</div>
               <div className="card-text">Выбрать тур и матчи</div>
             </button>
@@ -216,6 +307,83 @@ function App() {
               <div className="card-title">👤 Профиль</div>
               <div className="card-text">Открыть личную статистику</div>
             </button>
+          </section>
+        </>
+      ) : screen === 'predict' ? (
+        <>
+          <header className="topbar">
+            <button className="back-btn" onClick={() => setScreen('home')}>
+              ← Назад
+            </button>
+            <h1>🎯 Поставить прогноз</h1>
+            <p>Открытые матчи текущего тура. Можно менять до начала матча.</p>
+          </header>
+
+          <section className="cards">
+            <div className="card">
+              <div className="card-title">
+                {predictData?.tournament || 'РПЛ'} · Тур {predictData?.round_number ?? '—'}
+              </div>
+              <div className="card-text">
+                {predictError ? (
+                  <>Ошибка: {predictError}</>
+                ) : !predictData ? (
+                  'Загружаю матчи...'
+                ) : predictData.joined === false ? (
+                  predictData.message || 'Нужно вступить в турнир, чтобы ставить прогнозы.'
+                ) : (
+                  <>Открытых матчей: <b>{predictData.items?.length ?? 0}</b></>
+                )}
+                {predictNotice ? (
+                  <>
+                    <br />
+                    {predictNotice}
+                  </>
+                ) : null}
+              </div>
+            </div>
+          </section>
+
+          <section className="cards" style={{ marginTop: 10 }}>
+            {(predictData?.items || []).map((m) => (
+              <div className="card" key={m.match_id}>
+                <div className="card-title">
+                  {m.home_team} — {m.away_team}
+                </div>
+                <div className="card-text">
+                  {m.kickoff} МСК
+                  <br />
+                  <div className="predict-row">
+                    <input
+                      className="score-input"
+                      value={scoreInputs[m.match_id] || ''}
+                      onChange={(e) =>
+                        setScoreInputs((prev) => ({
+                          ...prev,
+                          [m.match_id]: e.target.value,
+                        }))
+                      }
+                      placeholder="2:1"
+                      inputMode="numeric"
+                    />
+                    <button
+                      className="save-btn"
+                      onClick={() => savePrediction(m.match_id)}
+                      disabled={savingMatchId === m.match_id}
+                    >
+                      {savingMatchId === m.match_id ? 'Сохраняю...' : 'Сохранить'}
+                    </button>
+                  </div>
+                  {m.prediction ? (
+                    <>
+                      Текущий прогноз: <b>{m.prediction}</b>
+                    </>
+                  ) : (
+                    'Прогноз пока не поставлен.'
+                  )}
+                </div>
+              </div>
+            ))}
           </section>
         </>
       ) : screen === 'profile' ? (

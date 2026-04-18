@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import asyncio
+from datetime import datetime, timezone, timedelta
 from typing import Any
 from urllib.parse import parse_qs
 
@@ -14,9 +15,10 @@ from sqlalchemy import case, func, select
 
 from app.db import SessionLocal
 from app.league_table import build_active_stage_league_table
-from app.models import League, LeagueParticipant, Match, Point, Prediction, Stage, Tournament, User
+from app.models import League, LeagueParticipant, Match, Point, Prediction, Stage, Tournament, User, UserTournament
 
 logger = logging.getLogger(__name__)
+MSK_TZ = timezone(timedelta(hours=3))
 
 
 def _parse_init_data(init_data: str) -> dict[str, Any]:
@@ -422,6 +424,254 @@ async def predictions_current(request: web.Request) -> web.Response:
         )
 
 
+def _now_msk_naive() -> datetime:
+    return datetime.now(MSK_TZ).replace(tzinfo=None)
+
+
+async def predict_current(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = user.get("id") if isinstance(user, dict) else None
+        if not tg_user_id:
+            return web.json_response({"ok": False, "error": "user_not_found_in_init_data"}, status=400)
+
+        now = _now_msk_naive()
+
+        async with SessionLocal() as session:
+            tournament = (
+                await session.execute(select(Tournament).where(Tournament.code == "RPL").limit(1))
+            ).scalar_one_or_none()
+            if tournament is None:
+                return web.json_response({"ok": False, "error": "tournament_not_found"}, status=404)
+
+            in_tournament = (
+                await session.execute(
+                    select(UserTournament.id).where(
+                        UserTournament.tg_user_id == int(tg_user_id),
+                        UserTournament.tournament_id == int(tournament.id),
+                    )
+                )
+            ).first() is not None
+            if not in_tournament:
+                return web.json_response(
+                    {
+                        "ok": True,
+                        "trusted": True,
+                        "joined": False,
+                        "message": "Сначала вступи в турнир в боте, и затем ставь прогнозы в Mini App.",
+                    }
+                )
+
+            round_min = int(tournament.round_min)
+            round_max = int(tournament.round_max)
+            stage_row = (
+                await session.execute(
+                    select(
+                        Stage.round_min.label("round_min"),
+                        Stage.round_max.label("round_max"),
+                    )
+                    .select_from(LeagueParticipant)
+                    .join(Stage, Stage.id == LeagueParticipant.stage_id)
+                    .where(
+                        LeagueParticipant.tg_user_id == int(tg_user_id),
+                        LeagueParticipant.is_active == 1,
+                        Stage.is_active == 1,
+                    )
+                    .order_by(LeagueParticipant.id.desc())
+                    .limit(1)
+                )
+            ).one_or_none()
+            if stage_row is not None:
+                round_min = int(stage_row.round_min)
+                round_max = int(stage_row.round_max)
+
+            rounds_rows = (
+                await session.execute(
+                    select(
+                        Match.round_number.label("round_number"),
+                        func.sum(case((Match.kickoff_time > now, 1), else_=0)).label("open_cnt"),
+                    )
+                    .where(
+                        Match.tournament_id == int(tournament.id),
+                        Match.round_number >= int(round_min),
+                        Match.round_number <= int(round_max),
+                    )
+                    .group_by(Match.round_number)
+                    .order_by(Match.round_number.asc())
+                )
+            ).all()
+
+            current_round = int(round_min)
+            for r in rounds_rows:
+                if int(r.open_cnt or 0) > 0:
+                    current_round = int(r.round_number)
+                    break
+            if rounds_rows and all(int(r.open_cnt or 0) <= 0 for r in rounds_rows):
+                current_round = int(rounds_rows[-1].round_number)
+
+            matches = (
+                await session.execute(
+                    select(Match)
+                    .where(
+                        Match.tournament_id == int(tournament.id),
+                        Match.round_number == int(current_round),
+                        Match.kickoff_time > now,
+                    )
+                    .order_by(Match.kickoff_time.asc(), Match.id.asc())
+                )
+            ).scalars().all()
+
+            match_ids = [int(m.id) for m in matches]
+            preds_map: dict[int, Prediction] = {}
+            if match_ids:
+                preds = (
+                    await session.execute(
+                        select(Prediction).where(
+                            Prediction.tg_user_id == int(tg_user_id),
+                            Prediction.match_id.in_(match_ids),
+                        )
+                    )
+                ).scalars().all()
+                preds_map = {int(p.match_id): p for p in preds}
+
+            items: list[dict[str, Any]] = []
+            for m in matches:
+                pred = preds_map.get(int(m.id))
+                items.append(
+                    {
+                        "match_id": int(m.id),
+                        "home_team": m.home_team,
+                        "away_team": m.away_team,
+                        "kickoff": m.kickoff_time.strftime("%d.%m %H:%M"),
+                        "prediction": f"{pred.pred_home}:{pred.pred_away}" if pred is not None else None,
+                    }
+                )
+
+            return web.json_response(
+                {
+                    "ok": True,
+                    "trusted": True,
+                    "joined": True,
+                    "tournament": tournament.name,
+                    "round_number": int(current_round),
+                    "round_min": int(round_min),
+                    "round_max": int(round_max),
+                    "items": items,
+                }
+            )
+    except Exception as e:
+        logger.exception("miniapp predict_current error")
+        return web.json_response(
+            {
+                "ok": False,
+                "error": "predict_current_failed",
+                "reason": str(e),
+                "signature_checked": True,
+            },
+            status=500,
+        )
+
+
+async def predict_set(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = user.get("id") if isinstance(user, dict) else None
+        if not tg_user_id:
+            return web.json_response({"ok": False, "error": "user_not_found_in_init_data"}, status=400)
+
+        body = await request.json()
+        match_id = int(body.get("match_id"))
+        pred_home = int(body.get("pred_home"))
+        pred_away = int(body.get("pred_away"))
+        if pred_home < 0 or pred_away < 0:
+            return web.json_response({"ok": False, "error": "invalid_score"}, status=400)
+
+        now = _now_msk_naive()
+        async with SessionLocal() as session:
+            tournament = (
+                await session.execute(select(Tournament).where(Tournament.code == "RPL").limit(1))
+            ).scalar_one_or_none()
+            if tournament is None:
+                return web.json_response({"ok": False, "error": "tournament_not_found"}, status=404)
+
+            in_tournament = (
+                await session.execute(
+                    select(UserTournament.id).where(
+                        UserTournament.tg_user_id == int(tg_user_id),
+                        UserTournament.tournament_id == int(tournament.id),
+                    )
+                )
+            ).first() is not None
+            if not in_tournament:
+                return web.json_response({"ok": False, "error": "user_not_joined_tournament"}, status=403)
+
+            match = (
+                await session.execute(
+                    select(Match).where(
+                        Match.id == int(match_id),
+                        Match.tournament_id == int(tournament.id),
+                    )
+                )
+            ).scalar_one_or_none()
+            if match is None:
+                return web.json_response({"ok": False, "error": "match_not_found"}, status=404)
+            if match.kickoff_time <= now:
+                return web.json_response({"ok": False, "error": "match_locked"}, status=409)
+
+            pred = (
+                await session.execute(
+                    select(Prediction).where(
+                        Prediction.tg_user_id == int(tg_user_id),
+                        Prediction.match_id == int(match.id),
+                    )
+                )
+            ).scalar_one_or_none()
+            if pred is None:
+                pred = Prediction(
+                    tg_user_id=int(tg_user_id),
+                    match_id=int(match.id),
+                    pred_home=int(pred_home),
+                    pred_away=int(pred_away),
+                )
+                session.add(pred)
+                action = "created"
+            else:
+                pred.pred_home = int(pred_home)
+                pred.pred_away = int(pred_away)
+                pred.updated_at = datetime.utcnow()
+                action = "updated"
+
+            await session.commit()
+
+            return web.json_response(
+                {
+                    "ok": True,
+                    "action": action,
+                    "match_id": int(match.id),
+                    "prediction": f"{int(pred_home)}:{int(pred_away)}",
+                }
+            )
+    except (ValueError, TypeError):
+        return web.json_response({"ok": False, "error": "invalid_payload"}, status=400)
+    except Exception as e:
+        logger.exception("miniapp predict_set error")
+        return web.json_response(
+            {
+                "ok": False,
+                "error": "predict_set_failed",
+                "reason": str(e),
+                "signature_checked": True,
+            },
+            status=500,
+        )
+
+
 async def table_current(request: web.Request) -> web.Response:
     try:
         auth_result = _extract_verified_user(request)
@@ -510,6 +760,8 @@ def build_app() -> web.Application:
     app.router.add_get("/api/miniapp/profile", profile)
     app.router.add_get("/api/miniapp/predictions/current", predictions_current)
     app.router.add_get("/api/miniapp/table/current", table_current)
+    app.router.add_get("/api/miniapp/predict/current", predict_current)
+    app.router.add_post("/api/miniapp/predict/set", predict_set)
     return app
 
 
