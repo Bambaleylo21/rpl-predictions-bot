@@ -1357,9 +1357,17 @@ def register_user_handlers(dp: Dispatcher):
             ok = await is_user_in_tournament(session, message.from_user.id, tournament.id)
         if ok:
             return True
+        async with SessionLocal() as session:
+            join_cta_text = await _get_join_cta_text(session, message.from_user.id, tournament.id)
+        _tournament, default_round = await _get_user_tournament_context(message.from_user.id)
         await message.answer(
             f"Ты пока не в турнире {tournament.name}.\n"
-            "Нажми «✅ Вступить в турнир» — после этого можно сразу ставить прогнозы."
+            "Нажми «✅ Вступить в турнир» — после этого можно сразу ставить прогнозы.",
+            reply_markup=build_main_menu_keyboard(
+                default_round=default_round,
+                is_joined=False,
+                join_cta_text=join_cta_text,
+            ),
         )
         return False
 
@@ -1444,9 +1452,15 @@ def register_user_handlers(dp: Dispatcher):
         async with SessionLocal() as session:
             ok = await is_user_in_tournament(session, tg_user_id, tournament.id)
             if not ok:
+                join_cta_text = await _get_join_cta_text(session, tg_user_id, tournament.id)
                 await target.answer(
                     f"Сначала вступи в турнир {tournament_name} кнопкой «✅ Вступить в турнир»,"
-                    " и сразу сможем сохранить прогноз."
+                    " и сразу сможем сохранить прогноз.",
+                    reply_markup=build_main_menu_keyboard(
+                        default_round=round_number,
+                        is_joined=False,
+                        join_cta_text=join_cta_text,
+                    ),
                 )
                 return
 
@@ -1533,9 +1547,15 @@ def register_user_handlers(dp: Dispatcher):
         async with SessionLocal() as session:
             ok = await is_user_in_tournament(session, tg_user_id, tournament.id)
             if not ok:
+                join_cta_text = await _get_join_cta_text(session, tg_user_id, tournament.id)
                 await target.answer(
                     f"Сначала вступи в турнир {tournament_name} кнопкой «✅ Вступить в турнир»,"
-                    " и сразу сможем сохранить прогноз."
+                    " и сразу сможем сохранить прогноз.",
+                    reply_markup=build_main_menu_keyboard(
+                        default_round=round_number,
+                        is_joined=False,
+                        join_cta_text=join_cta_text,
+                    ),
                 )
                 return
 
@@ -1617,9 +1637,15 @@ def register_user_handlers(dp: Dispatcher):
         async with SessionLocal() as session:
             ok = await is_user_in_tournament(session, tg_user_id, tournament.id)
             if not ok:
+                join_cta_text = await _get_join_cta_text(session, tg_user_id, tournament.id)
                 await target.answer(
                     f"Сначала вступи в турнир {tournament_name} кнопкой «✅ Вступить в турнир»,"
-                    " и сразу сможем сохранить прогноз."
+                    " и сразу сможем сохранить прогноз.",
+                    reply_markup=build_main_menu_keyboard(
+                        default_round=selected_round,
+                        is_joined=False,
+                        join_cta_text=join_cta_text,
+                    ),
                 )
                 return
 
@@ -1744,10 +1770,16 @@ def register_user_handlers(dp: Dispatcher):
         tournament, default_round = await _get_user_tournament_context(tg_user_id)
         async with SessionLocal() as session:
             ok = await is_user_in_tournament(session, tg_user_id, tournament.id)
+            join_cta_text = await _get_join_cta_text(session, tg_user_id, tournament.id)
         if not ok:
             await target.answer(
                 f"Сначала вступи в турнир {tournament.name} кнопкой «✅ Вступить в турнир»,"
-                " и сразу сможем показать твои прогнозы."
+                " и сразу сможем показать твои прогнозы.",
+                reply_markup=build_main_menu_keyboard(
+                    default_round=default_round,
+                    is_joined=False,
+                    join_cta_text=join_cta_text,
+                ),
             )
             return
         await _send_my_round_text(target, tg_user_id, tournament=tournament, round_number=default_round)
@@ -2673,9 +2705,15 @@ def register_user_handlers(dp: Dispatcher):
             await upsert_user_from_message(session, message)
             tournament = await get_selected_tournament_for_user(session, message.from_user.id)
             if not await is_user_in_tournament(session, message.from_user.id, tournament.id):
+                join_cta_text = await _get_join_cta_text(session, message.from_user.id, tournament.id)
                 await message.answer(
                     f"Сначала вступи в турнир {tournament.name} кнопкой «✅ Вступить в турнир»,"
-                    " и сразу сможем сохранить прогноз."
+                    " и сразу сможем сохранить прогноз.",
+                    reply_markup=build_main_menu_keyboard(
+                        default_round=int(tournament.round_min),
+                        is_joined=False,
+                        join_cta_text=join_cta_text,
+                    ),
                 )
                 return
 
@@ -2960,32 +2998,9 @@ def register_user_handlers(dp: Dispatcher):
     )
     async def fallback_menu_text(message: types.Message):
         """
-        Страховочный роутер: не даём боту молчать на кнопках/старых подписях.
+        Страховочный fallback только для неизвестного текста.
+        Важные действия обрабатываются явными хендлерами кнопок/команд выше.
         """
-        txt = (message.text or "").strip().lower()
-        if not txt:
-            return
-
-        if "прогноз" in txt:
-            await _send_quick_predict_picker(message, message.from_user.id)
-            return
-        if "таблиц" in txt:
-            await btn_table(message)
-            return
-        if "профил" in txt:
-            await btn_profile(message)
-            return
-        if "статист" in txt:
-            await btn_stats(message)
-            return
-        if "правил" in txt:
-            await quick_rules(message)
-            return
-        if "вступ" in txt or "вернут" in txt:
-            await message.answer("Для вступления нажми кнопку «✅ Вступить в турнир» или команду /join.")
-            return
-
-        # Последний fallback: подсказываем старт и возвращаем клавиатуру.
         tournament, default_round = await _get_user_tournament_context(message.from_user.id)
         async with SessionLocal() as session:
             is_joined = await is_user_in_tournament(session, message.from_user.id, tournament.id)
