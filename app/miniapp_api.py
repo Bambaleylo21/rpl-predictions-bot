@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -45,12 +47,68 @@ def _extract_init_data(request: web.Request) -> str:
     return q
 
 
+def _verify_init_data_signature(init_data: str, bot_token: str) -> tuple[bool, str]:
+    """
+    Telegram Mini App signature check.
+    Docs logic:
+      secret = HMAC_SHA256(key="WebAppData", msg=bot_token)
+      hash = HMAC_SHA256(key=secret, msg=data_check_string)
+    """
+    if not init_data:
+        return False, "init_data is empty"
+    if not bot_token:
+        return False, "BOT_TOKEN is not configured"
+
+    pairs = parse_qs(init_data, keep_blank_values=True)
+    hash_values = pairs.get("hash", [])
+    if not hash_values or not hash_values[-1]:
+        return False, "hash is missing in init_data"
+    received_hash = hash_values[-1]
+
+    check_items: list[str] = []
+    for key in sorted(pairs.keys()):
+        if key == "hash":
+            continue
+        values = pairs.get(key, [])
+        value = values[-1] if values else ""
+        check_items.append(f"{key}={value}")
+    data_check_string = "\n".join(check_items)
+
+    secret_key = hmac.new(
+        key=b"WebAppData",
+        msg=bot_token.encode("utf-8"),
+        digestmod=hashlib.sha256,
+    ).digest()
+    computed_hash = hmac.new(
+        key=secret_key,
+        msg=data_check_string.encode("utf-8"),
+        digestmod=hashlib.sha256,
+    ).hexdigest()
+
+    if not hmac.compare_digest(computed_hash, received_hash):
+        return False, "hash mismatch"
+    return True, "ok"
+
+
 async def health(_request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "service": "miniapp-api"})
 
 
 async def me(request: web.Request) -> web.Response:
     init_data_raw = _extract_init_data(request)
+    bot_token = os.getenv("BOT_TOKEN", "").strip()
+    signature_ok, signature_reason = _verify_init_data_signature(init_data_raw, bot_token)
+    if not signature_ok:
+        return web.json_response(
+            {
+                "ok": False,
+                "error": "unauthorized",
+                "reason": signature_reason,
+                "signature_checked": True,
+            },
+            status=401,
+        )
+
     payload = _parse_init_data(init_data_raw)
     user = payload.get("user") if isinstance(payload.get("user"), dict) else {}
 
@@ -66,8 +124,9 @@ async def me(request: web.Request) -> web.Response:
             "username": username,
             "first_name": first_name,
             "auth_date": payload.get("auth_date"),
-            "signature_checked": False,
-            "note": "Debug endpoint. Signature validation will be added next.",
+            "signature_checked": True,
+            "trusted": True,
+            "note": "Telegram initData signature is valid.",
         }
     )
 

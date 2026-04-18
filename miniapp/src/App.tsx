@@ -4,12 +4,15 @@ import WebApp from '@twa-dev/sdk'
 
 type MeResponse = {
   ok: boolean
+  error?: string
+  reason?: string
   in_telegram: boolean
   tg_user_id: number | null
   username: string | null
   first_name: string | null
   auth_date: string | null
   signature_checked: boolean
+  trusted?: boolean
   note: string
 }
 
@@ -47,10 +50,10 @@ function App() {
         },
       })
         .then(async (res) => {
-          if (!res.ok) {
-            throw new Error(`HTTP ${res.status}`)
-          }
           const data = (await res.json()) as MeResponse
+          if (!res.ok) {
+            throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+          }
           setMeData(data)
           setApiError(null)
         })
@@ -128,6 +131,8 @@ function App() {
                 API ok: {String(meData.ok)} · in_telegram: {String(meData.in_telegram)}
                 <br />
                 tg_user_id: <b>{String(meData.tg_user_id)}</b>
+                <br />
+                signature_checked: <b>{String(meData.signature_checked)}</b>
               </>
             ) : (
               'Загружаю данные...'
