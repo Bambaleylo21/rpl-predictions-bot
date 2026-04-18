@@ -1,0 +1,78 @@
+.app-shell {
+  min-height: 100vh;
+  background: linear-gradient(180deg, #0b1220 0%, #101a2d 60%, #13223a 100%);
+  color: #e8eefb;
+  padding: 20px 16px 28px;
+  box-sizing: border-box;
+}
+
+.topbar {
+  margin-bottom: 18px;
+}
+
+.badge {
+  display: inline-block;
+  background: #1e3a8a;
+  color: #dbeafe;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.1;
+}
+
+.topbar p {
+  margin: 8px 0 0;
+  color: #b9c8e6;
+  font-size: 14px;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.card {
+  background: #16233b;
+  border: 1px solid #263a61;
+  border-radius: 14px;
+  text-align: left;
+  padding: 14px;
+  color: #ecf2ff;
+  cursor: pointer;
+}
+
+.card-title {
+  font-weight: 700;
+  font-size: 17px;
+}
+
+.card-text {
+  margin-top: 4px;
+  color: #b7c6e5;
+  font-size: 14px;
+}
+
+.footer-note {
+  margin-top: 16px;
+  color: #9fb2da;
+  font-size: 13px;
+}
+
+@media (min-width: 700px) {
+  .app-shell {
+    max-width: 700px;
+    margin: 0 auto;
+  }
+
+  .cards {
+    grid-template-columns: 1fr 1fr;
+  }
+}
