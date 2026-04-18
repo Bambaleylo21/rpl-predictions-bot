@@ -13,6 +13,7 @@ from aiohttp import web
 from sqlalchemy import case, func, select
 
 from app.db import SessionLocal
+from app.league_table import build_active_stage_league_table
 from app.models import League, LeagueParticipant, Match, Point, Prediction, Stage, Tournament, User
 
 logger = logging.getLogger(__name__)
@@ -421,6 +422,74 @@ async def predictions_current(request: web.Request) -> web.Response:
         )
 
 
+async def table_current(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = user.get("id") if isinstance(user, dict) else None
+        if not tg_user_id:
+            return web.json_response({"ok": False, "error": "user_not_found_in_init_data"}, status=400)
+
+        rows, meta = await build_active_stage_league_table(int(tg_user_id))
+        if meta is None:
+            return web.json_response(
+                {
+                    "ok": True,
+                    "trusted": True,
+                    "has_table": False,
+                    "message": "Активная таблица пока не сформирована.",
+                }
+            )
+
+        user_place = None
+        for r in rows:
+            if int(r.get("tg_user_id", 0)) == int(tg_user_id):
+                user_place = int(r.get("place", 0))
+                break
+
+        return web.json_response(
+            {
+                "ok": True,
+                "trusted": True,
+                "has_table": True,
+                "season_name": meta.season_name,
+                "stage_name": meta.stage_name,
+                "stage_round_min": int(meta.stage_round_min),
+                "stage_round_max": int(meta.stage_round_max),
+                "league_name": meta.league_name,
+                "participants": int(meta.participants),
+                "user_place": user_place,
+                "rows": [
+                    {
+                        "place": int(r.get("place", 0)),
+                        "name": str(r.get("name", "")),
+                        "total": int(r.get("total", 0)),
+                        "exact": int(r.get("exact", 0)),
+                        "diff": int(r.get("diff", 0)),
+                        "outcome": int(r.get("outcome", 0)),
+                        "pred_total": int(r.get("pred_total", 0)),
+                        "hits": int(r.get("hits", 0)),
+                        "hit_rate": float(r.get("hit_rate", 0.0)),
+                    }
+                    for r in rows
+                ],
+            }
+        )
+    except Exception as e:
+        logger.exception("miniapp table_current error")
+        return web.json_response(
+            {
+                "ok": False,
+                "error": "table_query_failed",
+                "reason": str(e),
+                "signature_checked": True,
+            },
+            status=500,
+        )
+
+
 @web.middleware
 async def cors_middleware(request: web.Request, handler):
     if request.method == "OPTIONS":
@@ -440,6 +509,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/miniapp/me", me)
     app.router.add_get("/api/miniapp/profile", profile)
     app.router.add_get("/api/miniapp/predictions/current", predictions_current)
+    app.router.add_get("/api/miniapp/table/current", table_current)
     return app
 
 

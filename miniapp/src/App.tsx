@@ -61,7 +61,34 @@ type PredictionsResponse = {
   }>
 }
 
-type Screen = 'home' | 'profile' | 'predictions'
+type TableResponse = {
+  ok: boolean
+  error?: string
+  reason?: string
+  trusted?: boolean
+  has_table?: boolean
+  message?: string
+  season_name?: string
+  stage_name?: string
+  stage_round_min?: number
+  stage_round_max?: number
+  league_name?: string
+  participants?: number
+  user_place?: number | null
+  rows?: Array<{
+    place: number
+    name: string
+    total: number
+    exact: number
+    diff: number
+    outcome: number
+    pred_total: number
+    hits: number
+    hit_rate: number
+  }>
+}
+
+type Screen = 'home' | 'profile' | 'predictions' | 'table'
 
 function App() {
   const [screen, setScreen] = useState<Screen>('home')
@@ -75,6 +102,8 @@ function App() {
   const [profileError, setProfileError] = useState<string | null>(null)
   const [predictionsData, setPredictionsData] = useState<PredictionsResponse | null>(null)
   const [predictionsError, setPredictionsError] = useState<string | null>(null)
+  const [tableData, setTableData] = useState<TableResponse | null>(null)
+  const [tableError, setTableError] = useState<string | null>(null)
   const showDebugPanels = import.meta.env.DEV || import.meta.env.VITE_DEBUG_PANELS === '1'
 
   useEffect(() => {
@@ -139,6 +168,19 @@ function App() {
         .catch((err) => {
           setPredictionsError(String(err))
         })
+
+      fetch(`${apiBase}/api/miniapp/table/current`, { headers })
+        .then(async (res) => {
+          const data = (await res.json()) as TableResponse
+          if (!res.ok) {
+            throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+          }
+          setTableData(data)
+          setTableError(null)
+        })
+        .catch((err) => {
+          setTableError(String(err))
+        })
     }
 
     run()
@@ -165,7 +207,7 @@ function App() {
               <div className="card-text">Текущий и другие туры</div>
             </button>
 
-            <button className="card">
+            <button className="card" onClick={() => setScreen('table')}>
               <div className="card-title">🏆 Таблица</div>
               <div className="card-text">Лига и этап</div>
             </button>
@@ -222,7 +264,7 @@ function App() {
             </div>
           </section>
         </>
-      ) : (
+      ) : screen === 'predictions' ? (
         <>
           <header className="topbar">
             <button className="back-btn" onClick={() => setScreen('home')}>
@@ -277,6 +319,58 @@ function App() {
                       Итог: <b>{m.result}</b> · Без прогноза
                     </>
                   )}
+                </div>
+              </div>
+            ))}
+          </section>
+        </>
+      ) : (
+        <>
+          <header className="topbar">
+            <button className="back-btn" onClick={() => setScreen('home')}>
+              ← Назад
+            </button>
+            <h1>🏆 Таблица</h1>
+            <p>Текущая лига и позиции участников.</p>
+          </header>
+
+          <section className="cards">
+            <div className="card">
+              <div className="card-title">
+                {tableData?.league_name || 'Лига'} {tableData?.stage_name ? `· ${tableData.stage_name}` : ''}
+              </div>
+              <div className="card-text">
+                {tableError ? (
+                  <>Ошибка загрузки таблицы: {tableError}</>
+                ) : !tableData ? (
+                  'Загружаю таблицу...'
+                ) : tableData.has_table ? (
+                  <>
+                    Участников: <b>{tableData.participants ?? 0}</b>
+                    <br />
+                    {tableData.user_place ? (
+                      <>
+                        Твоё место: <b>{tableData.user_place}</b>
+                      </>
+                    ) : (
+                      'Ты пока не в списке лиги этого этапа.'
+                    )}
+                  </>
+                ) : (
+                  tableData.message || 'Таблица пока не сформирована.'
+                )}
+              </div>
+            </div>
+          </section>
+
+          <section className="cards" style={{ marginTop: 10 }}>
+            {(tableData?.rows || []).map((r) => (
+              <div className="card" key={`${r.place}-${r.name}`}>
+                <div className="card-title">
+                  {r.place}. {r.name} — {r.total} очк.
+                </div>
+                <div className="card-text">
+                  🎯{r.exact} · 📏{r.diff} · ✅{r.outcome}
                 </div>
               </div>
             ))}
