@@ -104,6 +104,8 @@
   background: #0e1a31;
   color: #e8eefb;
   padding: 8px 10px;
+  font-size: 16px;
+  line-height: 1.2;
 }
 
 .save-btn {
