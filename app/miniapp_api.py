@@ -148,96 +148,108 @@ async def me(request: web.Request) -> web.Response:
 
 
 async def profile(request: web.Request) -> web.Response:
-    auth_result = _extract_verified_user(request)
-    if auth_result[0] is None:
-        return auth_result[1]
-    _payload, user = auth_result
-    tg_user_id = user.get("id") if isinstance(user, dict) else None
+    try:
+        auth_result = _extract_verified_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = user.get("id") if isinstance(user, dict) else None
 
-    if not tg_user_id:
-        return web.json_response({"ok": False, "error": "user_not_found_in_init_data"}, status=400)
+        if not tg_user_id:
+            return web.json_response({"ok": False, "error": "user_not_found_in_init_data"}, status=400)
 
-    async with SessionLocal() as session:
-        user_row = (
-            await session.execute(
-                select(User).where(User.tg_user_id == int(tg_user_id))
+        async with SessionLocal() as session:
+            user_row = (
+                await session.execute(
+                    select(User).where(User.tg_user_id == int(tg_user_id))
+                )
+            ).scalar_one_or_none()
+
+            if user_row is None:
+                return web.json_response(
+                    {
+                        "ok": True,
+                        "trusted": True,
+                        "joined": False,
+                        "tg_user_id": int(tg_user_id),
+                        "display_name": user.get("first_name") or user.get("username") or f"id:{tg_user_id}",
+                        "message": "Пользователь есть в Telegram, но ещё не вступил в турнир бота.",
+                    }
+                )
+
+            stats_row = (
+                await session.execute(
+                    select(
+                        func.count(Prediction.id).label("predictions_count"),
+                        func.coalesce(func.sum(Point.points), 0).label("total_points"),
+                        func.coalesce(func.sum(case((Point.category == "exact", 1), else_=0)), 0).label("exact_hits"),
+                        func.coalesce(func.sum(case((Point.category == "diff", 1), else_=0)), 0).label("diff_hits"),
+                        func.coalesce(func.sum(case((Point.category == "outcome", 1), else_=0)), 0).label("outcome_hits"),
+                    )
+                    .select_from(User)
+                    .outerjoin(Prediction, Prediction.tg_user_id == User.tg_user_id)
+                    .outerjoin(Point, Point.tg_user_id == User.tg_user_id)
+                    .where(User.tg_user_id == int(tg_user_id))
+                )
+            ).one()
+
+            league_row = (
+                await session.execute(
+                    select(
+                        League.name.label("league_name"),
+                        Stage.name.label("stage_name"),
+                        Stage.round_min.label("round_min"),
+                        Stage.round_max.label("round_max"),
+                    )
+                    .select_from(LeagueParticipant)
+                    .join(League, League.id == LeagueParticipant.league_id)
+                    .join(Stage, Stage.id == LeagueParticipant.stage_id)
+                    .where(
+                        LeagueParticipant.tg_user_id == int(tg_user_id),
+                        LeagueParticipant.is_active == 1,
+                        Stage.is_active == 1,
+                    )
+                    .order_by(LeagueParticipant.id.desc())
+                    .limit(1)
+                )
+            ).one_or_none()
+
+            display_name = (
+                user_row.display_name
+                or user_row.full_name
+                or (f"@{user_row.username}" if user_row.username else None)
+                or f"id:{tg_user_id}"
             )
-        ).scalar_one_or_none()
 
-        if user_row is None:
             return web.json_response(
                 {
                     "ok": True,
                     "trusted": True,
-                    "joined": False,
+                    "joined": True,
                     "tg_user_id": int(tg_user_id),
-                    "display_name": user.get("first_name") or user.get("username") or f"id:{tg_user_id}",
-                    "message": "Пользователь есть в Telegram, но ещё не вступил в турнир бота.",
+                    "display_name": display_name,
+                    "username": user_row.username,
+                    "predictions_count": int(stats_row.predictions_count or 0),
+                    "total_points": int(stats_row.total_points or 0),
+                    "exact_hits": int(stats_row.exact_hits or 0),
+                    "diff_hits": int(stats_row.diff_hits or 0),
+                    "outcome_hits": int(stats_row.outcome_hits or 0),
+                    "league_name": league_row.league_name if league_row else None,
+                    "stage_name": league_row.stage_name if league_row else None,
+                    "stage_round_min": int(league_row.round_min) if league_row and league_row.round_min is not None else None,
+                    "stage_round_max": int(league_row.round_max) if league_row and league_row.round_max is not None else None,
                 }
             )
-
-        stats_row = (
-            await session.execute(
-                select(
-                    func.count(Prediction.id).label("predictions_count"),
-                    func.coalesce(func.sum(Point.points), 0).label("total_points"),
-                    func.coalesce(func.sum(case((Point.category == "exact", 1), else_=0)), 0).label("exact_hits"),
-                    func.coalesce(func.sum(case((Point.category == "diff", 1), else_=0)), 0).label("diff_hits"),
-                    func.coalesce(func.sum(case((Point.category == "outcome", 1), else_=0)), 0).label("outcome_hits"),
-                )
-                .select_from(User)
-                .outerjoin(Prediction, Prediction.tg_user_id == User.tg_user_id)
-                .outerjoin(Point, Point.tg_user_id == User.tg_user_id)
-                .where(User.tg_user_id == int(tg_user_id))
-            )
-        ).one()
-
-        league_row = (
-            await session.execute(
-                select(
-                    League.name.label("league_name"),
-                    Stage.name.label("stage_name"),
-                    Stage.round_min.label("round_min"),
-                    Stage.round_max.label("round_max"),
-                )
-                .select_from(LeagueParticipant)
-                .join(League, League.id == LeagueParticipant.league_id)
-                .join(Stage, Stage.id == LeagueParticipant.stage_id)
-                .where(
-                    LeagueParticipant.tg_user_id == int(tg_user_id),
-                    LeagueParticipant.is_active == 1,
-                    Stage.is_active == 1,
-                )
-                .order_by(LeagueParticipant.id.desc())
-                .limit(1)
-            )
-        ).one_or_none()
-
-        display_name = (
-            user_row.display_name
-            or user_row.full_name
-            or (f"@{user_row.username}" if user_row.username else None)
-            or f"id:{tg_user_id}"
-        )
-
+    except Exception as e:
+        logger.exception("miniapp profile error")
         return web.json_response(
             {
-                "ok": True,
-                "trusted": True,
-                "joined": True,
-                "tg_user_id": int(tg_user_id),
-                "display_name": display_name,
-                "username": user_row.username,
-                "predictions_count": int(stats_row.predictions_count or 0),
-                "total_points": int(stats_row.total_points or 0),
-                "exact_hits": int(stats_row.exact_hits or 0),
-                "diff_hits": int(stats_row.diff_hits or 0),
-                "outcome_hits": int(stats_row.outcome_hits or 0),
-                "league_name": league_row.league_name if league_row else None,
-                "stage_name": league_row.stage_name if league_row else None,
-                "stage_round_min": int(league_row.round_min) if league_row and league_row.round_min is not None else None,
-                "stage_round_max": int(league_row.round_max) if league_row and league_row.round_max is not None else None,
-            }
+                "ok": False,
+                "error": "profile_query_failed",
+                "reason": str(e),
+                "signature_checked": True,
+            },
+            status=500,
         )
 
 
