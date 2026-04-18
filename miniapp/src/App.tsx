@@ -16,6 +16,27 @@ type MeResponse = {
   note: string
 }
 
+type ProfileResponse = {
+  ok: boolean
+  error?: string
+  reason?: string
+  trusted?: boolean
+  joined?: boolean
+  tg_user_id?: number
+  display_name?: string
+  username?: string | null
+  predictions_count?: number
+  total_points?: number
+  exact_hits?: number
+  diff_hits?: number
+  outcome_hits?: number
+  league_name?: string | null
+  stage_name?: string | null
+  stage_round_min?: number | null
+  stage_round_max?: number | null
+  message?: string
+}
+
 function App() {
   const [tgUserId, setTgUserId] = useState<number | null>(null)
   const [tgUsername, setTgUsername] = useState<string | null>(null)
@@ -23,6 +44,8 @@ function App() {
   const inTelegram = tgUserId !== null
   const [meData, setMeData] = useState<MeResponse | null>(null)
   const [apiError, setApiError] = useState<string | null>(null)
+  const [profileData, setProfileData] = useState<ProfileResponse | null>(null)
+  const [profileError, setProfileError] = useState<string | null>(null)
 
   useEffect(() => {
     const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
@@ -44,11 +67,11 @@ function App() {
         return
       }
 
-      fetch(`${apiBase}/api/miniapp/me`, {
-        headers: {
-          'X-Telegram-Init-Data': initData,
-        },
-      })
+      const headers = {
+        'X-Telegram-Init-Data': initData,
+      }
+
+      fetch(`${apiBase}/api/miniapp/me`, { headers })
         .then(async (res) => {
           const data = (await res.json()) as MeResponse
           if (!res.ok) {
@@ -59,6 +82,19 @@ function App() {
         })
         .catch((err) => {
           setApiError(String(err))
+        })
+
+      fetch(`${apiBase}/api/miniapp/profile`, { headers })
+        .then(async (res) => {
+          const data = (await res.json()) as ProfileResponse
+          if (!res.ok) {
+            throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+          }
+          setProfileData(data)
+          setProfileError(null)
+        })
+        .catch((err) => {
+          setProfileError(String(err))
         })
     }
 
@@ -141,8 +177,34 @@ function App() {
         </div>
       </section>
 
+      <section className="cards" style={{ marginTop: 10 }}>
+        <div className="card">
+          <div className="card-title">👤 API /api/miniapp/profile</div>
+          <div className="card-text">
+            {profileError ? (
+              <>Ошибка профиля: {profileError}</>
+            ) : profileData ? (
+              profileData.joined ? (
+                <>
+                  {profileData.display_name} · {profileData.total_points ?? 0} очк.
+                  <br />
+                  Прогнозов: <b>{profileData.predictions_count ?? 0}</b> · 🎯{profileData.exact_hits ?? 0} · 📏{profileData.diff_hits ?? 0} · ✅{profileData.outcome_hits ?? 0}
+                  <br />
+                  {profileData.league_name ? `${profileData.league_name}` : 'Лига: —'}
+                  {profileData.stage_name ? ` · ${profileData.stage_name}` : ''}
+                </>
+              ) : (
+                profileData.message || 'Пользователь пока не вступил в турнир.'
+              )
+            ) : (
+              'Загружаю профиль...'
+            )}
+          </div>
+        </div>
+      </section>
+
       <footer className="footer-note">
-        Статус: макет готов. Следующий шаг: подключение API.
+        Статус: Mini App авторизован и получает профиль из API.
       </footer>
     </div>
   )
