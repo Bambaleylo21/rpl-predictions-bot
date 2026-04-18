@@ -37,7 +37,10 @@ type ProfileResponse = {
   message?: string
 }
 
+type Screen = 'home' | 'profile'
+
 function App() {
+  const [screen, setScreen] = useState<Screen>('home')
   const [tgUserId, setTgUserId] = useState<number | null>(null)
   const [tgUsername, setTgUsername] = useState<string | null>(null)
   const [initDataLen, setInitDataLen] = useState<number>(0)
@@ -46,6 +49,7 @@ function App() {
   const [apiError, setApiError] = useState<string | null>(null)
   const [profileData, setProfileData] = useState<ProfileResponse | null>(null)
   const [profileError, setProfileError] = useState<string | null>(null)
+  const showDebugPanels = import.meta.env.DEV || import.meta.env.VITE_DEBUG_PANELS === '1'
 
   useEffect(() => {
     const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
@@ -103,109 +107,135 @@ function App() {
 
   return (
     <div className="app-shell">
-      <header className="topbar">
-        <div className="badge">РПЛ Mini App</div>
-        <h1>Бот прогнозов</h1>
-        <p>Первый экран. Дальше подключим живые данные из твоего бота.</p>
-      </header>
+      {screen === 'home' ? (
+        <>
+          <header className="topbar">
+            <div className="badge">РПЛ Mini App</div>
+            <h1>Бот прогнозов</h1>
+            <p>Новый интерфейс. Дальше подключаем рабочие экраны по шагам.</p>
+          </header>
 
-      <section className="cards">
-        <button className="card">
-          <div className="card-title">🎯 Поставить прогноз</div>
-          <div className="card-text">Выбрать тур и матчи</div>
-        </button>
+          <section className="cards">
+            <button className="card">
+              <div className="card-title">🎯 Поставить прогноз</div>
+              <div className="card-text">Выбрать тур и матчи</div>
+            </button>
 
-        <button className="card">
-          <div className="card-title">🗂 Мои прогнозы</div>
-          <div className="card-text">Текущий и другие туры</div>
-        </button>
+            <button className="card">
+              <div className="card-title">🗂 Мои прогнозы</div>
+              <div className="card-text">Текущий и другие туры</div>
+            </button>
 
-        <button className="card">
-          <div className="card-title">🏆 Таблица</div>
-          <div className="card-text">Лига и этап</div>
-        </button>
+            <button className="card">
+              <div className="card-title">🏆 Таблица</div>
+              <div className="card-text">Лига и этап</div>
+            </button>
 
-        <button className="card">
-          <div className="card-title">👤 Профиль</div>
-          <div className="card-text">Статистика участника</div>
-        </button>
-      </section>
+            <button className="card" onClick={() => setScreen('profile')}>
+              <div className="card-title">👤 Профиль</div>
+              <div className="card-text">Открыть личную статистику</div>
+            </button>
+          </section>
+        </>
+      ) : (
+        <>
+          <header className="topbar">
+            <button className="back-btn" onClick={() => setScreen('home')}>
+              ← Назад
+            </button>
+            <h1>👤 Мой профиль</h1>
+            <p>Личные данные участника из защищённого API.</p>
+          </header>
 
-      <section className="cards" style={{ marginTop: 10 }}>
-        <div className="card">
-          <div className="card-title">🔐 Telegram-сессия</div>
-          <div className="card-text">
-            {inTelegram ? (
-              <>
-                Подключено: user_id <b>{tgUserId}</b>
-                {tgUsername ? (
+          <section className="cards">
+            <div className="card">
+              <div className="card-title">
+                {profileData?.display_name || (tgUsername ? `@${tgUsername}` : `ID ${tgUserId ?? '—'}`)}
+              </div>
+              <div className="card-text">
+                {profileError ? (
+                  <>Ошибка загрузки профиля: {profileError}</>
+                ) : !profileData ? (
+                  'Загружаю профиль...'
+                ) : profileData.joined ? (
                   <>
-                    {' '}
-                    · @{tgUsername}
+                    Очки: <b>{profileData.total_points ?? 0}</b>
+                    <br />
+                    Прогнозов: <b>{profileData.predictions_count ?? 0}</b>
+                    <br />
+                    🎯 Точный счёт: <b>{profileData.exact_hits ?? 0}</b> · 📏 Разница: <b>{profileData.diff_hits ?? 0}</b> · ✅ Исход: <b>{profileData.outcome_hits ?? 0}</b>
+                    <br />
+                    Лига: <b>{profileData.league_name || '—'}</b>
+                    {profileData.stage_name ? (
+                      <>
+                        <br />
+                        Этап: <b>{profileData.stage_name}</b>
+                        {profileData.stage_round_min != null && profileData.stage_round_max != null ? (
+                          <> (туры {profileData.stage_round_min}-{profileData.stage_round_max})</>
+                        ) : null}
+                      </>
+                    ) : null}
                   </>
-                ) : null}
-              </>
-            ) : (
-              <>
-                Открыто вне Telegram или initData ещё не пришёл.
-                <br />
-                initData length: <b>{initDataLen}</b>
-              </>
-            )}
-          </div>
-        </div>
-      </section>
+                ) : (
+                  profileData.message || 'Пока нет активного участия в турнире.'
+                )}
+              </div>
+            </div>
+          </section>
+        </>
+      )}
 
-      <section className="cards" style={{ marginTop: 10 }}>
-        <div className="card">
-          <div className="card-title">🧩 API /api/miniapp/me</div>
-          <div className="card-text">
-            {apiError ? (
-              <>Ошибка API: {apiError}</>
-            ) : meData ? (
-              <>
-                API ok: {String(meData.ok)} · in_telegram: {String(meData.in_telegram)}
-                <br />
-                tg_user_id: <b>{String(meData.tg_user_id)}</b>
-                <br />
-                signature_checked: <b>{String(meData.signature_checked)}</b>
-              </>
-            ) : (
-              'Загружаю данные...'
-            )}
-          </div>
-        </div>
-      </section>
+      {showDebugPanels ? (
+        <>
+          <section className="cards" style={{ marginTop: 10 }}>
+            <div className="card">
+              <div className="card-title">🔐 Telegram-сессия (debug)</div>
+              <div className="card-text">
+                {inTelegram ? (
+                  <>
+                    Подключено: user_id <b>{tgUserId}</b>
+                    {tgUsername ? (
+                      <>
+                        {' '}
+                        · @{tgUsername}
+                      </>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    Открыто вне Telegram или initData ещё не пришёл.
+                    <br />
+                    initData length: <b>{initDataLen}</b>
+                  </>
+                )}
+              </div>
+            </div>
+          </section>
 
-      <section className="cards" style={{ marginTop: 10 }}>
-        <div className="card">
-          <div className="card-title">👤 API /api/miniapp/profile</div>
-          <div className="card-text">
-            {profileError ? (
-              <>Ошибка профиля: {profileError}</>
-            ) : profileData ? (
-              profileData.joined ? (
-                <>
-                  {profileData.display_name} · {profileData.total_points ?? 0} очк.
-                  <br />
-                  Прогнозов: <b>{profileData.predictions_count ?? 0}</b> · 🎯{profileData.exact_hits ?? 0} · 📏{profileData.diff_hits ?? 0} · ✅{profileData.outcome_hits ?? 0}
-                  <br />
-                  {profileData.league_name ? `${profileData.league_name}` : 'Лига: —'}
-                  {profileData.stage_name ? ` · ${profileData.stage_name}` : ''}
-                </>
-              ) : (
-                profileData.message || 'Пользователь пока не вступил в турнир.'
-              )
-            ) : (
-              'Загружаю профиль...'
-            )}
-          </div>
-        </div>
-      </section>
+          <section className="cards" style={{ marginTop: 10 }}>
+            <div className="card">
+              <div className="card-title">🧩 API /api/miniapp/me (debug)</div>
+              <div className="card-text">
+                {apiError ? (
+                  <>Ошибка API: {apiError}</>
+                ) : meData ? (
+                  <>
+                    API ok: {String(meData.ok)} · in_telegram: {String(meData.in_telegram)}
+                    <br />
+                    tg_user_id: <b>{String(meData.tg_user_id)}</b>
+                    <br />
+                    signature_checked: <b>{String(meData.signature_checked)}</b>
+                  </>
+                ) : (
+                  'Загружаю данные...'
+                )}
+              </div>
+            </div>
+          </section>
+        </>
+      ) : null}
 
-      <footer className="footer-note">
-        Статус: Mini App авторизован и получает профиль из API.
-      </footer>
+      <footer className="footer-note">Статус: Mini App авторизован и получает профиль из API.</footer>
     </div>
   )
 }

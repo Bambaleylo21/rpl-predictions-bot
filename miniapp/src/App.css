@@ -10,6 +10,18 @@
   margin-bottom: 18px;
 }
 
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #2f4777;
+  background: #14233f;
+  color: #dce9ff;
+  border-radius: 10px;
+  padding: 6px 10px;
+  margin-bottom: 10px;
+  cursor: pointer;
+}
+
 .badge {
   display: inline-block;
   background: #1e3a8a;
@@ -47,6 +59,10 @@
   padding: 14px;
   color: #ecf2ff;
   cursor: pointer;
+}
+
+.card:active {
+  transform: translateY(1px);
 }
 
 .card-title {
