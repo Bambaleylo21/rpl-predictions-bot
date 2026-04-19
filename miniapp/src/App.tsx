@@ -1189,37 +1189,16 @@ function App() {
               </section>
             ) : null}
 
-            <section className="cards">
-              <div className="card">
-                <div className="card-title">
-                  {tableData?.league_name || 'Лига'} {tableData?.stage_name ? `· ${tableData.stage_name}` : ''}
-                </div>
-                <div className="card-text">
-                  {tableError ? (
-                    <>Ошибка загрузки таблицы: {tableError}</>
-                  ) : !tableData ? (
-                    'Загружаю таблицу...'
-                ) : tableData.has_table ? (
-                  <>
-                    Участников: <b>{tableData.participants ?? 0}</b>
-                    <br />
-                    {tableData.user_place ? (
-                        <>
-                          Твоё место: <b>{tableData.user_place}</b>
-                        </>
-                      ) : (
-                        'Ты пока не в списке лиги этого этапа.'
-                      )}
-                  </>
-                ) : (
-                  tableData.message || 'Таблица ещё не сформирована. Ждём первые рассчитанные матчи.'
-                )}
-                </div>
-              </div>
-            </section>
-
             <section className="cards space-top">
-              {(tableData?.rows || []).length > 0 ? (
+              {tableError ? (
+                <div className="card">
+                  <div className="card-text">Ошибка загрузки таблицы: {tableError}</div>
+                </div>
+              ) : !tableData ? (
+                <div className="card">
+                  <div className="card-text">Загружаю таблицу...</div>
+                </div>
+              ) : (tableData?.rows || []).length > 0 ? (
                 <div className="card table-card">
                   <div className="table-grid table-grid-head">
                     <div className="col-place">#</div>
@@ -1264,7 +1243,13 @@ function App() {
                     )
                   })}
                 </div>
-              ) : null}
+              ) : (
+                <div className="card">
+                  <div className="card-text">
+                    {tableData.message || 'Таблица ещё не сформирована. Ждём первые рассчитанные матчи.'}
+                  </div>
+                </div>
+              )}
             </section>
 
             <section className="cards space-top">
