@@ -2788,6 +2788,9 @@ def register_user_handlers(dp: Dispatcher):
 
     @dp.message(CommandStart())
     async def cmd_start(message: types.Message):
+        # Принудительно снимаем старую reply-клавиатуру у всех пользователей.
+        await message.answer(" ", reply_markup=types.ReplyKeyboardRemove())
+
         async with SessionLocal() as session:
             await upsert_user_from_message(session, message)
             await set_selected_tournament_for_user(session, message.from_user.id, WC_TOURNAMENT_CODE)

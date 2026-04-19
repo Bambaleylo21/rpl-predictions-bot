@@ -1964,7 +1964,7 @@ async def table_current(request: web.Request) -> web.Response:
             )
 
         if requested_round is not None:
-            stage_name = display_round_name(int(requested_round), tournament_id=int(tournament.id))
+            stage_name = display_round_name(tournament.code, int(requested_round))
         else:
             stage_name = "Общая таблица"
 
