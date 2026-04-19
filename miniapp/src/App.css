@@ -1,5 +1,7 @@
 .app-shell {
+  height: var(--tg-viewport-stable-height, 100vh);
   min-height: 100vh;
+  min-height: var(--tg-viewport-stable-height, 100vh);
   background: linear-gradient(180deg, #0b1220 0%, #101a2d 60%, #13223a 100%);
   color: #e8eefb;
 }

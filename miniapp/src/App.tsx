@@ -312,9 +312,39 @@ function App() {
   const showDebugPanels = import.meta.env.DEV || import.meta.env.VITE_DEBUG_PANELS === '1'
 
   useEffect(() => {
+    let attempts = 0
+    const maxAttempts = 8
+    let timerId: ReturnType<typeof setTimeout> | null = null
+
+    const expandNow = () => {
+      try {
+        WebApp.expand()
+      } catch {
+        // no-op outside Telegram
+      }
+    }
+
     try {
       WebApp.ready()
-      WebApp.expand()
+      expandNow()
+
+      const loopExpand = () => {
+        if (attempts >= maxAttempts) return
+        attempts += 1
+        expandNow()
+        timerId = setTimeout(loopExpand, 220)
+      }
+      timerId = setTimeout(loopExpand, 120)
+
+      const onViewportChanged = () => {
+        expandNow()
+      }
+      ;(WebApp as any).onEvent?.('viewportChanged', onViewportChanged)
+
+      return () => {
+        if (timerId) clearTimeout(timerId)
+        ;(WebApp as any).offEvent?.('viewportChanged', onViewportChanged)
+      }
     } catch {
       // no-op outside Telegram
     }
