@@ -728,8 +728,16 @@ function App() {
                                 const currentInput = normalizeScore(scoreInputs[m.match_id] || '')
                                 const savedInput = normalizeScore(m.prediction || '')
                                 const isDirty = currentInput !== savedInput
-                                const isValid = /^\d:\d$/.test(currentInput)
-                                const canSave = isDirty && isValid
+                                const hasSaved = savedInput.length > 0
+                                const isSaving = savingMatchId === m.match_id
+                                const canSave = isDirty
+                                const saveVisualState = isSaving
+                                  ? 'is-saving'
+                                  : isDirty
+                                    ? 'is-dirty'
+                                    : hasSaved
+                                      ? 'is-saved'
+                                      : 'is-empty'
                                 return (
                                   <>
                                     <div className="compact-meta">
@@ -752,19 +760,12 @@ function App() {
                                       />
                                       <span className="team-name team-right">{m.away_team}</span>
                                       <button
-                                        className={`save-btn compact-save-btn ${isDirty ? 'is-dirty' : 'is-saved'}`}
+                                        className={`save-btn compact-save-btn ${saveVisualState}`}
                                         onClick={() => savePrediction(m.match_id)}
-                                        disabled={savingMatchId === m.match_id || !canSave}
+                                        disabled={isSaving || !canSave}
                                       >
-                                        {savingMatchId === m.match_id ? '…' : isDirty ? '↻' : '✓'}
+                                        {isSaving ? '…' : saveVisualState === 'is-empty' ? '' : '✓'}
                                       </button>
-                                    </div>
-                                    <div className="compact-state">
-                                      {m.prediction ? (
-                                        <>Текущий прогноз: <b>{m.prediction}</b></>
-                                      ) : (
-                                        'Прогноз не поставлен'
-                                      )}
                                     </div>
                                   </>
                                 )
