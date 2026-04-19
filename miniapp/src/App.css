@@ -23,6 +23,13 @@
   gap: 12px;
 }
 
+.header-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
 .badge {
   display: inline-block;
   background: #1e3a8a;
@@ -50,6 +57,32 @@
   display: flex;
   gap: 8px;
   align-items: flex-start;
+}
+
+.match-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  padding: 2px;
+  border: 1px solid #2f4777;
+  border-radius: 999px;
+  background: #122345;
+  width: 180px;
+}
+
+.match-toggle-btn {
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #b8caef;
+  padding: 5px 8px;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.match-toggle-btn.is-active {
+  background: #2a4f91;
+  color: #fff;
 }
 
 .tournament-icon {

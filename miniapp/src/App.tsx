@@ -415,18 +415,36 @@ function App() {
             <h1>{tabMeta[screen].icon} {tabMeta[screen].title}</h1>
             <p>{tabMeta[screen].subtitle}</p>
           </div>
-          <div className="tournament-icons">
-            {tournamentButtons.map((t) => (
-              <button
-                key={t.code}
-                className={`tournament-icon ${selectedTournamentCode === t.code ? 'is-active' : ''}`}
-                onClick={() => selectTournament(t.code)}
-                title={t.label}
-              >
-                <span>{t.icon}</span>
-                <small>{t.label}</small>
-              </button>
-            ))}
+          <div className="header-controls">
+            <div className="tournament-icons">
+              {tournamentButtons.map((t) => (
+                <button
+                  key={t.code}
+                  className={`tournament-icon ${selectedTournamentCode === t.code ? 'is-active' : ''}`}
+                  onClick={() => selectTournament(t.code)}
+                  title={t.label}
+                >
+                  <span>{t.icon}</span>
+                  <small>{t.label}</small>
+                </button>
+              ))}
+            </div>
+            {screen === 'predictions' ? (
+              <div className="match-toggle">
+                <button
+                  className={`match-toggle-btn ${predictionsFilter === 'open' ? 'is-active' : ''}`}
+                  onClick={() => setPredictionsFilter('open')}
+                >
+                  Активные
+                </button>
+                <button
+                  className={`match-toggle-btn ${predictionsFilter === 'closed' ? 'is-active' : ''}`}
+                  onClick={() => setPredictionsFilter('closed')}
+                >
+                  Завершённые
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
         {tournamentNotice ? <div className="notice-line">{tournamentNotice}</div> : null}
@@ -625,26 +643,6 @@ function App() {
                       Матчей в туре: <b>{predictionsData.items?.length ?? 0}</b>
                     </>
                   )}
-                </div>
-              </div>
-            </section>
-
-            <section className="cards space-top">
-              <div className="card card-static">
-                <div className="card-title">Показать матчи</div>
-                <div className="tournament-row">
-                  <button
-                    className={`tournament-chip ${predictionsFilter === 'open' ? 'is-active' : ''}`}
-                    onClick={() => setPredictionsFilter('open')}
-                  >
-                    Активные
-                  </button>
-                  <button
-                    className={`tournament-chip ${predictionsFilter === 'closed' ? 'is-active' : ''}`}
-                    onClick={() => setPredictionsFilter('closed')}
-                  >
-                    Завершённые
-                  </button>
                 </div>
               </div>
             </section>
