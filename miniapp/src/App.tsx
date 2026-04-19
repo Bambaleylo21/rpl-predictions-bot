@@ -1085,24 +1085,62 @@ function App() {
                 ) : (
                   tableData.message || 'Таблица ещё не сформирована. Ждём первые рассчитанные матчи.'
                 )}
-              </div>
-            </div>
-          </section>
-
-          <section className="cards space-top">
-              {(tableData?.rows || []).map((r) => (
-                <div
-                  className={`card ${tableData?.user_place === r.place ? 'card-user-highlight' : ''}`}
-                  key={`${r.place}-${r.name}`}
-                >
-                  <div className="card-title">
-                    {r.place}. {r.name} — {r.total} очк.
-                  </div>
-                  <div className="card-text">
-                    🎯{r.exact} · 📏{r.diff} · ✅{r.outcome} · ⛔{r.missed_matches ?? 0}
-                  </div>
                 </div>
-              ))}
+              </div>
+            </section>
+
+            <section className="cards space-top">
+              {(tableData?.rows || []).length > 0 ? (
+                <div className="card table-card">
+                  <div className="table-grid table-grid-head">
+                    <div className="col-place">#</div>
+                    <div className="col-name">Имя</div>
+                    <div className="col-num">Очк</div>
+                    <div className="col-num">🎯</div>
+                    <div className="col-num">📏</div>
+                    <div className="col-num">✅</div>
+                    <div className="col-num">⛔</div>
+                    <div className="col-num">⭐</div>
+                  </div>
+
+                  {(tableData?.rows || []).map((r) => {
+                    const basePoints = (r.exact * 4) + (r.diff * 2) + (r.outcome * 1)
+                    const bonusPoints = Math.max(0, (r.total ?? 0) - basePoints)
+                    return (
+                      <div
+                        className={`table-grid table-grid-row ${tableData?.user_place === r.place ? 'is-user' : ''}`}
+                        key={`${r.place}-${r.name}`}
+                      >
+                        <div className="col-place">{r.place}</div>
+                        <div className="col-name col-name-text">{r.name}</div>
+                        <div className="col-num">{r.total}</div>
+                        <div className="col-num">{r.exact}</div>
+                        <div className="col-num">{r.diff}</div>
+                        <div className="col-num">{r.outcome}</div>
+                        <div className="col-num">{r.missed_matches ?? 0}</div>
+                        <div className="col-num">{bonusPoints}</div>
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : null}
+            </section>
+
+            <section className="cards space-top">
+              <div className="card">
+                <div className="card-title">Расшифровка</div>
+                <div className="card-text">
+                  🎯 Точный счёт: 4 очка
+                  <br />
+                  📏 Разница мячей: 2 очка
+                  <br />
+                  ✅ Исход: 1 очко
+                  <br />
+                  ⛔ Пропущенные матчи: 0 очков
+                  <br />
+                  ⭐ Доп. прогнозы / бонусы: +5 за каждый угаданный доп. прогноз
+                </div>
+              </div>
             </section>
           </>
         ) : null}
