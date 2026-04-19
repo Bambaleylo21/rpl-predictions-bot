@@ -40,26 +40,9 @@ def build_main_menu_keyboard(
     default_round: int,
     is_joined: bool,
     join_cta_text: str = "✅ Вступить в турнир",
-) -> types.ReplyKeyboardMarkup:
-    rows: list[list[types.KeyboardButton]] = []
-    if not is_joined:
-        rows.append([types.KeyboardButton(text=join_cta_text)])
-    rows.extend(
-        [
-            [types.KeyboardButton(text="🎯 Поставить прогноз")],
-            [types.KeyboardButton(text="🗂 Мои прогнозы"), types.KeyboardButton(text="🏆 Общая таблица")],
-            [types.KeyboardButton(text="👤 Мой профиль"), types.KeyboardButton(text="📊 Статистика")],
-            [types.KeyboardButton(text="🏁 Выбрать турнир")],
-            [types.KeyboardButton(text="📘 Правила")],
-        ]
-    )
-    if is_joined:
-        rows.append([types.KeyboardButton(text="🚪 Покинуть турнир")])
-    return types.ReplyKeyboardMarkup(
-        keyboard=rows,
-        resize_keyboard=True,
-        input_field_placeholder="Выберите действие из меню ниже",
-    )
+) -> types.ReplyKeyboardRemove:
+    # Режим "только Mini App": полностью скрываем reply-клавиатуру.
+    return types.ReplyKeyboardRemove()
 
 
 def build_start_join_wc_keyboard() -> types.InlineKeyboardMarkup:

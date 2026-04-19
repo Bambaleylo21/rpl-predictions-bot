@@ -806,7 +806,8 @@ function App() {
                   ? (b.missed_matches ?? 0)
                   : getBonus(b)
       if (av !== bv) return (av - bv) * dir
-      return (a.place - b.place) * dir
+      // Позиция в таблице всегда должна идти 1,2,3... при равных значениях сортировки.
+      return a.place - b.place
     })
     return rows
   }, [tableData, tableSortDir, tableSortKey])

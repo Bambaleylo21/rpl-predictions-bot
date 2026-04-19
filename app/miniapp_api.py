@@ -1109,10 +1109,9 @@ async def _build_overall_table_rows(
     round_number: int | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     participants_q = await session.execute(
-        select(func.count(func.distinct(Prediction.tg_user_id)))
-        .select_from(Prediction)
-        .join(Match, Match.id == Prediction.match_id)
-        .where(Match.tournament_id == int(tournament_id))
+        select(func.count(func.distinct(UserTournament.tg_user_id)))
+        .select_from(UserTournament)
+        .where(UserTournament.tournament_id == int(tournament_id))
     )
     participants = int(participants_q.scalar_one() or 0)
 
