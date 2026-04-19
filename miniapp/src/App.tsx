@@ -41,6 +41,15 @@ type ProfileResponse = {
   played_matches?: number
   total_matches?: number
   tournament_progress_pct?: number
+  achievements_earned?: number
+  achievements_total?: number
+  achievements?: Array<{
+    key: string
+    title: string
+    emoji: string
+    earned: boolean
+    description?: string
+  }>
   league_name?: string | null
   stage_name?: string | null
   stage_round_min?: number | null
@@ -1171,6 +1180,27 @@ function App() {
                     </div>
                     <div className="profile-progress-meta">
                       Сыграно {profileData.played_matches ?? 0} из {profileData.total_matches ?? 0} матчей
+                    </div>
+                  </div>
+
+                  <div className="profile-achievements">
+                    <div className="profile-achievements-head">
+                      <span>Награды</span>
+                      <b>
+                        {profileData.achievements_earned ?? 0}/{profileData.achievements_total ?? 0}
+                      </b>
+                    </div>
+                    <div className="profile-achievements-grid">
+                      {(profileData.achievements || []).map((a) => (
+                        <div
+                          key={a.key}
+                          className={`profile-achievement ${a.earned ? 'is-earned' : 'is-locked'}`}
+                          title={a.description || a.title}
+                        >
+                          <span className="profile-achievement-emoji">{a.emoji}</span>
+                          <span className="profile-achievement-title">{a.title}</span>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 </>

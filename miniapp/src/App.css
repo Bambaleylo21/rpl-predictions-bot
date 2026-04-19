@@ -586,6 +586,65 @@
   font-size: 12px;
 }
 
+.profile-achievements {
+  margin-top: 12px;
+  border: 1px solid #2f4777;
+  background: #122345;
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.profile-achievements-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: #a9bde4;
+  font-size: 12px;
+}
+
+.profile-achievements-head b {
+  color: #ecf2ff;
+  font-size: 13px;
+}
+
+.profile-achievements-grid {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.profile-achievement {
+  border: 1px solid #2f4777;
+  border-radius: 8px;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+}
+
+.profile-achievement.is-earned {
+  background: rgba(31, 138, 76, 0.2);
+  border-color: #44bf75;
+}
+
+.profile-achievement.is-locked {
+  background: rgba(16, 31, 56, 0.7);
+  opacity: 0.7;
+}
+
+.profile-achievement-emoji {
+  font-size: 15px;
+  line-height: 1;
+}
+
+.profile-achievement-title {
+  font-size: 11px;
+  color: #dbe8ff;
+  line-height: 1.2;
+}
+
 .footer-note {
   margin-top: 16px;
   color: #9fb2da;

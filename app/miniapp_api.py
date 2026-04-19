@@ -358,6 +358,259 @@ async def tournament_select(request: web.Request) -> web.Response:
         )
 
 
+async def _build_profile_achievements(
+    session,
+    tournament_id: int,
+    tg_user_id: int,
+    missed_matches: int,
+) -> list[dict[str, Any]]:
+    achievements: list[dict[str, Any]] = []
+
+    def _push(key: str, title: str, emoji: str, earned: bool, description: str) -> None:
+        achievements.append(
+            {
+                "key": key,
+                "title": title,
+                "emoji": emoji,
+                "earned": bool(earned),
+                "description": description,
+            }
+        )
+
+    # "Первые" ачивки: самый ранний по времени прогноз, который в итоге дал нужную категорию.
+    first_specs = [
+        ("exact", "first_exact", "Первый точный", "🎯"),
+        ("diff", "first_diff", "Первая разница", "📏"),
+        ("outcome", "first_outcome", "Первый исход", "✅"),
+    ]
+    for category, key, title, emoji in first_specs:
+        first_row = (
+            await session.execute(
+                select(Prediction.tg_user_id)
+                .select_from(Prediction)
+                .join(
+                    Point,
+                    (Point.match_id == Prediction.match_id) & (Point.tg_user_id == Prediction.tg_user_id),
+                )
+                .join(Match, Match.id == Prediction.match_id)
+                .where(
+                    Match.tournament_id == int(tournament_id),
+                    Match.is_placeholder == 0,
+                    Point.category == category,
+                )
+                .order_by(Prediction.created_at.asc(), Prediction.id.asc())
+                .limit(1)
+            )
+        ).first()
+        holder_id = int(first_row[0]) if first_row else None
+        _push(
+            key=key,
+            title=title,
+            emoji=emoji,
+            earned=(holder_id is not None and holder_id == int(tg_user_id)),
+            description=f"Самый ранний прогноз, который дал категорию {emoji}.",
+        )
+
+    # Серии: считаем по завершённым матчам турнира; пропуск или другая категория рвут серию.
+    closed_match_rows = (
+        await session.execute(
+            select(Match.id)
+            .where(
+                Match.tournament_id == int(tournament_id),
+                Match.is_placeholder == 0,
+                Match.home_score.is_not(None),
+                Match.away_score.is_not(None),
+            )
+            .order_by(Match.kickoff_time.asc(), Match.id.asc())
+        )
+    ).all()
+    closed_match_ids = [int(r[0]) for r in closed_match_rows]
+
+    max_streak = {"exact": 0, "diff": 0, "outcome": 0}
+    if closed_match_ids:
+        user_pred_rows = (
+            await session.execute(
+                select(Prediction.match_id).where(
+                    Prediction.tg_user_id == int(tg_user_id),
+                    Prediction.match_id.in_(closed_match_ids),
+                )
+            )
+        ).all()
+        user_pred_match_ids = {int(r[0]) for r in user_pred_rows}
+
+        point_rows = (
+            await session.execute(
+                select(Point.match_id, Point.category).where(
+                    Point.tg_user_id == int(tg_user_id),
+                    Point.match_id.in_(closed_match_ids),
+                )
+            )
+        ).all()
+        user_cat_by_match = {int(mid): str(cat or "") for mid, cat in point_rows}
+
+        current = {"exact": 0, "diff": 0, "outcome": 0}
+        for mid in closed_match_ids:
+            has_pred = mid in user_pred_match_ids
+            cat = user_cat_by_match.get(mid, "") if has_pred else ""
+            for key in ("exact", "diff", "outcome"):
+                if cat == key:
+                    current[key] += 1
+                else:
+                    current[key] = 0
+                if current[key] > max_streak[key]:
+                    max_streak[key] = current[key]
+
+    streak_specs = [
+        ("exact", 3, "streak_exact_3", "3 счёта подряд", "🎯"),
+        ("exact", 5, "streak_exact_5", "5 счётов подряд", "🎯"),
+        ("diff", 3, "streak_diff_3", "3 разницы подряд", "📏"),
+        ("diff", 5, "streak_diff_5", "5 разниц подряд", "📏"),
+        ("diff", 10, "streak_diff_10", "10 разниц подряд", "📏"),
+        ("outcome", 3, "streak_outcome_3", "3 исхода подряд", "✅"),
+        ("outcome", 5, "streak_outcome_5", "5 исходов подряд", "✅"),
+        ("outcome", 10, "streak_outcome_10", "10 исходов подряд", "✅"),
+    ]
+    for cat, threshold, key, title, emoji in streak_specs:
+        _push(
+            key=key,
+            title=title,
+            emoji=emoji,
+            earned=max_streak.get(cat, 0) >= threshold,
+            description=f"Серия {emoji} не менее {threshold} матчей подряд.",
+        )
+
+    # Тур без пропусков.
+    round_totals_rows = (
+        await session.execute(
+            select(Match.round_number, func.count(Match.id))
+            .where(
+                Match.tournament_id == int(tournament_id),
+                Match.is_placeholder == 0,
+            )
+            .group_by(Match.round_number)
+        )
+    ).all()
+    user_round_pred_rows = (
+        await session.execute(
+            select(Match.round_number, func.count(Prediction.id))
+            .select_from(Prediction)
+            .join(Match, Match.id == Prediction.match_id)
+            .where(
+                Prediction.tg_user_id == int(tg_user_id),
+                Match.tournament_id == int(tournament_id),
+                Match.is_placeholder == 0,
+            )
+            .group_by(Match.round_number)
+        )
+    ).all()
+    round_total_map = {int(r): int(c or 0) for r, c in round_totals_rows}
+    round_pred_map = {int(r): int(c or 0) for r, c in user_round_pred_rows}
+    no_miss_round_earned = any(
+        total > 0 and round_pred_map.get(round_number, 0) >= total
+        for round_number, total in round_total_map.items()
+    )
+    _push(
+        key="round_no_miss",
+        title="Тур без пропусков",
+        emoji="🧱",
+        earned=no_miss_round_earned,
+        description="Сделать прогнозы на все матчи хотя бы одного тура.",
+    )
+
+    # Лучший/худший тур среди участников турнира (по очкам тура, с учетом равенств).
+    participant_rows = (
+        await session.execute(
+            select(UserTournament.tg_user_id).where(UserTournament.tournament_id == int(tournament_id))
+        )
+    ).all()
+    participant_ids = [int(r[0]) for r in participant_rows]
+    won_round = False
+    lost_round = False
+    if participant_ids:
+        played_rounds_rows = (
+            await session.execute(
+                select(Match.round_number)
+                .where(
+                    Match.tournament_id == int(tournament_id),
+                    Match.is_placeholder == 0,
+                    Match.home_score.is_not(None),
+                    Match.away_score.is_not(None),
+                )
+                .group_by(Match.round_number)
+                .order_by(Match.round_number.asc())
+            )
+        ).all()
+        played_rounds = [int(r[0]) for r in played_rounds_rows]
+        round_points_rows = (
+            await session.execute(
+                select(Match.round_number, Point.tg_user_id, func.sum(Point.points))
+                .select_from(Point)
+                .join(Match, Match.id == Point.match_id)
+                .where(
+                    Match.tournament_id == int(tournament_id),
+                    Match.is_placeholder == 0,
+                    Match.home_score.is_not(None),
+                    Match.away_score.is_not(None),
+                )
+                .group_by(Match.round_number, Point.tg_user_id)
+            )
+        ).all()
+        round_points_map: dict[tuple[int, int], int] = {
+            (int(rnd), int(uid)): int(pts or 0) for rnd, uid, pts in round_points_rows
+        }
+        for rnd in played_rounds:
+            values = [int(round_points_map.get((int(rnd), int(uid)), 0)) for uid in participant_ids]
+            if not values:
+                continue
+            my_value = int(round_points_map.get((int(rnd), int(tg_user_id)), 0))
+            if my_value == max(values):
+                won_round = True
+            if my_value == min(values):
+                lost_round = True
+            if won_round and lost_round:
+                break
+
+    _push(
+        key="round_winner",
+        title="Вдул всем",
+        emoji="👑",
+        earned=won_round,
+        description="Занять 1-е место по итогам любого тура (включая дележ).",
+    )
+    _push(
+        key="round_loser",
+        title="Лох тура",
+        emoji="🫠",
+        earned=lost_round,
+        description="Оказаться на последнем месте по итогам любого тура (включая дележ).",
+    )
+
+    # Пропуски.
+    _push(
+        key="missed_5",
+        title="Проёба",
+        emoji="🚫",
+        earned=int(missed_matches) >= 5,
+        description="Пропустить 5 матчей.",
+    )
+    _push(
+        key="missed_10",
+        title="Заядлый проёба",
+        emoji="⛔",
+        earned=int(missed_matches) >= 10,
+        description="Пропустить 10 матчей.",
+    )
+    _push(
+        key="missed_15",
+        title="Легендарный проёба",
+        emoji="💀",
+        earned=int(missed_matches) >= 15,
+        description="Пропустить 15 матчей.",
+    )
+
+    return achievements
+
+
 async def profile(request: web.Request) -> web.Response:
     try:
         auth_result = _extract_verified_user(request)
@@ -512,6 +765,13 @@ async def profile(request: web.Request) -> web.Response:
             predictions_count = int(stats_row.predictions_count or 0)
             hits_total = int(stats_row.exact_hits or 0) + int(stats_row.diff_hits or 0) + int(stats_row.outcome_hits or 0)
             hit_rate = round((hits_total * 100.0 / predictions_count), 1) if predictions_count > 0 else 0.0
+            achievements = await _build_profile_achievements(
+                session=session,
+                tournament_id=int(tournament.id),
+                tg_user_id=int(tg_user_id),
+                missed_matches=int(missed_matches),
+            )
+            achievements_earned = sum(1 for a in achievements if bool(a.get("earned")))
 
             if (tournament.code or "").strip().upper() == DEFAULT_TOURNAMENT_CODE:
                 table_rows, table_meta = await build_active_stage_league_table(int(tg_user_id))
@@ -547,6 +807,9 @@ async def profile(request: web.Request) -> web.Response:
                     "played_matches": played_matches,
                     "total_matches": total_matches,
                     "tournament_progress_pct": tournament_progress_pct,
+                    "achievements": achievements,
+                    "achievements_earned": int(achievements_earned),
+                    "achievements_total": int(len(achievements)),
                     "league_name": league_row.league_name if league_row else None,
                     "stage_name": league_row.stage_name if league_row else None,
                     "stage_round_min": int(league_row.round_min) if league_row and league_row.round_min is not None else None,
