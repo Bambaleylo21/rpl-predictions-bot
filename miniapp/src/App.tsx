@@ -595,6 +595,12 @@ function App() {
     predictions: { title: 'Мои прогнозы', subtitle: 'Твои ставки по матчам', icon: '🗂' },
     table: { title: 'Таблица', subtitle: 'Позиции участников турнира', icon: '🏆' },
   }
+  const bottomTabs: Array<{ key: Screen; icon: string; label: string }> = [
+    { key: 'profile', icon: '👤', label: 'Профиль' },
+    { key: 'predict', icon: '⚽', label: 'Матчи' },
+    { key: 'predictions', icon: '🗂', label: 'Прогнозы' },
+    { key: 'table', icon: '🏆', label: 'Таблица' },
+  ]
 
   const tournamentButtons = [
     { code: 'WC2026', icon: '⚽', label: 'WC' },
@@ -1175,18 +1181,17 @@ function App() {
       </main>
 
       <nav className="bottom-tabs">
-        <button className={`tab-btn ${screen === 'profile' ? 'is-active' : ''}`} onClick={() => setScreen('profile')}>
-          👤 Профиль
-        </button>
-        <button className={`tab-btn ${screen === 'predict' ? 'is-active' : ''}`} onClick={() => setScreen('predict')}>
-          🎯 Сделать прогноз
-        </button>
-        <button className={`tab-btn ${screen === 'predictions' ? 'is-active' : ''}`} onClick={() => setScreen('predictions')}>
-          🗂 Мои прогнозы
-        </button>
-        <button className={`tab-btn ${screen === 'table' ? 'is-active' : ''}`} onClick={() => setScreen('table')}>
-          🏆 Таблица
-        </button>
+        {bottomTabs.map((tab) => (
+          <button
+            key={tab.key}
+            className={`tab-btn ${screen === tab.key ? 'is-active' : ''}`}
+            onClick={() => setScreen(tab.key)}
+            aria-label={tab.label}
+          >
+            <span className="tab-icon">{tab.icon}</span>
+            <span className="tab-label">{tab.label}</span>
+          </button>
+        ))}
       </nav>
     </div>
   )
