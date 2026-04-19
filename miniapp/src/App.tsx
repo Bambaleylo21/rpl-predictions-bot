@@ -150,6 +150,25 @@ type LongtermResponse = {
 
 type Screen = 'predict' | 'profile' | 'predictions' | 'table'
 
+const ENGLAND_FLAG = String.fromCodePoint(
+  0x1f3f4,
+  0xe0067,
+  0xe0062,
+  0xe0065,
+  0xe006e,
+  0xe0067,
+  0xe007f
+)
+const SCOTLAND_FLAG = String.fromCodePoint(
+  0x1f3f4,
+  0xe0067,
+  0xe0062,
+  0xe0073,
+  0xe0063,
+  0xe0074,
+  0xe007f
+)
+
 const TEAM_FLAGS: Record<string, string> = {
   'Мексика': '🇲🇽',
   'ЮАР': '🇿🇦',
@@ -162,11 +181,17 @@ const TEAM_FLAGS: Record<string, string> = {
   'Катар': '🇶🇦',
   'Швейцария': '🇨🇭',
   'Гаити': '🇭🇹',
-  'Шотландия': '🏴',
+  'Шотландия': SCOTLAND_FLAG,
   'Австралия': '🇦🇺',
   'Турция': '🇹🇷',
   'Германия': '🇩🇪',
   'Кюрасао': '🇨🇼',
+  'Кабо-Верде': '🇨🇻',
+  'Новая Зеландия': '🇳🇿',
+  'Иордания': '🇯🇴',
+  'ДР Конго': '🇨🇩',
+  'ДРК': '🇨🇩',
+  'Конго ДР': '🇨🇩',
   'Нидерланды': '🇳🇱',
   'Япония': '🇯🇵',
   "Кот-д'Ивуар": '🇨🇮',
@@ -176,7 +201,7 @@ const TEAM_FLAGS: Record<string, string> = {
   'Тунис': '🇹🇳',
   'Аргентина': '🇦🇷',
   'Бразилия': '🇧🇷',
-  'Англия': '🏴',
+  'Англия': ENGLAND_FLAG,
   'Испания': '🇪🇸',
   'Франция': '🇫🇷',
   'Португалия': '🇵🇹',
@@ -221,10 +246,20 @@ const TEAM_FLAGS: Record<string, string> = {
   'Словения': '🇸🇮',
 }
 
+const normalizeTeamNameForLookup = (team: string): string =>
+  (team || '')
+    .trim()
+    .replace(/[’`]/g, "'")
+    .replace(/[‐‑–—]/g, '-')
+    .replace(/\s+/g, ' ')
+
 const teamWithFlag = (team: string): string => {
   const name = (team || '').trim()
+  const normalized = normalizeTeamNameForLookup(name)
   const flag = TEAM_FLAGS[name]
-  return flag ? `${flag} ${name}` : name
+  const fallbackFlag = TEAM_FLAGS[normalized]
+  const found = flag || fallbackFlag
+  return found ? `${found} ${name}` : name
 }
 
 function App() {

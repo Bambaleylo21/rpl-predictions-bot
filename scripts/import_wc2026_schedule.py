@@ -57,13 +57,16 @@ def _parse_match_pair(raw: Any) -> tuple[str, str] | None:
     txt = str(raw or "").strip()
     if not txt:
         return None
-    txt = txt.replace("—", "-").replace("–", "-")
-    parts = [x.strip() for x in txt.split("-", 1)]
-    if len(parts) != 2:
-        return None
-    if not parts[0] or not parts[1]:
-        return None
-    return parts[0], parts[1]
+    # ВАЖНО: не разделяем по обычному дефису внутри названий команд
+    # (например, "Кот-д’Ивуар", "Кабо-Верде").
+    # Ищем только реальные разделители между командами.
+    delimiters = [" — ", " – ", " - ", "—", "–"]
+    for delim in delimiters:
+        if delim in txt:
+            parts = [x.strip() for x in txt.split(delim, 1)]
+            if len(parts) == 2 and parts[0] and parts[1]:
+                return parts[0], parts[1]
+    return None
 
 
 def _parse_date(raw: Any) -> datetime.date | None:
