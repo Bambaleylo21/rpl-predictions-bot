@@ -188,6 +188,7 @@ async def build_active_stage_league_table(
                 LeagueParticipant.tg_user_id,
                 LeagueParticipant.display_name,
                 UserTournament.display_name,
+                UserTournament.bonus_points,
                 User.display_name,
                 User.username,
                 User.full_name,
@@ -274,11 +275,11 @@ async def build_active_stage_league_table(
         }
 
         rows: list[dict] = []
-        for uid, lp_name, ut_name, u_name, username, full_name in participant_rows:
+        for uid, lp_name, ut_name, ut_bonus, u_name, username, full_name in participant_rows:
             tgid = int(uid)
             pred_total, last_pred_at = pred_map.get(tgid, (0, None))
             pts = points_map.get(tgid, {})
-            total = int(pts.get("total", 0))
+            total = int(pts.get("total", 0)) + int(ut_bonus or 0)
             exact = int(pts.get("exact", 0))
             diff = int(pts.get("diff", 0))
             outcome = int(pts.get("outcome", 0))

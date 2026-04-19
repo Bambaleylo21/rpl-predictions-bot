@@ -19,6 +19,7 @@ from app.models import (
     LeagueMovement,
     LeagueParticipant,
     Match,
+    LongtermPrediction,
     Prediction,
     Point,
     Season,
@@ -181,6 +182,12 @@ def _parse_score(score_str: str) -> tuple[int, int] | None:
         return int(a), int(b)
     except ValueError:
         return None
+
+
+def _normalize_pick_text(value: str | None) -> str:
+    text = (value or "").strip().lower().replace("ё", "е")
+    text = re.sub(r"\s+", " ", text)
+    return text
 
 
 def _format_person_name(
@@ -1459,6 +1466,7 @@ def register_admin_handlers(dp: Dispatcher) -> None:
     dp.callback_query.register(admin_set_result_pick_match, F.data.startswith("admin_res_m:"))
     dp.message.register(admin_set_result_score_input, AdminSetResultStates.waiting_for_score)
     dp.message.register(admin_recalc, Command("admin_recalc"))
+    dp.message.register(admin_longterm_award, Command("admin_longterm_award"))
     dp.message.register(admin_manual_only_cleanup, Command("admin_manual_only_cleanup"))
     dp.message.register(admin_health, Command("admin_health"))
 
@@ -1836,6 +1844,150 @@ async def admin_recalc(message: types.Message):
             total_updates += await recalc_points_for_match_in_session(session, m.id)
 
     await message.answer(f"✅ Пересчёт завершён. Обновлений: {total_updates}")
+
+
+async def admin_longterm_award(message: types.Message):
+    """
+    /admin_longterm_award [TOUR_CODE] | <победитель> | <бомбардир>
+    Примеры:
+    /admin_longterm_award WC2026 | Бразилия | Килиан Мбаппе
+    /admin_longterm_award Бразилия | Килиан Мбаппе
+    """
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("⛔️ У вас нет прав на эту команду.")
+        return
+
+    raw = (message.text or "").strip()
+    payload = raw.split(maxsplit=1)[1].strip() if " " in raw else ""
+    parts = [p.strip() for p in payload.split("|") if p.strip()]
+    if len(parts) not in (2, 3):
+        await message.answer(
+            "Формат:\n"
+            "/admin_longterm_award [TOUR_CODE] | <победитель> | <бомбардир>\n"
+            "Пример:\n"
+            "/admin_longterm_award WC2026 | Бразилия | Килиан Мбаппе"
+        )
+        return
+
+    if len(parts) == 3:
+        tour_code = parts[0].upper()
+        winner_value = parts[1]
+        scorer_value = parts[2]
+    else:
+        tour_code = "WC2026"
+        winner_value = parts[0]
+        scorer_value = parts[1]
+
+    winner_norm = _normalize_pick_text(winner_value)
+    scorer_norm = _normalize_pick_text(scorer_value)
+    if not winner_norm or not scorer_norm:
+        await message.answer("Нужно указать и победителя, и бомбардира.")
+        return
+
+    async with SessionLocal() as session:
+        tournament = (
+            await session.execute(select(Tournament).where(func.upper(Tournament.code) == tour_code))
+        ).scalar_one_or_none()
+        if tournament is None:
+            await message.answer(f"Турнир {tour_code} не найден.")
+            return
+
+        participants_rows = (
+            await session.execute(
+                select(
+                    UserTournament.tg_user_id,
+                    UserTournament.display_name,
+                    UserTournament.bonus_points,
+                    UserTournament.bonus_winner,
+                    UserTournament.bonus_scorer,
+                    User.display_name,
+                    User.username,
+                    User.full_name,
+                )
+                .select_from(UserTournament)
+                .outerjoin(User, User.tg_user_id == UserTournament.tg_user_id)
+                .where(UserTournament.tournament_id == int(tournament.id))
+            )
+        ).all()
+        if not participants_rows:
+            await message.answer(f"В турнире {tournament.name} пока нет участников.")
+            return
+
+        picks_rows = (
+            await session.execute(
+                select(
+                    LongtermPrediction.tg_user_id,
+                    LongtermPrediction.pick_type,
+                    LongtermPrediction.pick_value,
+                ).where(LongtermPrediction.tournament_id == int(tournament.id))
+            )
+        ).all()
+
+        picks_map: dict[int, dict[str, str]] = {}
+        for uid, pick_type, pick_value in picks_rows:
+            tgid = int(uid)
+            if tgid not in picks_map:
+                picks_map[tgid] = {}
+            picks_map[tgid][str(pick_type)] = str(pick_value or "")
+
+        awarded_winner: list[str] = []
+        awarded_scorer: list[str] = []
+        updated_count = 0
+        changed_count = 0
+
+        for uid, ut_name, _bp, old_w, old_s, u_name, username, full_name in participants_rows:
+            tgid = int(uid)
+            picks = picks_map.get(tgid, {})
+            pick_winner = _normalize_pick_text(picks.get("winner"))
+            pick_scorer = _normalize_pick_text(picks.get("scorer"))
+
+            new_w = 5 if pick_winner and pick_winner == winner_norm else 0
+            new_s = 5 if pick_scorer and pick_scorer == scorer_norm else 0
+            new_total = new_w + new_s
+
+            ut = (
+                await session.execute(
+                    select(UserTournament).where(
+                        UserTournament.tg_user_id == tgid,
+                        UserTournament.tournament_id == int(tournament.id),
+                    )
+                )
+            ).scalar_one_or_none()
+            if ut is None:
+                continue
+
+            if new_w > 0:
+                awarded_winner.append(_format_person_name(tgid, ut_name, u_name, username, full_name))
+            if new_s > 0:
+                awarded_scorer.append(_format_person_name(tgid, ut_name, u_name, username, full_name))
+
+            if int(ut.bonus_winner or 0) != new_w or int(ut.bonus_scorer or 0) != new_s or int(ut.bonus_points or 0) != new_total:
+                changed_count += 1
+            ut.bonus_winner = int(new_w)
+            ut.bonus_scorer = int(new_s)
+            ut.bonus_points = int(new_total)
+            updated_count += 1
+
+        await session.commit()
+
+    def _fmt_names(items: list[str]) -> str:
+        if not items:
+            return "—"
+        return ", ".join(sorted(items, key=lambda x: x.lower()))
+
+    await message.answer(
+        "✅ Доп. прогнозы пересчитаны.\n"
+        f"Турнир: {tournament.name} ({tournament.code})\n"
+        f"Победитель турнира: {winner_value}\n"
+        f"Лучший бомбардир: {scorer_value}\n\n"
+        f"🎯 +5 за победителя: {len(awarded_winner)}\n"
+        f"{_fmt_names(awarded_winner)}\n\n"
+        f"⚽ +5 за бомбардира: {len(awarded_scorer)}\n"
+        f"{_fmt_names(awarded_scorer)}\n\n"
+        f"Обновлено строк участников: {updated_count}\n"
+        f"Фактически изменилось: {changed_count}\n"
+        "Команда идемпотентная: повторный запуск не создаёт дублей."
+    )
 
 
 async def admin_manual_only_cleanup(message: types.Message):

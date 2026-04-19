@@ -908,6 +908,7 @@ async def build_overall_leaderboard(
             select(
                 User.tg_user_id,
                 UserTournament.display_name,
+                UserTournament.bonus_points,
                 User.display_name,
                 User.username,
                 User.full_name,
@@ -923,20 +924,38 @@ async def build_overall_leaderboard(
                 (UserTournament.tg_user_id == User.tg_user_id) & (UserTournament.tournament_id == tournament_id),
             )
             .outerjoin(tournament_points_subq, tournament_points_subq.c.tg_user_id == User.tg_user_id)
-            .group_by(User.tg_user_id, UserTournament.display_name, User.display_name, User.username, User.full_name)
+            .group_by(
+                User.tg_user_id,
+                UserTournament.display_name,
+                UserTournament.bonus_points,
+                User.display_name,
+                User.username,
+                User.full_name,
+            )
             .order_by(
-                func.coalesce(func.sum(tournament_points_subq.c.points), 0).desc(),
+                (func.coalesce(func.sum(tournament_points_subq.c.points), 0) + func.coalesce(UserTournament.bonus_points, 0)).desc(),
                 User.tg_user_id.asc(),
             )
         )
 
         rows = []
-        for tg_user_id, tournament_display_name, user_display_name, username, full_name, total, exact, diff, outcome in q.all():
+        for (
+            tg_user_id,
+            tournament_display_name,
+            bonus_points,
+            user_display_name,
+            username,
+            full_name,
+            total,
+            exact,
+            diff,
+            outcome,
+        ) in q.all():
             rows.append(
                 {
                     "tg_user_id": tg_user_id,
                     "name": format_user_name(tournament_display_name, user_display_name, username, full_name, tg_user_id),
-                    "total": int(total),
+                    "total": int(total) + int(bonus_points or 0),
                     "exact": int(exact),
                     "diff": int(diff),
                     "outcome": int(outcome),

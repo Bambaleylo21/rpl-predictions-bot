@@ -243,6 +243,10 @@
   gap: 6px;
 }
 
+.compact-main-readonly {
+  grid-template-columns: 1fr 58px 1fr 24px;
+}
+
 .team-name {
   font-size: 15px;
   color: #e5edff;
@@ -270,6 +274,45 @@
   text-align: center;
   font-size: 16px;
   line-height: 1.2;
+}
+
+.score-inline-pill {
+  width: 58px;
+  border: 1px solid #2f4777;
+  border-radius: 8px;
+  background: #0e1a31;
+  color: #e8eefb;
+  padding: 6px 4px;
+  text-align: center;
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.result-dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.result-dot.is-open {
+  background: #243f72;
+  color: #c9dcff;
+}
+
+.result-dot.is-closed {
+  background: #1f8a4c;
+  color: #ffffff;
+}
+
+.compact-note {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #a6bbdf;
 }
 
 .compact-save-btn {

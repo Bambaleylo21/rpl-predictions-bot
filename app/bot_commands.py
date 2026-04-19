@@ -11,6 +11,7 @@ def get_admin_bot_commands() -> list[types.BotCommand]:
         types.BotCommand(command="admin_add_match", description="Админ: добавить матч"),
         types.BotCommand(command="admin_set_result", description="Админ: поставить результат"),
         types.BotCommand(command="admin_recalc", description="Админ: пересчитать очки"),
+        types.BotCommand(command="admin_longterm_award", description="Админ: начислить доп. прогнозы"),
         types.BotCommand(command="admin_manual_only_cleanup", description="Админ: чистка ручного режима"),
         types.BotCommand(command="admin_health", description="Админ: здоровье БД"),
         types.BotCommand(command="admin_audience", description="Админ: аудитория бота"),

@@ -625,6 +625,17 @@ function App() {
     }
     return Object.entries(grouped)
   })()
+  const predictionItemsFiltered =
+    (predictionsData?.items || []).filter((m) => (predictionsFilter === 'open' ? m.status === 'open' : m.status === 'closed'))
+  const predictionGroups = (() => {
+    const grouped: Record<string, typeof predictionItemsFiltered> = {}
+    for (const item of predictionItemsFiltered) {
+      const dateKey = (item.kickoff || '').split(' ')[0] || '—'
+      if (!grouped[dateKey]) grouped[dateKey] = []
+      grouped[dateKey].push(item)
+    }
+    return Object.entries(grouped)
+  })()
 
   useEffect(() => {
     if (stageTab === 'LT' && !allowLongtermTab) {
@@ -1013,35 +1024,44 @@ function App() {
                 </section>
 
                 <section className="cards space-top">
-                  {(predictionsData?.items || [])
-                    .filter((m) => (predictionsFilter === 'open' ? m.status === 'open' : m.status === 'closed'))
-                    .map((m) => (
-                      <div className="card" key={m.match_id}>
-                        <div className="card-title">
-                          {m.group_label ? `[${m.group_label}] ` : ''}
-                          {teamWithFlag(m.home_team)} — {teamWithFlag(m.away_team)}
+                  {predictionGroups.length === 0 ? (
+                    <div className="card">
+                      <div className="card-text">Матчей в этом режиме пока нет.</div>
+                    </div>
+                  ) : (
+                    <div className="card compact-list-card">
+                      {predictionGroups.map(([day, items]) => (
+                        <div className="day-group" key={day}>
+                          <div className="day-title">{day}</div>
+                          {items.map((m) => (
+                            <div className="compact-match" key={m.match_id}>
+                              <div className="compact-meta">
+                                {m.group_label ? <span className="group-small">[{m.group_label}]</span> : <span className="group-small">—</span>}
+                                <span className="kickoff-small">{(m.kickoff || '').split(' ')[1] || ''} МСК</span>
+                              </div>
+                              <div className="compact-main compact-main-readonly">
+                                <span className="team-name team-left">{teamWithFlag(m.home_team)}</span>
+                                <span className="score-inline-pill">{m.prediction || '-:-'}</span>
+                                <span className="team-name team-right">{teamWithFlag(m.away_team)}</span>
+                                <span className={`result-dot ${m.status === 'closed' ? 'is-closed' : 'is-open'}`} title={m.status === 'closed' ? 'Матч завершён' : 'Матч открыт'}>
+                                  {m.status === 'closed' ? '✓' : '•'}
+                                </span>
+                              </div>
+                              <div className="compact-note">
+                                {m.status === 'open'
+                                  ? m.prediction
+                                    ? 'Прогноз сохранён'
+                                    : 'Без прогноза'
+                                  : m.prediction
+                                    ? `Итог ${m.result || '—'} · ${m.emoji} ${m.points ?? 0}`
+                                    : `Итог ${m.result || '—'} · без прогноза`}
+                              </div>
+                            </div>
+                          ))}
                         </div>
-                        <div className="card-text">
-                          {m.kickoff} МСК
-                          <br />
-                          {m.status === 'open' ? (
-                            m.prediction ? (
-                              <>Прогноз: <b>{m.prediction}</b> (матч ещё открыт)</>
-                            ) : (
-                              'Без прогноза (матч ещё открыт)'
-                            )
-                          ) : m.prediction ? (
-                            <>
-                              Итог: <b>{m.result}</b> · Прогноз: <b>{m.prediction}</b> · {m.emoji} {m.points ?? 0}
-                            </>
-                          ) : (
-                            <>
-                              Итог: <b>{m.result}</b> · Без прогноза
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
+                  )}
                 </section>
               </>
             )}

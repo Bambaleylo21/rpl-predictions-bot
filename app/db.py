@@ -51,6 +51,9 @@ async def _apply_postgres_schema_fixes(conn) -> None:
         "CREATE INDEX IF NOT EXISTS ix_user_tournaments_tg_user_id ON user_tournaments (tg_user_id)",
         "CREATE INDEX IF NOT EXISTS ix_user_tournaments_tournament_id ON user_tournaments (tournament_id)",
         "ALTER TABLE user_tournaments ADD COLUMN IF NOT EXISTS display_name VARCHAR(64)",
+        "ALTER TABLE user_tournaments ADD COLUMN IF NOT EXISTS bonus_points INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE user_tournaments ADD COLUMN IF NOT EXISTS bonus_winner INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE user_tournaments ADD COLUMN IF NOT EXISTS bonus_scorer INTEGER NOT NULL DEFAULT 0",
 
         # users
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT NOW()",
@@ -127,6 +130,9 @@ async def _apply_sqlite_schema_fixes(conn) -> None:
         "CREATE INDEX IF NOT EXISTS ix_user_tournaments_tg_user_id ON user_tournaments (tg_user_id)",
         "CREATE INDEX IF NOT EXISTS ix_user_tournaments_tournament_id ON user_tournaments (tournament_id)",
         "ALTER TABLE user_tournaments ADD COLUMN display_name VARCHAR(64)",
+        "ALTER TABLE user_tournaments ADD COLUMN bonus_points INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE user_tournaments ADD COLUMN bonus_winner INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE user_tournaments ADD COLUMN bonus_scorer INTEGER NOT NULL DEFAULT 0",
 
         # matches.tournament_id
         "ALTER TABLE matches ADD COLUMN tournament_id INTEGER",

@@ -52,6 +52,9 @@ class UserTournament(Base):
     tg_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
     tournament_id: Mapped[int] = mapped_column(ForeignKey("tournaments.id", ondelete="CASCADE"), nullable=False, index=True)
     display_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    bonus_points: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    bonus_winner: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    bonus_scorer: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime,

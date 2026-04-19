@@ -393,15 +393,15 @@ async def profile(request: web.Request) -> web.Response:
                     }
                 )
 
-            in_tournament = (
+            user_tournament_row = (
                 await session.execute(
-                    select(UserTournament.id).where(
+                    select(UserTournament).where(
                         UserTournament.tg_user_id == int(tg_user_id),
                         UserTournament.tournament_id == int(tournament.id),
                     )
                 )
-            ).first() is not None
-            if not in_tournament:
+            ).scalar_one_or_none()
+            if user_tournament_row is None:
                 return web.json_response(
                     {
                         "ok": True,
@@ -475,7 +475,7 @@ async def profile(request: web.Request) -> web.Response:
                     "display_name": display_name,
                     "username": user_row.username,
                     "predictions_count": int(stats_row.predictions_count or 0),
-                    "total_points": int(stats_row.total_points or 0),
+                    "total_points": int(stats_row.total_points or 0) + int(user_tournament_row.bonus_points or 0),
                     "exact_hits": int(stats_row.exact_hits or 0),
                     "diff_hits": int(stats_row.diff_hits or 0),
                     "outcome_hits": int(stats_row.outcome_hits or 0),
@@ -538,6 +538,7 @@ async def _build_overall_table_rows(session, tournament_id: int) -> tuple[list[d
             User.display_name,
             User.username,
             User.full_name,
+            UserTournament.bonus_points,
             func.coalesce(func.sum(points_subq.c.points), 0).label("total"),
             func.coalesce(func.sum(case((points_subq.c.category == "exact", 1), else_=0)), 0).label("exact"),
             func.coalesce(func.sum(case((points_subq.c.category == "diff", 1), else_=0)), 0).label("diff"),
@@ -547,9 +548,16 @@ async def _build_overall_table_rows(session, tournament_id: int) -> tuple[list[d
         .join(User, User.tg_user_id == UserTournament.tg_user_id)
         .outerjoin(points_subq, points_subq.c.tg_user_id == User.tg_user_id)
         .where(UserTournament.tournament_id == int(tournament_id))
-        .group_by(User.tg_user_id, UserTournament.display_name, User.display_name, User.username, User.full_name)
+        .group_by(
+            User.tg_user_id,
+            UserTournament.display_name,
+            User.display_name,
+            User.username,
+            User.full_name,
+            UserTournament.bonus_points,
+        )
         .order_by(
-            func.coalesce(func.sum(points_subq.c.points), 0).desc(),
+            (func.coalesce(func.sum(points_subq.c.points), 0) + func.coalesce(UserTournament.bonus_points, 0)).desc(),
             func.coalesce(func.sum(case((points_subq.c.category == "exact", 1), else_=0)), 0).desc(),
             func.coalesce(func.sum(case((points_subq.c.category == "diff", 1), else_=0)), 0).desc(),
             func.coalesce(func.sum(case((points_subq.c.category == "outcome", 1), else_=0)), 0).desc(),
@@ -559,7 +567,18 @@ async def _build_overall_table_rows(session, tournament_id: int) -> tuple[list[d
 
     rows: list[dict[str, Any]] = []
     place = 1
-    for tg_user_id, tournament_display_name, user_display_name, username, full_name, total, exact, diff, outcome in q.all():
+    for (
+        tg_user_id,
+        tournament_display_name,
+        user_display_name,
+        username,
+        full_name,
+        bonus_points,
+        total,
+        exact,
+        diff,
+        outcome,
+    ) in q.all():
         name = (
             tournament_display_name
             or user_display_name
@@ -572,7 +591,7 @@ async def _build_overall_table_rows(session, tournament_id: int) -> tuple[list[d
                 "place": int(place),
                 "tg_user_id": int(tg_user_id),
                 "name": str(name),
-                "total": int(total or 0),
+                "total": int(total or 0) + int(bonus_points or 0),
                 "exact": int(exact or 0),
                 "diff": int(diff or 0),
                 "outcome": int(outcome or 0),
