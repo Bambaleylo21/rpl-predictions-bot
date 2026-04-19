@@ -191,6 +191,12 @@ function App() {
     if (digits.length <= 1) return digits
     return `${digits.slice(0, 1)}:${digits.slice(1)}`
   }
+  const normalizeScore = (raw: string): string => {
+    const cleaned = (raw || '').trim().replace('-', ':')
+    const m = cleaned.match(/^(\d+):(\d+)$/)
+    if (!m) return ''
+    return `${Number(m[1])}:${Number(m[2])}`
+  }
   const showDebugPanels = import.meta.env.DEV || import.meta.env.VITE_DEBUG_PANELS === '1'
 
   const getInitData = () => {
@@ -718,40 +724,51 @@ function App() {
                           <div className="day-title">{dateKey}</div>
                           {matches.map((m) => (
                             <div className="compact-match" key={m.match_id}>
-                              <div className="compact-meta">
-                                {m.group_label ? <span className="group-small">[{m.group_label}]</span> : <span className="group-small">—</span>}
-                                <span className="kickoff-small">{(m.kickoff || '').split(' ')[1] || ''} МСК</span>
-                              </div>
-                              <div className="compact-main">
-                                <span className="team-name team-left">{m.home_team}</span>
-                                <input
-                                  className="score-inline-input"
-                                  value={scoreInputs[m.match_id] || ''}
-                                  onChange={(e) =>
-                                    setScoreInputs((prev) => ({
-                                      ...prev,
-                                      [m.match_id]: formatScoreInput(e.target.value),
-                                    }))
-                                  }
-                                  placeholder="-:-"
-                                  inputMode="numeric"
-                                />
-                                <span className="team-name team-right">{m.away_team}</span>
-                                <button
-                                  className="save-btn compact-save-btn"
-                                  onClick={() => savePrediction(m.match_id)}
-                                  disabled={savingMatchId === m.match_id}
-                                >
-                                  {savingMatchId === m.match_id ? '…' : '✓'}
-                                </button>
-                              </div>
-                              <div className="compact-state">
-                                {m.prediction ? (
-                                  <>Текущий прогноз: <b>{m.prediction}</b></>
-                                ) : (
-                                  'Прогноз не поставлен'
-                                )}
-                              </div>
+                              {(() => {
+                                const currentInput = normalizeScore(scoreInputs[m.match_id] || '')
+                                const savedInput = normalizeScore(m.prediction || '')
+                                const isDirty = currentInput !== savedInput
+                                const isValid = /^\d:\d$/.test(currentInput)
+                                const canSave = isDirty && isValid
+                                return (
+                                  <>
+                                    <div className="compact-meta">
+                                      {m.group_label ? <span className="group-small">[{m.group_label}]</span> : <span className="group-small">—</span>}
+                                      <span className="kickoff-small">{(m.kickoff || '').split(' ')[1] || ''} МСК</span>
+                                    </div>
+                                    <div className="compact-main">
+                                      <span className="team-name team-left">{m.home_team}</span>
+                                      <input
+                                        className="score-inline-input"
+                                        value={scoreInputs[m.match_id] || ''}
+                                        onChange={(e) =>
+                                          setScoreInputs((prev) => ({
+                                            ...prev,
+                                            [m.match_id]: formatScoreInput(e.target.value),
+                                          }))
+                                        }
+                                        placeholder="-:-"
+                                        inputMode="numeric"
+                                      />
+                                      <span className="team-name team-right">{m.away_team}</span>
+                                      <button
+                                        className={`save-btn compact-save-btn ${isDirty ? 'is-dirty' : 'is-saved'}`}
+                                        onClick={() => savePrediction(m.match_id)}
+                                        disabled={savingMatchId === m.match_id || !canSave}
+                                      >
+                                        {savingMatchId === m.match_id ? '…' : isDirty ? '↻' : '✓'}
+                                      </button>
+                                    </div>
+                                    <div className="compact-state">
+                                      {m.prediction ? (
+                                        <>Текущий прогноз: <b>{m.prediction}</b></>
+                                      ) : (
+                                        'Прогноз не поставлен'
+                                      )}
+                                    </div>
+                                  </>
+                                )
+                              })()}
                             </div>
                           ))}
                         </div>
