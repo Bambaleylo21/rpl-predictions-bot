@@ -389,6 +389,7 @@ async def profile(request: web.Request) -> web.Response:
                         "tournament_name": tournament.name,
                         "tg_user_id": int(tg_user_id),
                         "display_name": user.get("first_name") or user.get("username") or f"id:{tg_user_id}",
+                        "photo_url": user.get("photo_url"),
                         "message": "Пользователь есть в Telegram, но ещё не вступил в турнир бота.",
                     }
                 )
@@ -411,6 +412,7 @@ async def profile(request: web.Request) -> web.Response:
                         "tournament_name": tournament.name,
                         "tg_user_id": int(tg_user_id),
                         "display_name": user.get("first_name") or user.get("username") or f"id:{tg_user_id}",
+                        "photo_url": user.get("photo_url"),
                         "message": f"Ты ещё не вступил в турнир «{tournament.name}».",
                     }
                 )
@@ -435,6 +437,49 @@ async def profile(request: web.Request) -> web.Response:
                     .where(Match.tournament_id == int(tournament.id))
                 )
             ).one()
+
+            now = _now_msk_naive()
+            started_total_q = await session.execute(
+                select(func.count(Match.id)).where(
+                    Match.tournament_id == int(tournament.id),
+                    Match.is_placeholder == 0,
+                    Match.kickoff_time <= now,
+                )
+            )
+            started_total = int(started_total_q.scalar_one() or 0)
+
+            pred_started_q = await session.execute(
+                select(func.count(Prediction.id))
+                .select_from(Prediction)
+                .join(Match, Match.id == Prediction.match_id)
+                .where(
+                    Prediction.tg_user_id == int(tg_user_id),
+                    Match.tournament_id == int(tournament.id),
+                    Match.is_placeholder == 0,
+                    Match.kickoff_time <= now,
+                )
+            )
+            pred_started = int(pred_started_q.scalar_one() or 0)
+            missed_matches = max(0, started_total - pred_started)
+
+            total_matches_q = await session.execute(
+                select(func.count(Match.id)).where(
+                    Match.tournament_id == int(tournament.id),
+                    Match.is_placeholder == 0,
+                )
+            )
+            total_matches = int(total_matches_q.scalar_one() or 0)
+
+            played_matches_q = await session.execute(
+                select(func.count(Match.id)).where(
+                    Match.tournament_id == int(tournament.id),
+                    Match.is_placeholder == 0,
+                    Match.home_score.is_not(None),
+                    Match.away_score.is_not(None),
+                )
+            )
+            played_matches = int(played_matches_q.scalar_one() or 0)
+            tournament_progress_pct = round((played_matches * 100.0 / total_matches), 1) if total_matches > 0 else 0.0
 
             league_row = (
                 await session.execute(
@@ -464,6 +509,21 @@ async def profile(request: web.Request) -> web.Response:
                 or f"id:{tg_user_id}"
             )
 
+            predictions_count = int(stats_row.predictions_count or 0)
+            hits_total = int(stats_row.exact_hits or 0) + int(stats_row.diff_hits or 0) + int(stats_row.outcome_hits or 0)
+            hit_rate = round((hits_total * 100.0 / predictions_count), 1) if predictions_count > 0 else 0.0
+
+            if (tournament.code or "").strip().upper() == DEFAULT_TOURNAMENT_CODE:
+                table_rows, table_meta = await build_active_stage_league_table(int(tg_user_id))
+                user_place = next(
+                    (int(r.get("place", 0)) for r in table_rows if int(r.get("tg_user_id", 0)) == int(tg_user_id)),
+                    None,
+                ) if table_meta is not None else None
+                participants = int(table_meta.participants) if table_meta is not None else 0
+            else:
+                rows, participants = await _build_overall_table_rows(session, int(tournament.id))
+                user_place = next((int(r["place"]) for r in rows if int(r["tg_user_id"]) == int(tg_user_id)), None)
+
             return web.json_response(
                 {
                     "ok": True,
@@ -474,11 +534,19 @@ async def profile(request: web.Request) -> web.Response:
                     "tg_user_id": int(tg_user_id),
                     "display_name": display_name,
                     "username": user_row.username,
-                    "predictions_count": int(stats_row.predictions_count or 0),
+                    "photo_url": user.get("photo_url"),
+                    "predictions_count": predictions_count,
                     "total_points": int(stats_row.total_points or 0) + int(user_tournament_row.bonus_points or 0),
                     "exact_hits": int(stats_row.exact_hits or 0),
                     "diff_hits": int(stats_row.diff_hits or 0),
                     "outcome_hits": int(stats_row.outcome_hits or 0),
+                    "hit_rate": hit_rate,
+                    "missed_matches": int(missed_matches),
+                    "place": user_place,
+                    "participants": int(participants),
+                    "played_matches": played_matches,
+                    "total_matches": total_matches,
+                    "tournament_progress_pct": tournament_progress_pct,
                     "league_name": league_row.league_name if league_row else None,
                     "stage_name": league_row.stage_name if league_row else None,
                     "stage_round_min": int(league_row.round_min) if league_row and league_row.round_min is not None else None,

@@ -24,14 +24,23 @@ type ProfileResponse = {
   reason?: string
   trusted?: boolean
   joined?: boolean
+  tournament_name?: string
   tg_user_id?: number
   display_name?: string
   username?: string | null
+  photo_url?: string | null
   predictions_count?: number
   total_points?: number
   exact_hits?: number
   diff_hits?: number
   outcome_hits?: number
+  hit_rate?: number
+  missed_matches?: number
+  place?: number | null
+  participants?: number
+  played_matches?: number
+  total_matches?: number
+  tournament_progress_pct?: number
   league_name?: string | null
   stage_name?: string | null
   stage_round_min?: number | null
@@ -268,6 +277,7 @@ function App() {
   const [screen, setScreen] = useState<Screen>('predict')
   const [tgUserId, setTgUserId] = useState<number | null>(null)
   const [tgUsername, setTgUsername] = useState<string | null>(null)
+  const [tgPhotoUrl, setTgPhotoUrl] = useState<string | null>(null)
   const [initDataLen, setInitDataLen] = useState<number>(0)
   const inTelegram = tgUserId !== null
   const [meData, setMeData] = useState<MeResponse | null>(null)
@@ -398,6 +408,7 @@ function App() {
       setInitDataLen(initData.length)
       setTgUserId(user?.id ?? null)
       setTgUsername(user?.username ?? null)
+      setTgPhotoUrl(user?.photo_url ?? null)
 
       if (!initData && attempts < maxAttempts) {
         attempts += 1
@@ -1082,37 +1093,90 @@ function App() {
         {screen === 'profile' ? (
           <section className="cards">
             <div className="card">
-              <div className="card-title">
-                {profileData?.display_name || (tgUsername ? `@${tgUsername}` : `ID ${tgUserId ?? '—'}`)}
-              </div>
-              <div className="card-text">
-                {profileError ? (
-                  <>Ошибка загрузки профиля: {profileError}</>
-                ) : !profileData ? (
-                  'Загружаю профиль...'
-                ) : profileData.joined ? (
-                  <>
-                    Очки: <b>{profileData.total_points ?? 0}</b>
-                    <br />
-                    Прогнозов: <b>{profileData.predictions_count ?? 0}</b>
-                    <br />
-                    🎯 Точный счёт: <b>{profileData.exact_hits ?? 0}</b> · 📏 Разница: <b>{profileData.diff_hits ?? 0}</b> · ✅ Исход: <b>{profileData.outcome_hits ?? 0}</b>
-                    <br />
-                    Лига: <b>{profileData.league_name || '—'}</b>
-                    {profileData.stage_name ? (
-                      <>
-                        <br />
-                        Этап: <b>{profileData.stage_name}</b>
-                        {profileData.stage_round_min != null && profileData.stage_round_max != null ? (
-                          <> (туры {profileData.stage_round_min}-{profileData.stage_round_max})</>
-                        ) : null}
-                      </>
-                    ) : null}
-                  </>
-                ) : (
-                  profileData.message || 'Пока нет активного участия в турнире.'
-                )}
-              </div>
+              {profileError ? (
+                <div className="card-text">Ошибка загрузки профиля: {profileError}</div>
+              ) : !profileData ? (
+                <div className="card-text">Загружаю профиль...</div>
+              ) : profileData.joined ? (
+                <>
+                  <div className="profile-hero">
+                    {profileData.photo_url || tgPhotoUrl ? (
+                      <img
+                        className="profile-avatar"
+                        src={profileData.photo_url || tgPhotoUrl || ''}
+                        alt="avatar"
+                      />
+                    ) : (
+                      <div className="profile-avatar profile-avatar-fallback">
+                        {(() => {
+                          const name = (profileData.display_name || tgUsername || 'U').trim()
+                          return name.slice(0, 2).toUpperCase()
+                        })()}
+                      </div>
+                    )}
+                    <div className="profile-hero-meta">
+                      <div className="profile-name">
+                        {profileData.display_name || (tgUsername ? `@${tgUsername}` : `ID ${tgUserId ?? '—'}`)}
+                      </div>
+                      <div className="profile-subline">
+                        {profileData.tournament_name || 'Турнир'} · {profileData.league_name || 'Лига —'}
+                      </div>
+                      <div className="profile-subline">
+                        Этап: {profileData.stage_name || '—'}
+                        {profileData.stage_round_min != null && profileData.stage_round_max != null
+                          ? ` (${profileData.stage_round_min}-${profileData.stage_round_max})`
+                          : ''}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="profile-kpi-grid">
+                    <div className="profile-kpi">
+                      <span>Очки</span>
+                      <b>{profileData.total_points ?? 0}</b>
+                    </div>
+                    <div className="profile-kpi">
+                      <span>Место</span>
+                      <b>
+                        {profileData.place != null
+                          ? `${profileData.place}${profileData.participants ? `/${profileData.participants}` : ''}`
+                          : '—'}
+                      </b>
+                    </div>
+                    <div className="profile-kpi">
+                      <span>Точность</span>
+                      <b>{(profileData.hit_rate ?? 0).toFixed(1)}%</b>
+                    </div>
+                    <div className="profile-kpi">
+                      <span>Пропуски</span>
+                      <b>{profileData.missed_matches ?? 0}</b>
+                    </div>
+                  </div>
+
+                  <div className="profile-hits-line">
+                    🎯 <b>{profileData.exact_hits ?? 0}</b> · 📏 <b>{profileData.diff_hits ?? 0}</b> · ✅{' '}
+                    <b>{profileData.outcome_hits ?? 0}</b> · Всего прогнозов: <b>{profileData.predictions_count ?? 0}</b>
+                  </div>
+
+                  <div className="profile-progress">
+                    <div className="profile-progress-head">
+                      <span>Прогресс турнира</span>
+                      <b>{(profileData.tournament_progress_pct ?? 0).toFixed(1)}%</b>
+                    </div>
+                    <div className="profile-progress-bar">
+                      <div
+                        className="profile-progress-fill"
+                        style={{ width: `${Math.max(0, Math.min(100, profileData.tournament_progress_pct ?? 0))}%` }}
+                      />
+                    </div>
+                    <div className="profile-progress-meta">
+                      Сыграно {profileData.played_matches ?? 0} из {profileData.total_matches ?? 0} матчей
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="card-text">{profileData.message || 'Пока нет активного участия в турнире.'}</div>
+              )}
             </div>
           </section>
         ) : null}

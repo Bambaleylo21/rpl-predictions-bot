@@ -467,6 +467,125 @@
   font-size: 14px;
 }
 
+.profile-hero {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.profile-avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid #3e62a2;
+  background: #0e1a31;
+  flex: 0 0 64px;
+}
+
+.profile-avatar-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #e8eefb;
+  font-weight: 800;
+  font-size: 18px;
+}
+
+.profile-hero-meta {
+  min-width: 0;
+}
+
+.profile-name {
+  font-size: 18px;
+  font-weight: 800;
+  color: #ecf2ff;
+  line-height: 1.1;
+}
+
+.profile-subline {
+  margin-top: 4px;
+  color: #9fb2da;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.profile-kpi-grid {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.profile-kpi {
+  border: 1px solid #2f4777;
+  background: #122345;
+  border-radius: 10px;
+  padding: 8px 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.profile-kpi span {
+  color: #9fb2da;
+  font-size: 12px;
+}
+
+.profile-kpi b {
+  color: #ecf2ff;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.profile-hits-line {
+  margin-top: 10px;
+  font-size: 13px;
+  color: #c5d4f2;
+}
+
+.profile-progress {
+  margin-top: 12px;
+  border: 1px solid #2f4777;
+  background: #122345;
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.profile-progress-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: #a9bde4;
+}
+
+.profile-progress-head b {
+  color: #ecf2ff;
+  font-size: 13px;
+}
+
+.profile-progress-bar {
+  margin-top: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #0e1a31;
+  overflow: hidden;
+}
+
+.profile-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3f87ff 0%, #63c0ff 100%);
+  border-radius: 999px;
+}
+
+.profile-progress-meta {
+  margin-top: 8px;
+  color: #9fb2da;
+  font-size: 12px;
+}
+
 .footer-note {
   margin-top: 16px;
   color: #9fb2da;
