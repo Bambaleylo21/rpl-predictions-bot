@@ -836,7 +836,8 @@ async def profile(request: web.Request) -> web.Response:
             ).one_or_none()
 
             display_name = (
-                user_row.display_name
+                user_tournament_row.display_name
+                or user_row.display_name
                 or user_row.full_name
                 or (f"@{user_row.username}" if user_row.username else None)
                 or f"id:{tg_user_id}"
@@ -862,8 +863,11 @@ async def profile(request: web.Request) -> web.Response:
                 emoji: str,
                 current: int,
                 target: int,
+                positive_only: bool = True,
             ) -> None:
                 if current >= target:
+                    return
+                if positive_only and current <= 0:
                     return
                 progress_candidates.append(
                     {
@@ -882,6 +886,7 @@ async def profile(request: web.Request) -> web.Response:
                 emoji="🎯",
                 current=int(ach_meta.get("max_streak_exact", 0)),
                 target=3,
+                positive_only=True,
             )
             _add_progress_candidate(
                 key="streak_exact_5",
@@ -889,6 +894,7 @@ async def profile(request: web.Request) -> web.Response:
                 emoji="🎯",
                 current=int(ach_meta.get("max_streak_exact", 0)),
                 target=5,
+                positive_only=True,
             )
             _add_progress_candidate(
                 key="streak_diff_3",
@@ -896,6 +902,7 @@ async def profile(request: web.Request) -> web.Response:
                 emoji="📏",
                 current=int(ach_meta.get("max_streak_diff", 0)),
                 target=3,
+                positive_only=True,
             )
             _add_progress_candidate(
                 key="streak_diff_5",
@@ -903,6 +910,7 @@ async def profile(request: web.Request) -> web.Response:
                 emoji="📏",
                 current=int(ach_meta.get("max_streak_diff", 0)),
                 target=5,
+                positive_only=True,
             )
             _add_progress_candidate(
                 key="streak_diff_10",
@@ -910,6 +918,7 @@ async def profile(request: web.Request) -> web.Response:
                 emoji="📏",
                 current=int(ach_meta.get("max_streak_diff", 0)),
                 target=10,
+                positive_only=True,
             )
             _add_progress_candidate(
                 key="streak_outcome_3",
@@ -917,6 +926,7 @@ async def profile(request: web.Request) -> web.Response:
                 emoji="✅",
                 current=int(ach_meta.get("max_streak_outcome", 0)),
                 target=3,
+                positive_only=True,
             )
             _add_progress_candidate(
                 key="streak_outcome_5",
@@ -924,6 +934,7 @@ async def profile(request: web.Request) -> web.Response:
                 emoji="✅",
                 current=int(ach_meta.get("max_streak_outcome", 0)),
                 target=5,
+                positive_only=True,
             )
             _add_progress_candidate(
                 key="streak_outcome_10",
@@ -931,27 +942,7 @@ async def profile(request: web.Request) -> web.Response:
                 emoji="✅",
                 current=int(ach_meta.get("max_streak_outcome", 0)),
                 target=10,
-            )
-            _add_progress_candidate(
-                key="missed_5",
-                title="Проёба",
-                emoji="🚫",
-                current=int(missed_matches),
-                target=5,
-            )
-            _add_progress_candidate(
-                key="missed_10",
-                title="Заядлый проёба",
-                emoji="⛔",
-                current=int(missed_matches),
-                target=10,
-            )
-            _add_progress_candidate(
-                key="missed_15",
-                title="Легендарный проёба",
-                emoji="💀",
-                current=int(missed_matches),
-                target=15,
+                positive_only=True,
             )
 
             progress_candidates.sort(key=lambda x: (int(x["left"]), int(x["target"])))

@@ -24,6 +24,7 @@ type ProfileResponse = {
   reason?: string
   trusted?: boolean
   joined?: boolean
+  tournament_code?: string
   tournament_name?: string
   tg_user_id?: number
   display_name?: string
@@ -1146,12 +1147,12 @@ function App() {
                   <div className="profile-hero">
                     {profileData.photo_url || tgPhotoUrl ? (
                       <img
-                        className="profile-avatar"
+                        className={`profile-avatar ${profileData.place === 1 ? 'is-top-1' : ''}`}
                         src={profileData.photo_url || tgPhotoUrl || ''}
                         alt="avatar"
                       />
                     ) : (
-                      <div className="profile-avatar profile-avatar-fallback">
+                      <div className={`profile-avatar profile-avatar-fallback ${profileData.place === 1 ? 'is-top-1' : ''}`}>
                         {(() => {
                           const name = (profileData.display_name || tgUsername || 'U').trim()
                           return name.slice(0, 2).toUpperCase()
@@ -1162,15 +1163,21 @@ function App() {
                       <div className="profile-name">
                         {profileData.display_name || (tgUsername ? `@${tgUsername}` : `ID ${tgUserId ?? '—'}`)}
                       </div>
-                      <div className="profile-subline">
-                        {profileData.tournament_name || 'Турнир'} · {profileData.league_name || 'Лига —'}
-                      </div>
-                      <div className="profile-subline">
-                        Этап: {profileData.stage_name || '—'}
-                        {profileData.stage_round_min != null && profileData.stage_round_max != null
-                          ? ` (${profileData.stage_round_min}-${profileData.stage_round_max})`
-                          : ''}
-                      </div>
+                      {profileData.tournament_code === 'WC2026' ? (
+                        <div className="profile-subline">{profileData.tournament_name || 'Турнир'}</div>
+                      ) : (
+                        <>
+                          <div className="profile-subline">
+                            {profileData.tournament_name || 'Турнир'} · {profileData.league_name || 'Лига —'}
+                          </div>
+                          <div className="profile-subline">
+                            Этап: {profileData.stage_name || '—'}
+                            {profileData.stage_round_min != null && profileData.stage_round_max != null
+                              ? ` (${profileData.stage_round_min}-${profileData.stage_round_max})`
+                              : ''}
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
 
