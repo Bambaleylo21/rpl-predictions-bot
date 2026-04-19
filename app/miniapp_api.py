@@ -363,7 +363,7 @@ async def _build_profile_achievements(
     tournament_id: int,
     tg_user_id: int,
     missed_matches: int,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     achievements: list[dict[str, Any]] = []
 
     def _push(key: str, title: str, emoji: str, earned: bool, description: str) -> None:
@@ -608,7 +608,13 @@ async def _build_profile_achievements(
         description="Пропустить 15 матчей.",
     )
 
-    return achievements
+    progress_meta: dict[str, Any] = {
+        "max_streak_exact": int(max_streak.get("exact", 0)),
+        "max_streak_diff": int(max_streak.get("diff", 0)),
+        "max_streak_outcome": int(max_streak.get("outcome", 0)),
+        "missed_matches": int(missed_matches),
+    }
+    return achievements, progress_meta
 
 
 async def profile(request: web.Request) -> web.Response:
@@ -765,13 +771,164 @@ async def profile(request: web.Request) -> web.Response:
             predictions_count = int(stats_row.predictions_count or 0)
             hits_total = int(stats_row.exact_hits or 0) + int(stats_row.diff_hits or 0) + int(stats_row.outcome_hits or 0)
             hit_rate = round((hits_total * 100.0 / predictions_count), 1) if predictions_count > 0 else 0.0
-            achievements = await _build_profile_achievements(
+            achievements, ach_meta = await _build_profile_achievements(
                 session=session,
                 tournament_id=int(tournament.id),
                 tg_user_id=int(tg_user_id),
                 missed_matches=int(missed_matches),
             )
             achievements_earned = sum(1 for a in achievements if bool(a.get("earned")))
+
+            progress_candidates: list[dict[str, Any]] = []
+
+            def _add_progress_candidate(
+                *,
+                key: str,
+                title: str,
+                emoji: str,
+                current: int,
+                target: int,
+            ) -> None:
+                if current >= target:
+                    return
+                progress_candidates.append(
+                    {
+                        "key": key,
+                        "title": title,
+                        "emoji": emoji,
+                        "current": int(current),
+                        "target": int(target),
+                        "left": int(target - current),
+                    }
+                )
+
+            _add_progress_candidate(
+                key="streak_exact_3",
+                title="3 счёта подряд",
+                emoji="🎯",
+                current=int(ach_meta.get("max_streak_exact", 0)),
+                target=3,
+            )
+            _add_progress_candidate(
+                key="streak_exact_5",
+                title="5 счётов подряд",
+                emoji="🎯",
+                current=int(ach_meta.get("max_streak_exact", 0)),
+                target=5,
+            )
+            _add_progress_candidate(
+                key="streak_diff_3",
+                title="3 разницы подряд",
+                emoji="📏",
+                current=int(ach_meta.get("max_streak_diff", 0)),
+                target=3,
+            )
+            _add_progress_candidate(
+                key="streak_diff_5",
+                title="5 разниц подряд",
+                emoji="📏",
+                current=int(ach_meta.get("max_streak_diff", 0)),
+                target=5,
+            )
+            _add_progress_candidate(
+                key="streak_diff_10",
+                title="10 разниц подряд",
+                emoji="📏",
+                current=int(ach_meta.get("max_streak_diff", 0)),
+                target=10,
+            )
+            _add_progress_candidate(
+                key="streak_outcome_3",
+                title="3 исхода подряд",
+                emoji="✅",
+                current=int(ach_meta.get("max_streak_outcome", 0)),
+                target=3,
+            )
+            _add_progress_candidate(
+                key="streak_outcome_5",
+                title="5 исходов подряд",
+                emoji="✅",
+                current=int(ach_meta.get("max_streak_outcome", 0)),
+                target=5,
+            )
+            _add_progress_candidate(
+                key="streak_outcome_10",
+                title="10 исходов подряд",
+                emoji="✅",
+                current=int(ach_meta.get("max_streak_outcome", 0)),
+                target=10,
+            )
+            _add_progress_candidate(
+                key="missed_5",
+                title="Проёба",
+                emoji="🚫",
+                current=int(missed_matches),
+                target=5,
+            )
+            _add_progress_candidate(
+                key="missed_10",
+                title="Заядлый проёба",
+                emoji="⛔",
+                current=int(missed_matches),
+                target=10,
+            )
+            _add_progress_candidate(
+                key="missed_15",
+                title="Легендарный проёба",
+                emoji="💀",
+                current=int(missed_matches),
+                target=15,
+            )
+
+            progress_candidates.sort(key=lambda x: (int(x["left"]), int(x["target"])))
+            next_achievement = progress_candidates[0] if progress_candidates else None
+
+            recent_form_rows = (
+                await session.execute(
+                    select(
+                        Match.id,
+                        Match.round_number,
+                        Match.home_team,
+                        Match.away_team,
+                        Point.category,
+                        Point.points,
+                        Prediction.id.label("has_pred"),
+                    )
+                    .select_from(Match)
+                    .outerjoin(
+                        Prediction,
+                        (Prediction.match_id == Match.id) & (Prediction.tg_user_id == int(tg_user_id)),
+                    )
+                    .outerjoin(
+                        Point,
+                        (Point.match_id == Match.id) & (Point.tg_user_id == int(tg_user_id)),
+                    )
+                    .where(
+                        Match.tournament_id == int(tournament.id),
+                        Match.is_placeholder == 0,
+                        Match.home_score.is_not(None),
+                        Match.away_score.is_not(None),
+                    )
+                    .order_by(Match.kickoff_time.desc(), Match.id.desc())
+                    .limit(8)
+                )
+            ).all()
+            recent_form = []
+            for _mid, round_number, home_team, away_team, category, pts, has_pred in recent_form_rows:
+                if has_pred is None:
+                    emoji = "⛔"
+                    points_value = 0
+                else:
+                    emoji = _point_category_emoji(category, pts)
+                    points_value = int(pts or 0)
+                recent_form.append(
+                    {
+                        "round": int(round_number or 0),
+                        "emoji": emoji,
+                        "points": points_value,
+                        "label": f"{home_team} — {away_team}",
+                    }
+                )
 
             if (tournament.code or "").strip().upper() == DEFAULT_TOURNAMENT_CODE:
                 table_rows, table_meta = await build_active_stage_league_table(int(tg_user_id))
@@ -810,6 +967,8 @@ async def profile(request: web.Request) -> web.Response:
                     "achievements": achievements,
                     "achievements_earned": int(achievements_earned),
                     "achievements_total": int(len(achievements)),
+                    "next_achievement": next_achievement,
+                    "recent_form": recent_form,
                     "league_name": league_row.league_name if league_row else None,
                     "stage_name": league_row.stage_name if league_row else None,
                     "stage_round_min": int(league_row.round_min) if league_row and league_row.round_min is not None else None,

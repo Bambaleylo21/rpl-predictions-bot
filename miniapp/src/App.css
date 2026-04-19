@@ -586,6 +586,80 @@
   font-size: 12px;
 }
 
+.profile-next-achievement {
+  margin-top: 12px;
+  border: 1px solid #3a5f9e;
+  background: #132a4f;
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.profile-next-head {
+  color: #9fb2da;
+  font-size: 12px;
+}
+
+.profile-next-title {
+  margin-top: 5px;
+  color: #ecf2ff;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.profile-next-meta {
+  margin-top: 5px;
+  color: #b9c8e6;
+  font-size: 12px;
+}
+
+.profile-form {
+  margin-top: 12px;
+  border: 1px solid #2f4777;
+  background: #122345;
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.profile-form-head {
+  color: #a9bde4;
+  font-size: 12px;
+}
+
+.profile-form-list {
+  margin-top: 8px;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.profile-form-item {
+  border: 1px solid #2f4777;
+  background: #0f1f3c;
+  border-radius: 8px;
+  min-width: 54px;
+  padding: 6px 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.profile-form-emoji {
+  font-size: 14px;
+}
+
+.profile-form-round {
+  font-size: 10px;
+  color: #9fb2da;
+}
+
+.profile-form-points {
+  font-size: 11px;
+  color: #e8eefb;
+  font-weight: 700;
+}
+
 .profile-achievements {
   margin-top: 12px;
   border: 1px solid #2f4777;
@@ -643,6 +717,18 @@
   font-size: 11px;
   color: #dbe8ff;
   line-height: 1.2;
+}
+
+.profile-achievements-toggle {
+  margin-top: 8px;
+  width: 100%;
+  border: 1px solid #2f4777;
+  border-radius: 8px;
+  background: #0f1f3c;
+  color: #c7d7f7;
+  padding: 7px 8px;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .footer-note {

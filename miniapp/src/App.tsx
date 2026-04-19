@@ -50,6 +50,20 @@ type ProfileResponse = {
     earned: boolean
     description?: string
   }>
+  next_achievement?: {
+    key: string
+    title: string
+    emoji: string
+    current: number
+    target: number
+    left: number
+  } | null
+  recent_form?: Array<{
+    round: number
+    emoji: string
+    points: number
+    label: string
+  }>
   league_name?: string | null
   stage_name?: string | null
   stage_round_min?: number | null
@@ -316,6 +330,7 @@ function App() {
   const [tableRoundFilter, setTableRoundFilter] = useState<'ALL' | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9>('ALL')
   const [tableSortKey, setTableSortKey] = useState<'total' | 'exact' | 'diff' | 'outcome' | 'missed' | 'bonus'>('total')
   const [tableSortDir, setTableSortDir] = useState<'desc' | 'asc'>('desc')
+  const [achievementsExpanded, setAchievementsExpanded] = useState<boolean>(false)
 
   const selectedRoundNumber =
     selectedTournamentCode === 'WC2026'
@@ -743,6 +758,10 @@ function App() {
     }
   }, [selectedTournamentCode])
 
+  useEffect(() => {
+    setAchievementsExpanded(false)
+  }, [selectedTournamentCode])
+
   const tableRowsSorted = useMemo(() => {
     const rows = [...(tableData?.rows || [])]
     const dir = tableSortDir === 'asc' ? 1 : -1
@@ -787,6 +806,10 @@ function App() {
     setTableSortKey(key)
     setTableSortDir(key === 'missed' ? 'asc' : 'desc')
   }
+
+  const earnedAchievements = (profileData?.achievements || []).filter((a) => a.earned)
+  const lockedAchievements = (profileData?.achievements || []).filter((a) => !a.earned)
+  const visibleLockedAchievements = achievementsExpanded ? lockedAchievements : []
 
   return (
     <div className="app-shell">
@@ -1183,6 +1206,35 @@ function App() {
                     </div>
                   </div>
 
+                  {profileData.next_achievement ? (
+                    <div className="profile-next-achievement">
+                      <div className="profile-next-head">
+                        <span>До следующей ачивки</span>
+                      </div>
+                      <div className="profile-next-title">
+                        {profileData.next_achievement.emoji} {profileData.next_achievement.title}
+                      </div>
+                      <div className="profile-next-meta">
+                        Прогресс: {profileData.next_achievement.current}/{profileData.next_achievement.target} · осталось {profileData.next_achievement.left}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {(profileData.recent_form || []).length > 0 ? (
+                    <div className="profile-form">
+                      <div className="profile-form-head">Форма (последние матчи)</div>
+                      <div className="profile-form-list">
+                        {(profileData.recent_form || []).map((item, idx) => (
+                          <div className="profile-form-item" key={`${idx}-${item.round}-${item.label}`}>
+                            <span className="profile-form-emoji">{item.emoji}</span>
+                            <span className="profile-form-round">Т{item.round}</span>
+                            <span className="profile-form-points">{item.points}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
                   <div className="profile-achievements">
                     <div className="profile-achievements-head">
                       <span>Награды</span>
@@ -1191,7 +1243,7 @@ function App() {
                       </b>
                     </div>
                     <div className="profile-achievements-grid">
-                      {(profileData.achievements || []).map((a) => (
+                      {earnedAchievements.map((a) => (
                         <div
                           key={a.key}
                           className={`profile-achievement ${a.earned ? 'is-earned' : 'is-locked'}`}
@@ -1201,7 +1253,27 @@ function App() {
                           <span className="profile-achievement-title">{a.title}</span>
                         </div>
                       ))}
+                      {visibleLockedAchievements.map((a) => (
+                        <div
+                          key={a.key}
+                          className="profile-achievement is-locked"
+                          title={a.description || a.title}
+                        >
+                          <span className="profile-achievement-emoji">{a.emoji}</span>
+                          <span className="profile-achievement-title">{a.title}</span>
+                        </div>
+                      ))}
                     </div>
+                    {lockedAchievements.length > 0 ? (
+                      <button
+                        className="profile-achievements-toggle"
+                        onClick={() => setAchievementsExpanded((v) => !v)}
+                      >
+                        {achievementsExpanded
+                          ? 'Скрыть неактивные'
+                          : `Показать все (${lockedAchievements.length} скрыто)`}
+                      </button>
+                    ) : null}
                   </div>
                 </>
               ) : (
