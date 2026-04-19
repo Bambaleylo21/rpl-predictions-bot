@@ -129,6 +129,25 @@ type TournamentsResponse = {
   reason?: string
 }
 
+type LongtermResponse = {
+  ok: boolean
+  error?: string
+  reason?: string
+  trusted?: boolean
+  enabled?: boolean
+  joined?: boolean
+  locked?: boolean
+  deadline_msk?: string | null
+  picks?: {
+    winner?: string | null
+    scorer?: string | null
+  }
+  options?: {
+    winner?: string[]
+    scorer?: string[]
+  }
+}
+
 type Screen = 'predict' | 'profile' | 'predictions' | 'table'
 
 function App() {
@@ -150,15 +169,21 @@ function App() {
   const [predictNotice, setPredictNotice] = useState<string | null>(null)
   const [tableData, setTableData] = useState<TableResponse | null>(null)
   const [tableError, setTableError] = useState<string | null>(null)
+  const [longtermData, setLongtermData] = useState<LongtermResponse | null>(null)
+  const [longtermError, setLongtermError] = useState<string | null>(null)
+  const [longtermNotice, setLongtermNotice] = useState<string | null>(null)
+  const [savingLongtermType, setSavingLongtermType] = useState<'winner' | 'scorer' | null>(null)
+  const [winnerPickInput, setWinnerPickInput] = useState<string>('')
+  const [scorerPickInput, setScorerPickInput] = useState<string>('')
   const [selectedTournamentCode, setSelectedTournamentCode] = useState<string>('WC2026')
   const [tournamentNotice, setTournamentNotice] = useState<string | null>(null)
   const [predictionsFilter, setPredictionsFilter] = useState<'open' | 'closed'>('open')
-  const [stageTab, setStageTab] = useState<'1' | '2' | '3' | 'PO'>('1')
+  const [stageTab, setStageTab] = useState<'1' | '2' | '3' | 'PO' | 'LT'>('1')
   const [playoffTab, setPlayoffTab] = useState<4 | 5 | 6 | 7 | 8 | 9>(4)
 
   const selectedRoundNumber =
     selectedTournamentCode === 'WC2026'
-      ? (stageTab === 'PO' ? playoffTab : Number(stageTab))
+      ? (stageTab === 'PO' ? playoffTab : stageTab === 'LT' ? undefined : Number(stageTab))
       : undefined
 
   const formatScoreInput = (raw: string): string => {
@@ -308,6 +333,21 @@ function App() {
       .catch((err) => {
         setTableError(String(err))
       })
+
+    fetch(`${apiBase}/api/miniapp/longterm/current?t=${tParam}`, { headers })
+      .then(async (res) => {
+        const data = (await res.json()) as LongtermResponse
+        if (!res.ok) {
+          throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+        }
+        setLongtermData(data)
+        setLongtermError(null)
+        setWinnerPickInput(data.picks?.winner || '')
+        setScorerPickInput(data.picks?.scorer || '')
+      })
+      .catch((err) => {
+        setLongtermError(String(err))
+      })
   }, [selectedTournamentCode, selectedRoundNumber])
 
   const selectTournament = async (code: string) => {
@@ -379,6 +419,49 @@ function App() {
     }
   }
 
+  const saveLongtermPick = async (pickType: 'winner' | 'scorer') => {
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    const pickValue = (pickType === 'winner' ? winnerPickInput : scorerPickInput).trim()
+    if (!pickValue) {
+      setLongtermNotice('Выбери значение перед сохранением.')
+      return
+    }
+
+    setSavingLongtermType(pickType)
+    setLongtermNotice(null)
+    try {
+      const tParam = encodeURIComponent(selectedTournamentCode || 'RPL')
+      const res = await fetch(`${apiBase}/api/miniapp/longterm/set?t=${tParam}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Telegram-Init-Data': initData,
+        },
+        body: JSON.stringify({
+          pick_type: pickType,
+          pick_value: pickValue,
+        }),
+      })
+      const data = (await res.json()) as { ok?: boolean; error?: string; reason?: string; pick_value?: string }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      setLongtermNotice(`Сохранено: ${pickType === 'winner' ? 'Победитель' : 'Бомбардир'} — ${data.pick_value}`)
+
+      const headers = { 'X-Telegram-Init-Data': initData }
+      const reload = await fetch(`${apiBase}/api/miniapp/longterm/current?t=${tParam}`, { headers })
+      const reloadData = (await reload.json()) as LongtermResponse
+      if (reload.ok && reloadData.ok) {
+        setLongtermData(reloadData)
+      }
+    } catch (err) {
+      setLongtermNotice(`Ошибка сохранения: ${String(err)}`)
+    } finally {
+      setSavingLongtermType(null)
+    }
+  }
+
   const tabMeta: Record<Screen, { title: string; subtitle: string; icon: string }> = {
     profile: { title: 'Профиль', subtitle: 'Личная статистика участника', icon: '👤' },
     predict: { title: 'Сделать прогноз', subtitle: 'Открытые матчи текущего тура', icon: '🎯' },
@@ -390,12 +473,19 @@ function App() {
     { code: 'WC2026', icon: '⚽', label: 'WC' },
     { code: 'RPL', icon: '🏆', label: 'РПЛ' },
   ]
-  const wcTopTabs: Array<{ key: '1' | '2' | '3' | 'PO'; label: string }> = [
+  const showWcSelector = selectedTournamentCode === 'WC2026'
+  const longtermLocked = Boolean(longtermData?.locked)
+
+  const wcTopTabsBase: Array<{ key: '1' | '2' | '3' | 'PO'; label: string }> = [
     { key: '1', label: 'Тур 1' },
     { key: '2', label: 'Тур 2' },
     { key: '3', label: 'Тур 3' },
     { key: 'PO', label: 'Плей-офф' },
   ]
+  const wcTopTabsPredict: Array<{ key: '1' | '2' | '3' | 'PO' | 'LT'; label: string }> =
+    !longtermLocked ? [...wcTopTabsBase, { key: 'LT', label: 'Доп. прогнозы' }] : wcTopTabsBase
+  const wcTopTabsPredictions: Array<{ key: '1' | '2' | '3' | 'PO' | 'LT'; label: string }> =
+    longtermLocked ? [...wcTopTabsBase, { key: 'LT', label: 'Доп. прогнозы' }] : wcTopTabsBase
   const wcPlayoffTabs: Array<{ key: 4 | 5 | 6 | 7 | 8 | 9; label: string }> = [
     { key: 4, label: '1/16' },
     { key: 5, label: '1/8' },
@@ -404,7 +494,14 @@ function App() {
     { key: 8, label: 'За 3-е' },
     { key: 9, label: 'Финал' },
   ]
-  const showWcSelector = selectedTournamentCode === 'WC2026'
+  const allowLongtermTab =
+    showWcSelector && ((screen === 'predict' && !longtermLocked) || (screen === 'predictions' && longtermLocked))
+
+  useEffect(() => {
+    if (stageTab === 'LT' && !allowLongtermTab) {
+      setStageTab('1')
+    }
+  }, [allowLongtermTab, stageTab])
 
   return (
     <div className="app-shell">
@@ -429,7 +526,7 @@ function App() {
                 </button>
               ))}
             </div>
-            {screen === 'predictions' ? (
+            {screen === 'predictions' && !(showWcSelector && stageTab === 'LT') ? (
               <div className="match-toggle">
                 <button
                   className={`match-toggle-btn ${predictionsFilter === 'open' ? 'is-active' : ''}`}
@@ -458,7 +555,7 @@ function App() {
                 <div className="card card-static">
                   <div className="card-title">Этап турнира</div>
                   <div className="tournament-row">
-                    {wcTopTabs.map((tab) => (
+                    {wcTopTabsPredict.map((tab) => (
                       <button
                         key={tab.key}
                         className={`tournament-chip ${stageTab === tab.key ? 'is-active' : ''}`}
@@ -485,72 +582,164 @@ function App() {
               </section>
             ) : null}
 
-            <section className="cards">
-              <div className="card">
-                <div className="card-title">
-                  {predictData?.tournament || selectedTournamentCode} · {predictData?.round_name || `Тур ${predictData?.round_number ?? '—'}`}
-                </div>
-                <div className="card-text">
-                  {predictError ? (
-                    <>Ошибка: {predictError}</>
-                  ) : !predictData ? (
-                    'Загружаю матчи...'
-                  ) : predictData.joined === false ? (
-                    predictData.message || 'Нужно вступить в турнир, чтобы ставить прогнозы.'
-                  ) : (
-                    <>Открытых матчей: <b>{predictData.items?.length ?? 0}</b></>
-                  )}
-                  {predictNotice ? (
-                    <>
-                      <br />
-                      {predictNotice}
-                    </>
-                  ) : null}
-                </div>
-              </div>
-            </section>
-
-            <section className="cards space-top">
-              {(predictData?.items || []).map((m) => (
-                <div className="card" key={m.match_id}>
-                  <div className="card-title">
-                    {(m.group_label ? `[${m.group_label}] ` : '') + m.home_team} — {m.away_team}
+            {showWcSelector && stageTab === 'LT' ? (
+              <>
+                <section className="cards">
+                  <div className="card">
+                    <div className="card-title">Доп. прогнозы ЧМ 2026</div>
+                    <div className="card-text">
+                      {longtermError ? (
+                        <>Ошибка: {longtermError}</>
+                      ) : !longtermData ? (
+                        'Загружаю...'
+                      ) : longtermData.joined === false ? (
+                        'Сначала вступи в турнир, чтобы поставить доп. прогнозы.'
+                      ) : (
+                        <>
+                          До старта первого матча:
+                          <b> {longtermData.deadline_msk || '—'} МСК</b>
+                          <br />
+                          После дедлайна блок автоматически переедет в «Мои прогнозы».
+                        </>
+                      )}
+                      {longtermNotice ? (
+                        <>
+                          <br />
+                          {longtermNotice}
+                        </>
+                      ) : null}
+                    </div>
                   </div>
-                  <div className="card-text">
-                    {m.kickoff} МСК
-                    <br />
+                </section>
+
+                <section className="cards space-top">
+                  <div className="card">
+                    <div className="card-title">🏆 Победитель ЧМ</div>
                     <div className="predict-row">
-                      <input
-                        className="score-input"
-                        value={scoreInputs[m.match_id] || ''}
-                        onChange={(e) =>
-                          setScoreInputs((prev) => ({
-                            ...prev,
-                            [m.match_id]: formatScoreInput(e.target.value),
-                          }))
-                        }
-                        placeholder="2-1"
-                        inputMode="numeric"
-                      />
+                      <select
+                        className="score-input select-input"
+                        value={winnerPickInput}
+                        onChange={(e) => setWinnerPickInput(e.target.value)}
+                      >
+                        <option value="">Выбери команду</option>
+                        {(longtermData?.options?.winner || []).map((name) => (
+                          <option key={name} value={name}>
+                            {name}
+                          </option>
+                        ))}
+                      </select>
                       <button
                         className="save-btn"
-                        onClick={() => savePrediction(m.match_id)}
-                        disabled={savingMatchId === m.match_id}
+                        onClick={() => saveLongtermPick('winner')}
+                        disabled={savingLongtermType === 'winner' || longtermLocked || longtermData?.joined === false}
                       >
-                        {savingMatchId === m.match_id ? 'Сохраняю...' : 'Сохранить'}
+                        {savingLongtermType === 'winner' ? 'Сохраняю...' : 'Сохранить'}
                       </button>
                     </div>
-                    {m.prediction ? (
-                      <>
-                        Текущий прогноз: <b>{m.prediction}</b>
-                      </>
-                    ) : (
-                      'Прогноз пока не поставлен.'
-                    )}
+                    <div className="card-text">
+                      Текущий прогноз: <b>{longtermData?.picks?.winner || 'не выбран'}</b>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </section>
+
+                  <div className="card">
+                    <div className="card-title">⚽ Лучший бомбардир</div>
+                    <div className="predict-row">
+                      <select
+                        className="score-input select-input"
+                        value={scorerPickInput}
+                        onChange={(e) => setScorerPickInput(e.target.value)}
+                      >
+                        <option value="">Выбери игрока</option>
+                        {(longtermData?.options?.scorer || []).map((name) => (
+                          <option key={name} value={name}>
+                            {name}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        className="save-btn"
+                        onClick={() => saveLongtermPick('scorer')}
+                        disabled={savingLongtermType === 'scorer' || longtermLocked || longtermData?.joined === false}
+                      >
+                        {savingLongtermType === 'scorer' ? 'Сохраняю...' : 'Сохранить'}
+                      </button>
+                    </div>
+                    <div className="card-text">
+                      Текущий прогноз: <b>{longtermData?.picks?.scorer || 'не выбран'}</b>
+                    </div>
+                  </div>
+                </section>
+              </>
+            ) : (
+              <>
+                <section className="cards">
+                  <div className="card">
+                    <div className="card-title">
+                      {predictData?.tournament || selectedTournamentCode} · {predictData?.round_name || `Тур ${predictData?.round_number ?? '—'}`}
+                    </div>
+                    <div className="card-text">
+                      {predictError ? (
+                        <>Ошибка: {predictError}</>
+                      ) : !predictData ? (
+                        'Загружаю матчи...'
+                      ) : predictData.joined === false ? (
+                        predictData.message || 'Нужно вступить в турнир, чтобы ставить прогнозы.'
+                      ) : (
+                        <>Открытых матчей: <b>{predictData.items?.length ?? 0}</b></>
+                      )}
+                      {predictNotice ? (
+                        <>
+                          <br />
+                          {predictNotice}
+                        </>
+                      ) : null}
+                    </div>
+                  </div>
+                </section>
+
+                <section className="cards space-top">
+                  {(predictData?.items || []).map((m) => (
+                    <div className="card" key={m.match_id}>
+                      <div className="card-title">
+                        {(m.group_label ? `[${m.group_label}] ` : '') + m.home_team} — {m.away_team}
+                      </div>
+                      <div className="card-text">
+                        {m.kickoff} МСК
+                        <br />
+                        <div className="predict-row">
+                          <input
+                            className="score-input"
+                            value={scoreInputs[m.match_id] || ''}
+                            onChange={(e) =>
+                              setScoreInputs((prev) => ({
+                                ...prev,
+                                [m.match_id]: formatScoreInput(e.target.value),
+                              }))
+                            }
+                            placeholder="2-1"
+                            inputMode="numeric"
+                          />
+                          <button
+                            className="save-btn"
+                            onClick={() => savePrediction(m.match_id)}
+                            disabled={savingMatchId === m.match_id}
+                          >
+                            {savingMatchId === m.match_id ? 'Сохраняю...' : 'Сохранить'}
+                          </button>
+                        </div>
+                        {m.prediction ? (
+                          <>
+                            Текущий прогноз: <b>{m.prediction}</b>
+                          </>
+                        ) : (
+                          'Прогноз пока не поставлен.'
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </section>
+              </>
+            )}
           </>
         ) : null}
 
@@ -599,7 +788,7 @@ function App() {
                 <div className="card card-static">
                   <div className="card-title">Этап турнира</div>
                   <div className="tournament-row">
-                    {wcTopTabs.map((tab) => (
+                    {wcTopTabsPredictions.map((tab) => (
                       <button
                         key={tab.key}
                         className={`tournament-chip ${stageTab === tab.key ? 'is-active' : ''}`}
@@ -626,57 +815,84 @@ function App() {
               </section>
             ) : null}
 
-            <section className="cards">
-              <div className="card">
-                <div className="card-title">
-                  {predictionsData?.tournament || selectedTournamentCode} · {predictionsData?.round_name || `Тур ${predictionsData?.round_number ?? '—'}`}
+            {showWcSelector && stageTab === 'LT' ? (
+              <section className="cards">
+                <div className="card">
+                  <div className="card-title">Доп. прогнозы ЧМ 2026</div>
+                  <div className="card-text">
+                    {longtermError ? (
+                      <>Ошибка: {longtermError}</>
+                    ) : !longtermData ? (
+                      'Загружаю...'
+                    ) : (
+                      <>
+                        Дедлайн: <b>{longtermData.deadline_msk || '—'} МСК</b>
+                        <br />
+                        Победитель: <b>{longtermData.picks?.winner || 'не выбран'}</b>
+                        <br />
+                        Бомбардир: <b>{longtermData.picks?.scorer || 'не выбран'}</b>
+                        <br />
+                        После финала админ вручную начисляет по <b>5 очков</b> за каждый угаданный доп. прогноз.
+                      </>
+                    )}
+                  </div>
                 </div>
-                <div className="card-text">
-                  {predictionsError ? (
-                    <>Ошибка загрузки прогнозов: {predictionsError}</>
-                  ) : !predictionsData ? (
-                    'Загружаю прогнозы...'
-                  ) : (
-                    <>
-                      Итого по завершённым: <b>{predictionsData.total_points_closed ?? 0}</b> очк.
-                      <br />
-                      Матчей в туре: <b>{predictionsData.items?.length ?? 0}</b>
-                    </>
-                  )}
-                </div>
-              </div>
-            </section>
-
-            <section className="cards space-top">
-              {(predictionsData?.items || [])
-                .filter((m) => (predictionsFilter === 'open' ? m.status === 'open' : m.status === 'closed'))
-                .map((m) => (
-                  <div className="card" key={m.match_id}>
+              </section>
+            ) : (
+              <>
+                <section className="cards">
+                  <div className="card">
                     <div className="card-title">
-                      {(m.group_label ? `[${m.group_label}] ` : '') + m.home_team} — {m.away_team}
+                      {predictionsData?.tournament || selectedTournamentCode} · {predictionsData?.round_name || `Тур ${predictionsData?.round_number ?? '—'}`}
                     </div>
                     <div className="card-text">
-                      {m.kickoff} МСК
-                      <br />
-                      {m.status === 'open' ? (
-                        m.prediction ? (
-                          <>Прогноз: <b>{m.prediction}</b> (матч ещё открыт)</>
-                        ) : (
-                          'Без прогноза (матч ещё открыт)'
-                        )
-                      ) : m.prediction ? (
-                        <>
-                          Итог: <b>{m.result}</b> · Прогноз: <b>{m.prediction}</b> · {m.emoji} {m.points ?? 0}
-                        </>
+                      {predictionsError ? (
+                        <>Ошибка загрузки прогнозов: {predictionsError}</>
+                      ) : !predictionsData ? (
+                        'Загружаю прогнозы...'
                       ) : (
                         <>
-                          Итог: <b>{m.result}</b> · Без прогноза
+                          Итого по завершённым: <b>{predictionsData.total_points_closed ?? 0}</b> очк.
+                          <br />
+                          Матчей в туре: <b>{predictionsData.items?.length ?? 0}</b>
                         </>
                       )}
                     </div>
                   </div>
-                ))}
-            </section>
+                </section>
+
+                <section className="cards space-top">
+                  {(predictionsData?.items || [])
+                    .filter((m) => (predictionsFilter === 'open' ? m.status === 'open' : m.status === 'closed'))
+                    .map((m) => (
+                      <div className="card" key={m.match_id}>
+                        <div className="card-title">
+                          {(m.group_label ? `[${m.group_label}] ` : '') + m.home_team} — {m.away_team}
+                        </div>
+                        <div className="card-text">
+                          {m.kickoff} МСК
+                          <br />
+                          {m.status === 'open' ? (
+                            m.prediction ? (
+                              <>Прогноз: <b>{m.prediction}</b> (матч ещё открыт)</>
+                            ) : (
+                              'Без прогноза (матч ещё открыт)'
+                            )
+                          ) : m.prediction ? (
+                            <>
+                              Итог: <b>{m.result}</b> · Прогноз: <b>{m.prediction}</b> · {m.emoji} {m.points ?? 0}
+                            </>
+                          ) : (
+                            <>
+                              Итог: <b>{m.result}</b> · Без прогноза
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                </section>
+              </>
+            )}
           </>
         ) : null}
 

@@ -183,6 +183,33 @@ class Setting(Base):
     )
 
 
+class LongtermPrediction(Base):
+    __tablename__ = "longterm_predictions"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    tournament_id: Mapped[int] = mapped_column(ForeignKey("tournaments.id", ondelete="CASCADE"), nullable=False, index=True)
+    tg_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    pick_type: Mapped[str] = mapped_column(String(16), nullable=False, index=True)  # winner | scorer
+    pick_value: Mapped[str] = mapped_column(String(128), nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tournament_id", "tg_user_id", "pick_type", name="uq_longterm_predictions_tour_user_type"),
+    )
+
+
 class Season(Base):
     __tablename__ = "seasons"
 

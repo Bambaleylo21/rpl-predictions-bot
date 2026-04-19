@@ -13,16 +13,49 @@ from urllib.parse import parse_qs
 from aiohttp import web
 from sqlalchemy import case, func, select
 
-from app.db import SessionLocal
+from app.db import SessionLocal, init_db
 from app.display import display_round_name
 from app.league_table import build_active_stage_league_table
-from app.models import League, LeagueParticipant, Match, Point, Prediction, Setting, Stage, Tournament, User, UserTournament
+from app.models import League, LeagueParticipant, LongtermPrediction, Match, Point, Prediction, Setting, Stage, Tournament, User, UserTournament
 
 logger = logging.getLogger(__name__)
 MSK_TZ = timezone(timedelta(hours=3))
 DEFAULT_TOURNAMENT_CODE = "RPL"
 WC_TOURNAMENT_CODE = "WC2026"
 TOURNAMENT_SELECTED_KEY_PREFIX = "TOURNAMENT_SELECTED_U"
+LONGTERM_TYPES = ("winner", "scorer")
+WC_TOP_SCORER_OPTIONS = [
+    "Килиан Мбаппе",
+    "Эрлинг Холанд",
+    "Харри Кейн",
+    "Джуд Беллингем",
+    "Лионель Месси",
+    "Лаутаро Мартинес",
+    "Винисиус Жуниор",
+    "Родриго",
+    "Рафинья",
+    "Эндрик",
+    "Ламин Ямаль",
+    "Альваро Мората",
+    "Оярсабаль",
+    "Роберт Левандовски",
+    "Криштиану Роналду",
+    "Бруну Фернандеш",
+    "Рафаэл Леау",
+    "Виктор Дьёкереш",
+    "Антуан Гризманн",
+    "Килиан Тюрам",
+    "Рандаль Коло Муани",
+    "Коуди Гакпо",
+    "Мемфис Депай",
+    "Расмус Хёйлунн",
+    "Александер Исак",
+    "Джонатан Дэвид",
+    "Сон Хын Мин",
+    "Такефуса Кубо",
+    "Джулиан Альварес",
+    "Флориан Вирц",
+]
 
 
 def _parse_init_data(init_data: str) -> dict[str, Any]:
@@ -715,6 +748,56 @@ def _now_msk_naive() -> datetime:
     return datetime.now(MSK_TZ).replace(tzinfo=None)
 
 
+async def _wc_first_kickoff(session, tournament_id: int) -> datetime | None:
+    q = await session.execute(
+        select(func.min(Match.kickoff_time)).where(
+            Match.tournament_id == int(tournament_id),
+            Match.is_placeholder == 0,
+        )
+    )
+    return q.scalar_one_or_none()
+
+
+async def _wc_winner_options(session, tournament_id: int) -> list[str]:
+    homes = await session.execute(
+        select(Match.home_team)
+        .where(
+            Match.tournament_id == int(tournament_id),
+            Match.is_placeholder == 0,
+            Match.home_team.is_not(None),
+        )
+        .distinct()
+    )
+    aways = await session.execute(
+        select(Match.away_team)
+        .where(
+            Match.tournament_id == int(tournament_id),
+            Match.is_placeholder == 0,
+            Match.away_team.is_not(None),
+        )
+        .distinct()
+    )
+    names = {str(x[0]).strip() for x in homes.all() if x and x[0]}
+    names.update({str(x[0]).strip() for x in aways.all() if x and x[0]})
+    return sorted([x for x in names if x], key=lambda s: s.lower())
+
+
+async def _get_longterm_picks(session, tournament_id: int, tg_user_id: int) -> dict[str, str]:
+    rows = (
+        await session.execute(
+            select(LongtermPrediction.pick_type, LongtermPrediction.pick_value).where(
+                LongtermPrediction.tournament_id == int(tournament_id),
+                LongtermPrediction.tg_user_id == int(tg_user_id),
+                LongtermPrediction.pick_type.in_(LONGTERM_TYPES),
+            )
+        )
+    ).all()
+    out: dict[str, str] = {}
+    for pick_type, pick_value in rows:
+        out[str(pick_type)] = str(pick_value)
+    return out
+
+
 async def predict_current(request: web.Request) -> web.Response:
     try:
         auth_result = _extract_verified_user(request)
@@ -964,6 +1047,176 @@ async def predict_set(request: web.Request) -> web.Response:
         )
 
 
+async def longterm_current(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = user.get("id") if isinstance(user, dict) else None
+        if not tg_user_id:
+            return web.json_response({"ok": False, "error": "user_not_found_in_init_data"}, status=400)
+
+        async with SessionLocal() as session:
+            tournament = await _resolve_tournament(session, int(tg_user_id), requested_code=request.query.get("t"))
+            await session.commit()
+
+            enabled = (tournament.code or "").strip().upper() == WC_TOURNAMENT_CODE
+            if not enabled:
+                return web.json_response(
+                    {
+                        "ok": True,
+                        "trusted": True,
+                        "enabled": False,
+                        "tournament_code": tournament.code,
+                    }
+                )
+
+            deadline = await _wc_first_kickoff(session, int(tournament.id))
+            now = _now_msk_naive()
+            locked = bool(deadline is not None and now >= deadline)
+
+            in_tournament = (
+                await session.execute(
+                    select(UserTournament.id).where(
+                        UserTournament.tg_user_id == int(tg_user_id),
+                        UserTournament.tournament_id == int(tournament.id),
+                    )
+                )
+            ).first() is not None
+
+            picks = await _get_longterm_picks(session, int(tournament.id), int(tg_user_id))
+            winner_options = await _wc_winner_options(session, int(tournament.id))
+
+            return web.json_response(
+                {
+                    "ok": True,
+                    "trusted": True,
+                    "enabled": True,
+                    "joined": in_tournament,
+                    "locked": locked,
+                    "tournament_code": tournament.code,
+                    "tournament_name": tournament.name,
+                    "deadline_msk": deadline.strftime("%d.%m %H:%M") if deadline is not None else None,
+                    "picks": {
+                        "winner": picks.get("winner"),
+                        "scorer": picks.get("scorer"),
+                    },
+                    "options": {
+                        "winner": winner_options,
+                        "scorer": WC_TOP_SCORER_OPTIONS,
+                    },
+                }
+            )
+    except Exception as e:
+        logger.exception("miniapp longterm_current error")
+        return web.json_response(
+            {
+                "ok": False,
+                "error": "longterm_current_failed",
+                "reason": str(e),
+                "signature_checked": True,
+            },
+            status=500,
+        )
+
+
+async def longterm_set(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = user.get("id") if isinstance(user, dict) else None
+        if not tg_user_id:
+            return web.json_response({"ok": False, "error": "user_not_found_in_init_data"}, status=400)
+
+        body = await request.json()
+        pick_type = str(body.get("pick_type") or "").strip().lower()
+        pick_value = str(body.get("pick_value") or "").strip()
+        if pick_type not in LONGTERM_TYPES:
+            return web.json_response({"ok": False, "error": "invalid_pick_type"}, status=400)
+        if not pick_value:
+            return web.json_response({"ok": False, "error": "pick_value_required"}, status=400)
+
+        async with SessionLocal() as session:
+            tournament = await _resolve_tournament(session, int(tg_user_id), requested_code=request.query.get("t"))
+            await session.commit()
+
+            if (tournament.code or "").strip().upper() != WC_TOURNAMENT_CODE:
+                return web.json_response({"ok": False, "error": "longterm_not_enabled_for_tournament"}, status=400)
+
+            in_tournament = (
+                await session.execute(
+                    select(UserTournament.id).where(
+                        UserTournament.tg_user_id == int(tg_user_id),
+                        UserTournament.tournament_id == int(tournament.id),
+                    )
+                )
+            ).first() is not None
+            if not in_tournament:
+                return web.json_response({"ok": False, "error": "user_not_joined_tournament"}, status=403)
+
+            deadline = await _wc_first_kickoff(session, int(tournament.id))
+            now = _now_msk_naive()
+            if deadline is not None and now >= deadline:
+                return web.json_response({"ok": False, "error": "longterm_locked"}, status=409)
+
+            if pick_type == "winner":
+                allowed = await _wc_winner_options(session, int(tournament.id))
+                if pick_value not in allowed:
+                    return web.json_response({"ok": False, "error": "invalid_winner_value"}, status=400)
+            else:
+                if pick_value not in WC_TOP_SCORER_OPTIONS:
+                    return web.json_response({"ok": False, "error": "invalid_scorer_value"}, status=400)
+
+            row = (
+                await session.execute(
+                    select(LongtermPrediction).where(
+                        LongtermPrediction.tournament_id == int(tournament.id),
+                        LongtermPrediction.tg_user_id == int(tg_user_id),
+                        LongtermPrediction.pick_type == pick_type,
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                row = LongtermPrediction(
+                    tournament_id=int(tournament.id),
+                    tg_user_id=int(tg_user_id),
+                    pick_type=pick_type,
+                    pick_value=pick_value,
+                )
+                session.add(row)
+                action = "created"
+            else:
+                row.pick_value = pick_value
+                row.updated_at = datetime.utcnow()
+                action = "updated"
+
+            await session.commit()
+            return web.json_response(
+                {
+                    "ok": True,
+                    "action": action,
+                    "pick_type": pick_type,
+                    "pick_value": pick_value,
+                }
+            )
+    except (ValueError, TypeError):
+        return web.json_response({"ok": False, "error": "invalid_payload"}, status=400)
+    except Exception as e:
+        logger.exception("miniapp longterm_set error")
+        return web.json_response(
+            {
+                "ok": False,
+                "error": "longterm_set_failed",
+                "reason": str(e),
+                "signature_checked": True,
+            },
+            status=500,
+        )
+
+
 async def table_current(request: web.Request) -> web.Response:
     try:
         auth_result = _extract_verified_user(request)
@@ -1086,6 +1339,8 @@ def build_app() -> web.Application:
     app.router.add_get("/api/miniapp/table/current", table_current)
     app.router.add_get("/api/miniapp/predict/current", predict_current)
     app.router.add_post("/api/miniapp/predict/set", predict_set)
+    app.router.add_get("/api/miniapp/longterm/current", longterm_current)
+    app.router.add_post("/api/miniapp/longterm/set", longterm_set)
     return app
 
 
@@ -1097,6 +1352,7 @@ async def run_miniapp_api_forever() -> None:
     except ValueError:
         port = 8081
 
+    await init_db()
     app = build_app()
     runner = web.AppRunner(app)
     await runner.setup()

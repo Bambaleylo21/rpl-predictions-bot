@@ -192,6 +192,10 @@
   line-height: 1.2;
 }
 
+.select-input {
+  width: 170px;
+}
+
 .save-btn {
   border: 1px solid #2f4777;
   border-radius: 10px;
