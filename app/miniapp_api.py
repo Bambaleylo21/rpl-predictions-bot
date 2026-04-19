@@ -12,6 +12,8 @@ from urllib.parse import parse_qs
 
 from aiohttp import web
 from sqlalchemy import case, func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.db import SessionLocal, init_db
 from app.display import display_round_name
@@ -88,6 +90,34 @@ async def _get_setting(session, key: str) -> str | None:
 
 
 async def _set_setting(session, key: str, value: str) -> None:
+    bind = session.get_bind()
+    dialect_name = bind.dialect.name if bind is not None else ""
+
+    if dialect_name == "postgresql":
+        stmt = (
+            pg_insert(Setting)
+            .values(key=key, value=value)
+            .on_conflict_do_update(
+                index_elements=[Setting.key],
+                set_={"value": value},
+            )
+        )
+        await session.execute(stmt)
+        return
+
+    if dialect_name == "sqlite":
+        stmt = (
+            sqlite_insert(Setting)
+            .values(key=key, value=value)
+            .on_conflict_do_update(
+                index_elements=[Setting.key],
+                set_={"value": value},
+            )
+        )
+        await session.execute(stmt)
+        return
+
+    # Fallback for other DBs.
     q = await session.execute(select(Setting).where(Setting.key == key))
     row = q.scalar_one_or_none()
     if row is None:
