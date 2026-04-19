@@ -721,6 +721,7 @@
 
 .profile-achievements-toggle {
   margin-top: 8px;
+  margin-bottom: 8px;
   width: 100%;
   border: 1px solid #2f4777;
   border-radius: 8px;
@@ -729,6 +730,46 @@
   padding: 7px 8px;
   font-size: 12px;
   font-weight: 600;
+}
+
+.profile-history {
+  margin-top: 12px;
+  border: 1px solid #2f4777;
+  background: #122345;
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.profile-history-head {
+  color: #a9bde4;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.profile-history-list {
+  display: grid;
+  gap: 8px;
+}
+
+.profile-history-item {
+  border: 1px solid #2f4777;
+  background: #0f1f3c;
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.profile-history-title {
+  color: #ecf2ff;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.profile-history-meta {
+  margin-top: 4px;
+  color: #b9c8e6;
+  font-size: 12px;
+  line-height: 1.25;
 }
 
 .footer-note {

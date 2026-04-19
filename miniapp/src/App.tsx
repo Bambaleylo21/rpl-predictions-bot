@@ -64,6 +64,18 @@ type ProfileResponse = {
     points: number
     label: string
   }>
+  tournament_history?: Array<{
+    tournament_code: string
+    tournament_name: string
+    place: number
+    participants: number
+    total_points: number
+    exact: number
+    diff: number
+    outcome: number
+    missed_matches: number
+    hit_rate: number
+  }>
   league_name?: string | null
   stage_name?: string | null
   stage_round_min?: number | null
@@ -1242,6 +1254,16 @@ function App() {
                         {profileData.achievements_earned ?? 0}/{profileData.achievements_total ?? 0}
                       </b>
                     </div>
+                    {lockedAchievements.length > 0 ? (
+                      <button
+                        className="profile-achievements-toggle"
+                        onClick={() => setAchievementsExpanded((v) => !v)}
+                      >
+                        {achievementsExpanded
+                          ? 'Скрыть неактивные'
+                          : `Показать все (${lockedAchievements.length} скрыто)`}
+                      </button>
+                    ) : null}
                     <div className="profile-achievements-grid">
                       {earnedAchievements.map((a) => (
                         <div
@@ -1264,16 +1286,27 @@ function App() {
                         </div>
                       ))}
                     </div>
-                    {lockedAchievements.length > 0 ? (
-                      <button
-                        className="profile-achievements-toggle"
-                        onClick={() => setAchievementsExpanded((v) => !v)}
-                      >
-                        {achievementsExpanded
-                          ? 'Скрыть неактивные'
-                          : `Показать все (${lockedAchievements.length} скрыто)`}
-                      </button>
-                    ) : null}
+                  </div>
+
+                  <div className="profile-history">
+                    <div className="profile-history-head">История турниров</div>
+                    {(profileData.tournament_history || []).length > 0 ? (
+                      <div className="profile-history-list">
+                        {(profileData.tournament_history || []).map((h) => (
+                          <div className="profile-history-item" key={`${h.tournament_code}-${h.tournament_name}`}>
+                            <div className="profile-history-title">{h.tournament_name}</div>
+                            <div className="profile-history-meta">
+                              Место: <b>{h.place}/{h.participants}</b> · Очки: <b>{h.total_points}</b>
+                            </div>
+                            <div className="profile-history-meta">
+                              🎯{h.exact} · 📏{h.diff} · ✅{h.outcome} · ⛔{h.missed_matches} · Точность {h.hit_rate.toFixed(1)}%
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="card-text">Пока нет завершённых турниров в истории.</div>
+                    )}
                   </div>
                 </>
               ) : (

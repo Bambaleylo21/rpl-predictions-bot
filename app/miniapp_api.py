@@ -617,6 +617,80 @@ async def _build_profile_achievements(
     return achievements, progress_meta
 
 
+async def _build_profile_tournament_history(
+    session,
+    tg_user_id: int,
+    current_tournament_id: int,
+) -> list[dict[str, Any]]:
+    history: list[dict[str, Any]] = []
+
+    user_tournaments_rows = (
+        await session.execute(
+            select(UserTournament.tournament_id).where(UserTournament.tg_user_id == int(tg_user_id))
+        )
+    ).all()
+    tournament_ids = [int(r[0]) for r in user_tournaments_rows if r[0] is not None]
+    if not tournament_ids:
+        return history
+
+    for tid in tournament_ids:
+        if int(tid) == int(current_tournament_id):
+            continue
+
+        tournament = (
+            await session.execute(select(Tournament).where(Tournament.id == int(tid)))
+        ).scalar_one_or_none()
+        if tournament is None:
+            continue
+
+        total_matches_q = await session.execute(
+            select(func.count(Match.id)).where(
+                Match.tournament_id == int(tid),
+                Match.is_placeholder == 0,
+            )
+        )
+        total_matches = int(total_matches_q.scalar_one() or 0)
+        if total_matches <= 0:
+            continue
+
+        played_matches_q = await session.execute(
+            select(func.count(Match.id)).where(
+                Match.tournament_id == int(tid),
+                Match.is_placeholder == 0,
+                Match.home_score.is_not(None),
+                Match.away_score.is_not(None),
+            )
+        )
+        played_matches = int(played_matches_q.scalar_one() or 0)
+
+        # В историю попадают только завершённые турниры.
+        if played_matches < total_matches:
+            continue
+
+        rows, participants = await _build_overall_table_rows(session, int(tid))
+        my_row = next((r for r in rows if int(r.get("tg_user_id", 0)) == int(tg_user_id)), None)
+        if my_row is None:
+            continue
+
+        history.append(
+            {
+                "tournament_code": tournament.code,
+                "tournament_name": tournament.name,
+                "place": int(my_row.get("place", 0)),
+                "participants": int(participants or 0),
+                "total_points": int(my_row.get("total", 0)),
+                "exact": int(my_row.get("exact", 0)),
+                "diff": int(my_row.get("diff", 0)),
+                "outcome": int(my_row.get("outcome", 0)),
+                "missed_matches": int(my_row.get("missed_matches", 0)),
+                "hit_rate": float(my_row.get("hit_rate", 0.0)),
+            }
+        )
+
+    history.sort(key=lambda x: str(x.get("tournament_name", "")), reverse=True)
+    return history
+
+
 async def profile(request: web.Request) -> web.Response:
     try:
         auth_result = _extract_verified_user(request)
@@ -941,6 +1015,12 @@ async def profile(request: web.Request) -> web.Response:
                 rows, participants = await _build_overall_table_rows(session, int(tournament.id))
                 user_place = next((int(r["place"]) for r in rows if int(r["tg_user_id"]) == int(tg_user_id)), None)
 
+            tournament_history = await _build_profile_tournament_history(
+                session=session,
+                tg_user_id=int(tg_user_id),
+                current_tournament_id=int(tournament.id),
+            )
+
             return web.json_response(
                 {
                     "ok": True,
@@ -969,6 +1049,7 @@ async def profile(request: web.Request) -> web.Response:
                     "achievements_total": int(len(achievements)),
                     "next_achievement": next_achievement,
                     "recent_form": recent_form,
+                    "tournament_history": tournament_history,
                     "league_name": league_row.league_name if league_row else None,
                     "stage_name": league_row.stage_name if league_row else None,
                     "stage_round_min": int(league_row.round_min) if league_row and league_row.round_min is not None else None,
