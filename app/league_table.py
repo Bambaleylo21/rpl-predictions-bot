@@ -244,6 +244,32 @@ async def build_active_stage_league_table(
             for uid, total, last_pred_at in preds_q.all()
         }
 
+        now = datetime.utcnow()
+        started_matches_q = await session.execute(
+            select(func.count(Match.id)).where(
+                Match.tournament_id == rpl.id,
+                Match.round_number >= stage.round_min,
+                Match.round_number <= stage.round_max,
+                Match.kickoff_time <= now,
+            )
+        )
+        started_matches_total = int(started_matches_q.scalar_one() or 0)
+
+        pred_started_q = await session.execute(
+            select(Prediction.tg_user_id, func.count(Prediction.id))
+            .select_from(Prediction)
+            .join(Match, Match.id == Prediction.match_id)
+            .where(
+                Prediction.tg_user_id.in_(user_ids),
+                Match.tournament_id == rpl.id,
+                Match.round_number >= stage.round_min,
+                Match.round_number <= stage.round_max,
+                Match.kickoff_time <= now,
+            )
+            .group_by(Prediction.tg_user_id)
+        )
+        pred_started_map = {int(uid): int(cnt or 0) for uid, cnt in pred_started_q.all()}
+
         points_q = await session.execute(
             select(
                 Point.tg_user_id,
@@ -285,6 +311,8 @@ async def build_active_stage_league_table(
             outcome = int(pts.get("outcome", 0))
             hits = int(pts.get("hits", 0))
             hit_rate = round((hits * 100.0 / pred_total), 2) if pred_total > 0 else 0.0
+            pred_started = int(pred_started_map.get(tgid, 0))
+            missed_matches = max(0, int(started_matches_total) - pred_started)
             rows.append(
                 {
                     "tg_user_id": tgid,
@@ -296,6 +324,7 @@ async def build_active_stage_league_table(
                     "pred_total": pred_total,
                     "hits": hits,
                     "hit_rate": hit_rate,
+                    "missed_matches": missed_matches,
                     "last_pred_at": last_pred_at,
                 }
             )

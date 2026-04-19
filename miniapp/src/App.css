@@ -151,6 +151,11 @@
   color: #ecf2ff;
 }
 
+.card-user-highlight {
+  border-color: #4d79d8;
+  box-shadow: 0 0 0 1px rgba(77, 121, 216, 0.25) inset;
+}
+
 .card-static {
   cursor: default;
 }

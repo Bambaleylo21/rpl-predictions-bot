@@ -530,6 +530,39 @@ async def _build_overall_table_rows(session, tournament_id: int) -> tuple[list[d
         .where(Match.tournament_id == int(tournament_id))
         .subquery()
     )
+    pred_total_subq = (
+        select(
+            Prediction.tg_user_id.label("tg_user_id"),
+            func.count(Prediction.id).label("pred_total"),
+        )
+        .select_from(Prediction)
+        .join(Match, Match.id == Prediction.match_id)
+        .where(Match.tournament_id == int(tournament_id))
+        .group_by(Prediction.tg_user_id)
+        .subquery()
+    )
+    now = datetime.utcnow()
+    started_total_q = await session.execute(
+        select(func.count(Match.id)).where(
+            Match.tournament_id == int(tournament_id),
+            Match.kickoff_time <= now,
+        )
+    )
+    started_total = int(started_total_q.scalar_one() or 0)
+    pred_started_subq = (
+        select(
+            Prediction.tg_user_id.label("tg_user_id"),
+            func.count(Prediction.id).label("pred_started"),
+        )
+        .select_from(Prediction)
+        .join(Match, Match.id == Prediction.match_id)
+        .where(
+            Match.tournament_id == int(tournament_id),
+            Match.kickoff_time <= now,
+        )
+        .group_by(Prediction.tg_user_id)
+        .subquery()
+    )
 
     q = await session.execute(
         select(
@@ -543,10 +576,14 @@ async def _build_overall_table_rows(session, tournament_id: int) -> tuple[list[d
             func.coalesce(func.sum(case((points_subq.c.category == "exact", 1), else_=0)), 0).label("exact"),
             func.coalesce(func.sum(case((points_subq.c.category == "diff", 1), else_=0)), 0).label("diff"),
             func.coalesce(func.sum(case((points_subq.c.category == "outcome", 1), else_=0)), 0).label("outcome"),
+            func.coalesce(pred_total_subq.c.pred_total, 0).label("pred_total"),
+            func.coalesce(pred_started_subq.c.pred_started, 0).label("pred_started"),
         )
         .select_from(UserTournament)
         .join(User, User.tg_user_id == UserTournament.tg_user_id)
         .outerjoin(points_subq, points_subq.c.tg_user_id == User.tg_user_id)
+        .outerjoin(pred_total_subq, pred_total_subq.c.tg_user_id == User.tg_user_id)
+        .outerjoin(pred_started_subq, pred_started_subq.c.tg_user_id == User.tg_user_id)
         .where(UserTournament.tournament_id == int(tournament_id))
         .group_by(
             User.tg_user_id,
@@ -555,6 +592,8 @@ async def _build_overall_table_rows(session, tournament_id: int) -> tuple[list[d
             User.username,
             User.full_name,
             UserTournament.bonus_points,
+            pred_total_subq.c.pred_total,
+            pred_started_subq.c.pred_started,
         )
         .order_by(
             (func.coalesce(func.sum(points_subq.c.points), 0) + func.coalesce(UserTournament.bonus_points, 0)).desc(),
@@ -578,6 +617,8 @@ async def _build_overall_table_rows(session, tournament_id: int) -> tuple[list[d
         exact,
         diff,
         outcome,
+        pred_total,
+        pred_started,
     ) in q.all():
         name = (
             tournament_display_name
@@ -595,9 +636,15 @@ async def _build_overall_table_rows(session, tournament_id: int) -> tuple[list[d
                 "exact": int(exact or 0),
                 "diff": int(diff or 0),
                 "outcome": int(outcome or 0),
-                "pred_total": 0,
+                "pred_total": int(pred_total or 0),
                 "hits": int(exact or 0) + int(diff or 0) + int(outcome or 0),
-                "hit_rate": 0.0,
+                "hit_rate": round(
+                    ((int(exact or 0) + int(diff or 0) + int(outcome or 0)) * 100.0 / int(pred_total or 0)),
+                    2,
+                )
+                if int(pred_total or 0) > 0
+                else 0.0,
+                "missed_matches": max(0, int(started_total) - int(pred_started or 0)),
             }
         )
         place += 1
@@ -1295,6 +1342,7 @@ async def table_current(request: web.Request) -> web.Response:
                             "pred_total": int(r.get("pred_total", 0)),
                             "hits": int(r.get("hits", 0)),
                             "hit_rate": float(r.get("hit_rate", 0.0)),
+                            "missed_matches": int(r.get("missed_matches", 0)),
                         }
                         for r in rows
                     ],

@@ -111,6 +111,7 @@ type TableResponse = {
     pred_total: number
     hits: number
     hit_rate: number
+    missed_matches?: number
   }>
 }
 
@@ -1069,33 +1070,36 @@ function App() {
                     <>Ошибка загрузки таблицы: {tableError}</>
                   ) : !tableData ? (
                     'Загружаю таблицу...'
-                  ) : tableData.has_table ? (
-                    <>
-                      Участников: <b>{tableData.participants ?? 0}</b>
-                      <br />
-                      {tableData.user_place ? (
+                ) : tableData.has_table ? (
+                  <>
+                    Участников: <b>{tableData.participants ?? 0}</b>
+                    <br />
+                    {tableData.user_place ? (
                         <>
                           Твоё место: <b>{tableData.user_place}</b>
                         </>
                       ) : (
                         'Ты пока не в списке лиги этого этапа.'
                       )}
-                    </>
-                  ) : (
-                    tableData.message || 'Таблица пока не сформирована.'
-                  )}
-                </div>
+                  </>
+                ) : (
+                  tableData.message || 'Таблица ещё не сформирована. Ждём первые рассчитанные матчи.'
+                )}
               </div>
-            </section>
+            </div>
+          </section>
 
-            <section className="cards space-top">
+          <section className="cards space-top">
               {(tableData?.rows || []).map((r) => (
-                <div className="card" key={`${r.place}-${r.name}`}>
+                <div
+                  className={`card ${tableData?.user_place === r.place ? 'card-user-highlight' : ''}`}
+                  key={`${r.place}-${r.name}`}
+                >
                   <div className="card-title">
                     {r.place}. {r.name} — {r.total} очк.
                   </div>
                   <div className="card-text">
-                    🎯{r.exact} · 📏{r.diff} · ✅{r.outcome}
+                    🎯{r.exact} · 📏{r.diff} · ✅{r.outcome} · ⛔{r.missed_matches ?? 0}
                   </div>
                 </div>
               ))}
