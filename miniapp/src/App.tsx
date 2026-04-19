@@ -187,9 +187,9 @@ function App() {
       : undefined
 
   const formatScoreInput = (raw: string): string => {
-    const digits = raw.replace(/\D/g, '').slice(0, 3)
+    const digits = raw.replace(/\D/g, '').slice(0, 2)
     if (digits.length <= 1) return digits
-    return `${digits.slice(0, 1)}-${digits.slice(1)}`
+    return `${digits.slice(0, 1)}:${digits.slice(1)}`
   }
   const showDebugPanels = import.meta.env.DEV || import.meta.env.VITE_DEBUG_PANELS === '1'
 
@@ -497,6 +497,17 @@ function App() {
   const allowLongtermTab =
     showWcSelector && ((screen === 'predict' && !longtermLocked) || (screen === 'predictions' && longtermLocked))
 
+  const predictItems = predictData?.items || []
+  const predictGroups = (() => {
+    const grouped: Record<string, typeof predictItems> = {}
+    for (const item of predictItems) {
+      const dateKey = (item.kickoff || '').split(' ')[0] || '—'
+      if (!grouped[dateKey]) grouped[dateKey] = []
+      grouped[dateKey].push(item)
+    }
+    return Object.entries(grouped)
+  })()
+
   useEffect(() => {
     if (stageTab === 'LT' && !allowLongtermTab) {
       setStageTab('1')
@@ -698,45 +709,55 @@ function App() {
                 </section>
 
                 <section className="cards space-top">
-                  {(predictData?.items || []).map((m) => (
-                    <div className="card" key={m.match_id}>
-                      <div className="card-title">
-                        {(m.group_label ? `[${m.group_label}] ` : '') + m.home_team} — {m.away_team}
-                      </div>
-                      <div className="card-text">
-                        {m.kickoff} МСК
-                        <br />
-                        <div className="predict-row">
-                          <input
-                            className="score-input"
-                            value={scoreInputs[m.match_id] || ''}
-                            onChange={(e) =>
-                              setScoreInputs((prev) => ({
-                                ...prev,
-                                [m.match_id]: formatScoreInput(e.target.value),
-                              }))
-                            }
-                            placeholder="2-1"
-                            inputMode="numeric"
-                          />
-                          <button
-                            className="save-btn"
-                            onClick={() => savePrediction(m.match_id)}
-                            disabled={savingMatchId === m.match_id}
-                          >
-                            {savingMatchId === m.match_id ? 'Сохраняю...' : 'Сохранить'}
-                          </button>
+                  <div className="card compact-list-card">
+                    {predictGroups.length === 0 ? (
+                      <div className="card-text">Открытых матчей нет.</div>
+                    ) : (
+                      predictGroups.map(([dateKey, matches]) => (
+                        <div key={dateKey} className="day-group">
+                          <div className="day-title">{dateKey}</div>
+                          {matches.map((m) => (
+                            <div className="compact-match" key={m.match_id}>
+                              <div className="compact-meta">
+                                {m.group_label ? <span className="group-small">[{m.group_label}]</span> : <span className="group-small">—</span>}
+                                <span className="kickoff-small">{(m.kickoff || '').split(' ')[1] || ''} МСК</span>
+                              </div>
+                              <div className="compact-main">
+                                <span className="team-name team-left">{m.home_team}</span>
+                                <input
+                                  className="score-inline-input"
+                                  value={scoreInputs[m.match_id] || ''}
+                                  onChange={(e) =>
+                                    setScoreInputs((prev) => ({
+                                      ...prev,
+                                      [m.match_id]: formatScoreInput(e.target.value),
+                                    }))
+                                  }
+                                  placeholder="-:-"
+                                  inputMode="numeric"
+                                />
+                                <span className="team-name team-right">{m.away_team}</span>
+                                <button
+                                  className="save-btn compact-save-btn"
+                                  onClick={() => savePrediction(m.match_id)}
+                                  disabled={savingMatchId === m.match_id}
+                                >
+                                  {savingMatchId === m.match_id ? '…' : '✓'}
+                                </button>
+                              </div>
+                              <div className="compact-state">
+                                {m.prediction ? (
+                                  <>Текущий прогноз: <b>{m.prediction}</b></>
+                                ) : (
+                                  'Прогноз не поставлен'
+                                )}
+                              </div>
+                            </div>
+                          ))}
                         </div>
-                        {m.prediction ? (
-                          <>
-                            Текущий прогноз: <b>{m.prediction}</b>
-                          </>
-                        ) : (
-                          'Прогноз пока не поставлен.'
-                        )}
-                      </div>
-                    </div>
-                  ))}
+                      ))
+                    )}
+                  </div>
                 </section>
               </>
             )}

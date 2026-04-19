@@ -196,6 +196,99 @@
   width: 170px;
 }
 
+.compact-list-card {
+  padding: 10px 12px;
+}
+
+.day-group + .day-group {
+  margin-top: 12px;
+}
+
+.day-title {
+  font-size: 12px;
+  color: #9fb2da;
+  font-weight: 700;
+  margin: 2px 0 6px;
+  padding-left: 2px;
+}
+
+.compact-match {
+  padding: 8px 2px 10px;
+  border-bottom: 1px solid rgba(79, 112, 174, 0.35);
+}
+
+.compact-match:last-child {
+  border-bottom: 0;
+}
+
+.compact-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.group-small {
+  font-size: 11px;
+  color: #8ea4ce;
+  font-weight: 600;
+}
+
+.kickoff-small {
+  font-size: 11px;
+  color: #8ea4ce;
+}
+
+.compact-main {
+  display: grid;
+  grid-template-columns: 1fr 58px 1fr 34px;
+  align-items: center;
+  gap: 6px;
+}
+
+.team-name {
+  font-size: 15px;
+  color: #e5edff;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.team-left {
+  text-align: right;
+}
+
+.team-right {
+  text-align: left;
+}
+
+.score-inline-input {
+  width: 58px;
+  border: 1px solid #2f4777;
+  border-radius: 8px;
+  background: #0e1a31;
+  color: #e8eefb;
+  padding: 6px 6px;
+  text-align: center;
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.compact-save-btn {
+  width: 34px;
+  min-width: 34px;
+  padding: 6px 0;
+  font-size: 15px;
+  text-align: center;
+}
+
+.compact-state {
+  margin-top: 5px;
+  font-size: 12px;
+  color: #9fb2da;
+}
+
 .save-btn {
   border: 1px solid #2f4777;
   border-radius: 10px;
@@ -267,5 +360,9 @@
 
   .cards {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .compact-list-card {
+    grid-column: 1 / -1;
   }
 }
