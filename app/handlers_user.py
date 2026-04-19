@@ -683,6 +683,26 @@ async def upsert_user_from_message(session, message: types.Message):
     await session.commit()
 
 
+async def upsert_user_from_callback(session, callback: types.CallbackQuery):
+    tg_user_id = callback.from_user.id
+    username = callback.from_user.username
+    full_name = f"{callback.from_user.first_name or ''} {callback.from_user.last_name or ''}".strip() or None
+
+    existing = await session.execute(select(User).where(User.tg_user_id == tg_user_id))
+    user = existing.scalar_one_or_none()
+
+    if user is None:
+        user = User(tg_user_id=tg_user_id, username=username, full_name=full_name)
+        session.add(user)
+    else:
+        user.username = username
+        user.full_name = full_name
+
+    # Если пользователь нажал кнопку у бота, значит он не в blocked-состоянии.
+    await unmark_user_blocked(session, tg_user_id)
+    await session.commit()
+
+
 def normalize_score(s: str) -> str:
     s = s.strip()
     s = s.replace("-", ":")
