@@ -150,6 +150,83 @@ type LongtermResponse = {
 
 type Screen = 'predict' | 'profile' | 'predictions' | 'table'
 
+const TEAM_FLAGS: Record<string, string> = {
+  'Мексика': '🇲🇽',
+  'ЮАР': '🇿🇦',
+  'Южная Корея': '🇰🇷',
+  'Чехия': '🇨🇿',
+  'Канада': '🇨🇦',
+  'Босния и Герцеговина': '🇧🇦',
+  'США': '🇺🇸',
+  'Парагвай': '🇵🇾',
+  'Катар': '🇶🇦',
+  'Швейцария': '🇨🇭',
+  'Гаити': '🇭🇹',
+  'Шотландия': '🏴',
+  'Австралия': '🇦🇺',
+  'Турция': '🇹🇷',
+  'Германия': '🇩🇪',
+  'Кюрасао': '🇨🇼',
+  'Нидерланды': '🇳🇱',
+  'Япония': '🇯🇵',
+  "Кот-д'Ивуар": '🇨🇮',
+  "Кот д'Ивуар": '🇨🇮',
+  'Эквадор': '🇪🇨',
+  'Швеция': '🇸🇪',
+  'Тунис': '🇹🇳',
+  'Аргентина': '🇦🇷',
+  'Бразилия': '🇧🇷',
+  'Англия': '🏴',
+  'Испания': '🇪🇸',
+  'Франция': '🇫🇷',
+  'Португалия': '🇵🇹',
+  'Италия': '🇮🇹',
+  'Бельгия': '🇧🇪',
+  'Хорватия': '🇭🇷',
+  'Сербия': '🇷🇸',
+  'Польша': '🇵🇱',
+  'Дания': '🇩🇰',
+  'Норвегия': '🇳🇴',
+  'Украина': '🇺🇦',
+  'Марокко': '🇲🇦',
+  'Алжир': '🇩🇿',
+  'Египет': '🇪🇬',
+  'Нигерия': '🇳🇬',
+  'Камерун': '🇨🇲',
+  'Сенегал': '🇸🇳',
+  'Гана': '🇬🇭',
+  'Ямайка': '🇯🇲',
+  'Колумбия': '🇨🇴',
+  'Уругвай': '🇺🇾',
+  'Перу': '🇵🇪',
+  'Чили': '🇨🇱',
+  'Венесуэла': '🇻🇪',
+  'Боливия': '🇧🇴',
+  'Коста-Рика': '🇨🇷',
+  'Панама': '🇵🇦',
+  'Гондурас': '🇭🇳',
+  'Сальвадор': '🇸🇻',
+  'Иран': '🇮🇷',
+  'Ирак': '🇮🇶',
+  'Саудовская Аравия': '🇸🇦',
+  'ОАЭ': '🇦🇪',
+  'Узбекистан': '🇺🇿',
+  'Казахстан': '🇰🇿',
+  'Грузия': '🇬🇪',
+  'Греция': '🇬🇷',
+  'Румыния': '🇷🇴',
+  'Венгрия': '🇭🇺',
+  'Австрия': '🇦🇹',
+  'Словакия': '🇸🇰',
+  'Словения': '🇸🇮',
+}
+
+const teamWithFlag = (team: string): string => {
+  const name = (team || '').trim()
+  const flag = TEAM_FLAGS[name]
+  return flag ? `${flag} ${name}` : name
+}
+
 function App() {
   const [screen, setScreen] = useState<Screen>('predict')
   const [tgUserId, setTgUserId] = useState<number | null>(null)
@@ -745,7 +822,7 @@ function App() {
                                       <span className="kickoff-small">{(m.kickoff || '').split(' ')[1] || ''} МСК</span>
                                     </div>
                                     <div className="compact-main">
-                                      <span className="team-name team-left">{m.home_team}</span>
+                                <span className="team-name team-left">{teamWithFlag(m.home_team)}</span>
                                       <input
                                         className="score-inline-input"
                                         value={scoreInputs[m.match_id] || ''}
@@ -758,7 +835,7 @@ function App() {
                                         placeholder="-:-"
                                         inputMode="numeric"
                                       />
-                                      <span className="team-name team-right">{m.away_team}</span>
+                                <span className="team-name team-right">{teamWithFlag(m.away_team)}</span>
                                       <button
                                         className={`save-btn compact-save-btn ${saveVisualState}`}
                                         onClick={() => savePrediction(m.match_id)}
@@ -906,7 +983,8 @@ function App() {
                     .map((m) => (
                       <div className="card" key={m.match_id}>
                         <div className="card-title">
-                          {(m.group_label ? `[${m.group_label}] ` : '') + m.home_team} — {m.away_team}
+                          {m.group_label ? `[${m.group_label}] ` : ''}
+                          {teamWithFlag(m.home_team)} — {teamWithFlag(m.away_team)}
                         </div>
                         <div className="card-text">
                           {m.kickoff} МСК
