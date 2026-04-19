@@ -157,28 +157,29 @@
 }
 
 .table-card {
-  padding: 10px 10px 8px;
+  padding: 8px 8px 6px;
+  overflow: hidden;
 }
 
 .table-grid {
   display: grid;
-  grid-template-columns: 28px minmax(110px, 1fr) repeat(6, 34px);
+  grid-template-columns: 20px minmax(72px, 1fr) 38px repeat(5, 24px);
   align-items: center;
-  column-gap: 6px;
+  column-gap: 4px;
 }
 
 .table-grid-head {
-  padding: 6px 4px 8px;
+  padding: 5px 2px 7px;
   border-bottom: 1px solid rgba(79, 112, 174, 0.4);
   color: #9fb2da;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
 }
 
 .table-grid-row {
-  padding: 7px 4px;
+  padding: 6px 2px;
   border-bottom: 1px solid rgba(79, 112, 174, 0.18);
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .table-grid-row:last-child {
@@ -193,13 +194,13 @@
 .col-place {
   text-align: right;
   color: #b7c6e5;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
 }
 
 .col-name {
   color: #e8eefb;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   line-height: 1.15;
 }
@@ -215,6 +216,20 @@
   text-align: right;
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum" 1;
+  font-size: 11px;
+}
+
+.col-sort-btn {
+  border: 0;
+  background: transparent;
+  color: #9fb2da;
+  padding: 0;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.col-sort-btn:active {
+  opacity: 0.75;
 }
 
 .card-static {

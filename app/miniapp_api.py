@@ -511,7 +511,11 @@ def _point_category_emoji(category: str | None, points: int | None) -> str:
     return "✅"
 
 
-async def _build_overall_table_rows(session, tournament_id: int) -> tuple[list[dict[str, Any]], int]:
+async def _build_overall_table_rows(
+    session,
+    tournament_id: int,
+    round_number: int | None = None,
+) -> tuple[list[dict[str, Any]], int]:
     participants_q = await session.execute(
         select(func.count(func.distinct(Prediction.tg_user_id)))
         .select_from(Prediction)
@@ -520,6 +524,10 @@ async def _build_overall_table_rows(session, tournament_id: int) -> tuple[list[d
     )
     participants = int(participants_q.scalar_one() or 0)
 
+    round_filter = [Match.tournament_id == int(tournament_id)]
+    if round_number is not None:
+        round_filter.append(Match.round_number == int(round_number))
+
     points_subq = (
         select(
             Point.tg_user_id.label("tg_user_id"),
@@ -527,7 +535,7 @@ async def _build_overall_table_rows(session, tournament_id: int) -> tuple[list[d
             Point.category.label("category"),
         )
         .join(Match, Match.id == Point.match_id)
-        .where(Match.tournament_id == int(tournament_id))
+        .where(*round_filter)
         .subquery()
     )
     pred_total_subq = (
@@ -537,14 +545,14 @@ async def _build_overall_table_rows(session, tournament_id: int) -> tuple[list[d
         )
         .select_from(Prediction)
         .join(Match, Match.id == Prediction.match_id)
-        .where(Match.tournament_id == int(tournament_id))
+        .where(*round_filter)
         .group_by(Prediction.tg_user_id)
         .subquery()
     )
     now = datetime.utcnow()
     started_total_q = await session.execute(
         select(func.count(Match.id)).where(
-            Match.tournament_id == int(tournament_id),
+            *round_filter,
             Match.kickoff_time <= now,
         )
     )
@@ -557,7 +565,7 @@ async def _build_overall_table_rows(session, tournament_id: int) -> tuple[list[d
         .select_from(Prediction)
         .join(Match, Match.id == Prediction.match_id)
         .where(
-            Match.tournament_id == int(tournament_id),
+            *round_filter,
             Match.kickoff_time <= now,
         )
         .group_by(Prediction.tg_user_id)
@@ -1293,6 +1301,9 @@ async def table_current(request: web.Request) -> web.Response:
         if not tg_user_id:
             return web.json_response({"ok": False, "error": "user_not_found_in_init_data"}, status=400)
 
+        requested_round_raw = (request.query.get("round") or "").strip()
+        requested_round = int(requested_round_raw) if requested_round_raw.isdigit() else None
+
         async with SessionLocal() as session:
             tournament = await _resolve_tournament(session, int(tg_user_id), requested_code=request.query.get("t"))
             await session.commit()
@@ -1349,8 +1360,22 @@ async def table_current(request: web.Request) -> web.Response:
                 }
             )
 
+        if requested_round is not None and (
+            int(requested_round) < int(tournament.round_min) or int(requested_round) > int(tournament.round_max)
+        ):
+            requested_round = None
+
         async with SessionLocal() as session:
-            rows, participants = await _build_overall_table_rows(session, int(tournament.id))
+            rows, participants = await _build_overall_table_rows(
+                session,
+                int(tournament.id),
+                round_number=requested_round,
+            )
+
+        if requested_round is not None:
+            stage_name = display_round_name(int(requested_round), tournament_id=int(tournament.id))
+        else:
+            stage_name = "Общая таблица"
 
         return web.json_response(
             {
@@ -1360,7 +1385,7 @@ async def table_current(request: web.Request) -> web.Response:
                 "tournament_name": tournament.name,
                 "has_table": True,
                 "season_name": tournament.name,
-                "stage_name": "Общая таблица",
+                "stage_name": stage_name,
                 "stage_round_min": int(tournament.round_min),
                 "stage_round_max": int(tournament.round_max),
                 "league_name": "Общий зачёт",

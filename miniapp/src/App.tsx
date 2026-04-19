@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import './App.css'
 import WebApp from '@twa-dev/sdk'
 
@@ -114,6 +114,7 @@ type TableResponse = {
     missed_matches?: number
   }>
 }
+type TableRow = NonNullable<TableResponse['rows']>[number]
 
 type TournamentsResponse = {
   ok: boolean
@@ -293,6 +294,9 @@ function App() {
   const [predictionsFilter, setPredictionsFilter] = useState<'open' | 'closed'>('open')
   const [stageTab, setStageTab] = useState<'1' | '2' | '3' | 'PO' | 'LT'>('1')
   const [playoffTab, setPlayoffTab] = useState<4 | 5 | 6 | 7 | 8 | 9>(4)
+  const [tableRoundFilter, setTableRoundFilter] = useState<'ALL' | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9>('ALL')
+  const [tableSortKey, setTableSortKey] = useState<'total' | 'exact' | 'diff' | 'outcome' | 'missed' | 'bonus'>('total')
+  const [tableSortDir, setTableSortDir] = useState<'desc' | 'asc'>('desc')
 
   const selectedRoundNumber =
     selectedTournamentCode === 'WC2026'
@@ -479,7 +483,11 @@ function App() {
       setPredictError(String(err))
     })
 
-    fetch(`${apiBase}/api/miniapp/table/current?t=${tParam}`, { headers })
+    const tableRoundParam =
+      selectedTournamentCode === 'WC2026' && tableRoundFilter !== 'ALL'
+        ? `&round=${encodeURIComponent(String(tableRoundFilter))}`
+        : ''
+    fetch(`${apiBase}/api/miniapp/table/current?t=${tParam}${tableRoundParam}`, { headers })
       .then(async (res) => {
         const data = (await res.json()) as TableResponse
         if (!res.ok) {
@@ -506,7 +514,7 @@ function App() {
       .catch((err) => {
         setLongtermError(String(err))
       })
-  }, [selectedTournamentCode, selectedRoundNumber])
+  }, [selectedTournamentCode, selectedRoundNumber, tableRoundFilter])
 
   const selectTournament = async (code: string) => {
     if (!code || code === selectedTournamentCode) {
@@ -708,6 +716,57 @@ function App() {
       setStageTab('1')
     }
   }, [allowLongtermTab, stageTab])
+
+  useEffect(() => {
+    if (selectedTournamentCode !== 'WC2026') {
+      setTableRoundFilter('ALL')
+    }
+  }, [selectedTournamentCode])
+
+  const tableRowsSorted = useMemo(() => {
+    const rows = [...(tableData?.rows || [])]
+    const dir = tableSortDir === 'asc' ? 1 : -1
+    const getBonus = (r: TableRow) =>
+      Math.max(0, (r.total ?? 0) - ((r.exact ?? 0) * 4 + (r.diff ?? 0) * 2 + (r.outcome ?? 0)))
+    rows.sort((a, b) => {
+      const av =
+        tableSortKey === 'total'
+          ? (a.total ?? 0)
+          : tableSortKey === 'exact'
+            ? (a.exact ?? 0)
+            : tableSortKey === 'diff'
+              ? (a.diff ?? 0)
+              : tableSortKey === 'outcome'
+                ? (a.outcome ?? 0)
+                : tableSortKey === 'missed'
+                  ? (a.missed_matches ?? 0)
+                  : getBonus(a)
+      const bv =
+        tableSortKey === 'total'
+          ? (b.total ?? 0)
+          : tableSortKey === 'exact'
+            ? (b.exact ?? 0)
+            : tableSortKey === 'diff'
+              ? (b.diff ?? 0)
+              : tableSortKey === 'outcome'
+                ? (b.outcome ?? 0)
+                : tableSortKey === 'missed'
+                  ? (b.missed_matches ?? 0)
+                  : getBonus(b)
+      if (av !== bv) return (av - bv) * dir
+      return (a.place - b.place) * dir
+    })
+    return rows
+  }, [tableData, tableSortDir, tableSortKey])
+
+  const handleSortHeader = (key: 'total' | 'exact' | 'diff' | 'outcome' | 'missed' | 'bonus') => {
+    if (tableSortKey === key) {
+      setTableSortDir((prev) => (prev === 'desc' ? 'asc' : 'desc'))
+      return
+    }
+    setTableSortKey(key)
+    setTableSortDir(key === 'missed' ? 'asc' : 'desc')
+  }
 
   return (
     <div className="app-shell">
@@ -1060,6 +1119,76 @@ function App() {
 
         {screen === 'table' ? (
           <>
+            {selectedTournamentCode === 'WC2026' ? (
+              <section className="cards">
+                <div className="card card-static">
+                  <div className="card-title">Раунд таблицы</div>
+                  <div className="tournament-row">
+                    <button
+                      className={`tournament-chip ${tableRoundFilter === 'ALL' ? 'is-active' : ''}`}
+                      onClick={() => setTableRoundFilter('ALL')}
+                    >
+                      Общая
+                    </button>
+                    <button
+                      className={`tournament-chip ${tableRoundFilter === 1 ? 'is-active' : ''}`}
+                      onClick={() => setTableRoundFilter(1)}
+                    >
+                      Тур 1
+                    </button>
+                    <button
+                      className={`tournament-chip ${tableRoundFilter === 2 ? 'is-active' : ''}`}
+                      onClick={() => setTableRoundFilter(2)}
+                    >
+                      Тур 2
+                    </button>
+                    <button
+                      className={`tournament-chip ${tableRoundFilter === 3 ? 'is-active' : ''}`}
+                      onClick={() => setTableRoundFilter(3)}
+                    >
+                      Тур 3
+                    </button>
+                    <button
+                      className={`tournament-chip ${tableRoundFilter === 4 ? 'is-active' : ''}`}
+                      onClick={() => setTableRoundFilter(4)}
+                    >
+                      1/16
+                    </button>
+                    <button
+                      className={`tournament-chip ${tableRoundFilter === 5 ? 'is-active' : ''}`}
+                      onClick={() => setTableRoundFilter(5)}
+                    >
+                      1/8
+                    </button>
+                    <button
+                      className={`tournament-chip ${tableRoundFilter === 6 ? 'is-active' : ''}`}
+                      onClick={() => setTableRoundFilter(6)}
+                    >
+                      1/4
+                    </button>
+                    <button
+                      className={`tournament-chip ${tableRoundFilter === 7 ? 'is-active' : ''}`}
+                      onClick={() => setTableRoundFilter(7)}
+                    >
+                      1/2
+                    </button>
+                    <button
+                      className={`tournament-chip ${tableRoundFilter === 8 ? 'is-active' : ''}`}
+                      onClick={() => setTableRoundFilter(8)}
+                    >
+                      За 3-е
+                    </button>
+                    <button
+                      className={`tournament-chip ${tableRoundFilter === 9 ? 'is-active' : ''}`}
+                      onClick={() => setTableRoundFilter(9)}
+                    >
+                      Финал
+                    </button>
+                  </div>
+                </div>
+              </section>
+            ) : null}
+
             <section className="cards">
               <div className="card">
                 <div className="card-title">
@@ -1095,15 +1224,27 @@ function App() {
                   <div className="table-grid table-grid-head">
                     <div className="col-place">#</div>
                     <div className="col-name">Имя</div>
-                    <div className="col-num">Очк</div>
-                    <div className="col-num">🎯</div>
-                    <div className="col-num">📏</div>
-                    <div className="col-num">✅</div>
-                    <div className="col-num">⛔</div>
-                    <div className="col-num">⭐</div>
+                    <button className="col-sort-btn col-num" onClick={() => handleSortHeader('total')}>
+                      Очк
+                    </button>
+                    <button className="col-sort-btn col-num" onClick={() => handleSortHeader('exact')}>
+                      🎯
+                    </button>
+                    <button className="col-sort-btn col-num" onClick={() => handleSortHeader('diff')}>
+                      📏
+                    </button>
+                    <button className="col-sort-btn col-num" onClick={() => handleSortHeader('outcome')}>
+                      ✅
+                    </button>
+                    <button className="col-sort-btn col-num" onClick={() => handleSortHeader('missed')}>
+                      ⛔
+                    </button>
+                    <button className="col-sort-btn col-num" onClick={() => handleSortHeader('bonus')}>
+                      ⭐
+                    </button>
                   </div>
 
-                  {(tableData?.rows || []).map((r) => {
+                  {tableRowsSorted.map((r) => {
                     const basePoints = (r.exact * 4) + (r.diff * 2) + (r.outcome * 1)
                     const bonusPoints = Math.max(0, (r.total ?? 0) - basePoints)
                     return (
