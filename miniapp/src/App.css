@@ -245,8 +245,8 @@
   gap: 6px;
 }
 
-.compact-main-readonly {
-  grid-template-columns: 1fr 58px 1fr 24px;
+.compact-main-result {
+  grid-template-columns: 1fr 58px 1fr 56px;
 }
 
 .team-name {
@@ -290,25 +290,19 @@
   line-height: 1.2;
 }
 
-.result-dot {
-  width: 20px;
-  height: 20px;
+.result-badge {
+  min-width: 56px;
+  height: 28px;
+  border: 1px solid #3b5f9f;
   border-radius: 999px;
+  background: #132a4f;
+  color: #dcebff;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   font-size: 12px;
   font-weight: 700;
-}
-
-.result-dot.is-open {
-  background: #243f72;
-  color: #c9dcff;
-}
-
-.result-dot.is-closed {
-  background: #1f8a4c;
-  color: #ffffff;
+  padding: 0 8px;
 }
 
 .compact-note {
@@ -405,7 +399,7 @@
   bottom: env(safe-area-inset-bottom, 0px);
   z-index: 30;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 4px;
   padding: 6px 8px;
   background: rgba(10, 16, 28, 0.96);

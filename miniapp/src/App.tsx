@@ -148,7 +148,7 @@ type LongtermResponse = {
   }
 }
 
-type Screen = 'predict' | 'profile' | 'predictions' | 'table'
+type Screen = 'predict' | 'profile' | 'table'
 
 const ENGLAND_FLAG = String.fromCodePoint(
   0x1f3f4,
@@ -623,14 +623,12 @@ function App() {
 
   const tabMeta: Record<Screen, { title: string; subtitle: string; icon: string }> = {
     profile: { title: 'Профиль', subtitle: 'Личная статистика участника', icon: '👤' },
-    predict: { title: 'Сделать прогноз', subtitle: 'Открытые матчи текущего тура', icon: '🎯' },
-    predictions: { title: 'Мои прогнозы', subtitle: 'Твои ставки по матчам', icon: '🗂' },
+    predict: { title: 'Матчи', subtitle: 'Открытые и завершённые матчи в одном месте', icon: '⚽' },
     table: { title: 'Таблица', subtitle: 'Позиции участников турнира', icon: '🏆' },
   }
   const bottomTabs: Array<{ key: Screen; icon: string; label: string }> = [
     { key: 'profile', icon: '👤', label: 'Профиль' },
     { key: 'predict', icon: '⚽', label: 'Матчи' },
-    { key: 'predictions', icon: '🗂', label: 'Прогнозы' },
     { key: 'table', icon: '🏆', label: 'Таблица' },
   ]
 
@@ -669,10 +667,8 @@ function App() {
     { key: '3', label: 'Тур 3' },
     { key: 'PO', label: 'Плей-офф' },
   ]
-  const wcTopTabsPredict: Array<{ key: '1' | '2' | '3' | 'PO' | 'LT'; label: string }> =
-    !longtermLocked ? [...wcTopTabsBase, { key: 'LT', label: 'Доп. прогнозы' }] : wcTopTabsBase
-  const wcTopTabsPredictions: Array<{ key: '1' | '2' | '3' | 'PO' | 'LT'; label: string }> =
-    longtermLocked ? [...wcTopTabsBase, { key: 'LT', label: 'Доп. прогнозы' }] : wcTopTabsBase
+  const wcTopTabsMatches: Array<{ key: '1' | '2' | '3' | 'PO' | 'LT'; label: string }> =
+    [...wcTopTabsBase, { key: 'LT', label: 'Доп. прогнозы' }]
   const wcPlayoffTabs: Array<{ key: 4 | 5 | 6 | 7 | 8 | 9; label: string }> = [
     { key: 4, label: '1/16' },
     { key: 5, label: '1/8' },
@@ -681,8 +677,7 @@ function App() {
     { key: 8, label: 'За 3-е' },
     { key: 9, label: 'Финал' },
   ]
-  const allowLongtermTab =
-    showWcSelector && ((screen === 'predict' && !longtermLocked) || (screen === 'predictions' && longtermLocked))
+  const allowLongtermTab = showWcSelector
 
   const predictItems = predictData?.items || []
   const predictGroups = (() => {
@@ -694,17 +689,18 @@ function App() {
     }
     return Object.entries(grouped)
   })()
-  const predictionItemsFiltered =
-    (predictionsData?.items || []).filter((m) => (predictionsFilter === 'open' ? m.status === 'open' : m.status === 'closed'))
-  const predictionGroups = (() => {
-    const grouped: Record<string, typeof predictionItemsFiltered> = {}
-    for (const item of predictionItemsFiltered) {
+  const closedPredictionItems = (predictionsData?.items || []).filter((m) => m.status === 'closed')
+  const closedPredictionGroups = (() => {
+    const grouped: Record<string, typeof closedPredictionItems> = {}
+    for (const item of closedPredictionItems) {
       const dateKey = (item.kickoff || '').split(' ')[0] || '—'
       if (!grouped[dateKey]) grouped[dateKey] = []
       grouped[dateKey].push(item)
     }
     return Object.entries(grouped)
   })()
+  const openMatchesCount = predictData?.items?.length ?? 0
+  const closedMatchesCount = closedPredictionItems.length
 
   useEffect(() => {
     if (stageTab === 'LT' && !allowLongtermTab) {
@@ -735,7 +731,7 @@ function App() {
                 </button>
               ))}
             </div>
-            {screen === 'predictions' && !(showWcSelector && stageTab === 'LT') ? (
+            {screen === 'predict' && !(showWcSelector && stageTab === 'LT') ? (
               <div className="match-toggle">
                 <button
                   className={`match-toggle-btn ${predictionsFilter === 'open' ? 'is-active' : ''}`}
@@ -764,7 +760,7 @@ function App() {
                 <div className="card card-static">
                   <div className="card-title">Этап турнира</div>
                   <div className="tournament-row">
-                    {wcTopTabsPredict.map((tab) => (
+                    {wcTopTabsMatches.map((tab) => (
                       <button
                         key={tab.key}
                         className={`tournament-chip ${stageTab === tab.key ? 'is-active' : ''}`}
@@ -795,20 +791,34 @@ function App() {
               <>
                 <section className="cards">
                   <div className="card">
-                    <div className="card-title">Доп. прогнозы ЧМ 2026</div>
+                    <div className="card-title">
+                      Доп. прогнозы ЧМ 2026
+                    </div>
                     <div className="card-text">
                       {longtermError ? (
                         <>Ошибка: {longtermError}</>
                       ) : !longtermData ? (
                         'Загружаю...'
+                      ) : longtermLocked ? (
+                        <>
+                          Дедлайн: <b>{longtermData.deadline_msk || '—'} МСК</b>
+                          <br />
+                          Победитель: <b>{longtermData.picks?.winner || 'не выбран'}</b>
+                          <br />
+                          Бомбардир: <b>{longtermData.picks?.scorer || 'не выбран'}</b>
+                          <br />
+                          После финала админ вручную начисляет по <b>5 очков</b> за каждый угаданный доп. прогноз.
+                        </>
                       ) : longtermData.joined === false ? (
                         'Сначала вступи в турнир, чтобы поставить доп. прогнозы.'
+                      ) : !predictData ? (
+                        'Загружаю...'
                       ) : (
                         <>
                           До старта первого матча:
                           <b> {longtermData.deadline_msk || '—'} МСК</b>
                           <br />
-                          После дедлайна блок автоматически переедет в «Мои прогнозы».
+                          После дедлайна здесь будет только просмотр.
                         </>
                       )}
                       {longtermNotice ? (
@@ -821,74 +831,84 @@ function App() {
                   </div>
                 </section>
 
-                <section className="cards space-top">
-                  <div className="card">
-                    <div className="card-title">🏆 Победитель ЧМ</div>
-                    <div className="predict-row">
-                      <select
-                        className="score-input select-input"
-                        value={winnerPickInput}
-                        onChange={(e) => setWinnerPickInput(e.target.value)}
-                      >
-                        <option value="">Выбери команду</option>
-                        {(longtermData?.options?.winner || []).map((name) => (
-                          <option key={name} value={name}>
-                            {name}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        className={`save-btn longterm-save-btn ${winnerVisualState}`}
-                        onClick={() => saveLongtermPick('winner')}
-                        disabled={savingLongtermType === 'winner' || longtermLocked || longtermData?.joined === false || !winnerDirty}
-                      >
-                        {savingLongtermType === 'winner' ? '…' : winnerVisualState === 'is-empty' ? '' : '✓'}
-                      </button>
+                {!longtermLocked ? (
+                  <section className="cards space-top">
+                    <div className="card">
+                      <div className="card-title">🏆 Победитель ЧМ</div>
+                      <div className="predict-row">
+                        <select
+                          className="score-input select-input"
+                          value={winnerPickInput}
+                          onChange={(e) => setWinnerPickInput(e.target.value)}
+                        >
+                          <option value="">Выбери команду</option>
+                          {(longtermData?.options?.winner || []).map((name) => (
+                            <option key={name} value={name}>
+                              {name}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          className={`save-btn longterm-save-btn ${winnerVisualState}`}
+                          onClick={() => saveLongtermPick('winner')}
+                          disabled={savingLongtermType === 'winner' || longtermLocked || longtermData?.joined === false || !winnerDirty}
+                        >
+                          {savingLongtermType === 'winner' ? '…' : winnerVisualState === 'is-empty' ? '' : '✓'}
+                        </button>
+                      </div>
                     </div>
-                  </div>
 
-                  <div className="card">
-                    <div className="card-title">⚽ Лучший бомбардир</div>
-                    <div className="predict-row">
-                      <select
-                        className="score-input select-input"
-                        value={scorerPickInput}
-                        onChange={(e) => setScorerPickInput(e.target.value)}
-                      >
-                        <option value="">Выбери игрока</option>
-                        {(longtermData?.options?.scorer || []).map((name) => (
-                          <option key={name} value={name}>
-                            {name}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        className={`save-btn longterm-save-btn ${scorerVisualState}`}
-                        onClick={() => saveLongtermPick('scorer')}
-                        disabled={savingLongtermType === 'scorer' || longtermLocked || longtermData?.joined === false || !scorerDirty}
-                      >
-                        {savingLongtermType === 'scorer' ? '…' : scorerVisualState === 'is-empty' ? '' : '✓'}
-                      </button>
+                    <div className="card">
+                      <div className="card-title">⚽ Лучший бомбардир</div>
+                      <div className="predict-row">
+                        <select
+                          className="score-input select-input"
+                          value={scorerPickInput}
+                          onChange={(e) => setScorerPickInput(e.target.value)}
+                        >
+                          <option value="">Выбери игрока</option>
+                          {(longtermData?.options?.scorer || []).map((name) => (
+                            <option key={name} value={name}>
+                              {name}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          className={`save-btn longterm-save-btn ${scorerVisualState}`}
+                          onClick={() => saveLongtermPick('scorer')}
+                          disabled={savingLongtermType === 'scorer' || longtermLocked || longtermData?.joined === false || !scorerDirty}
+                        >
+                          {savingLongtermType === 'scorer' ? '…' : scorerVisualState === 'is-empty' ? '' : '✓'}
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                </section>
+                  </section>
+                ) : null}
               </>
             ) : (
               <>
                 <section className="cards">
                   <div className="card">
                     <div className="card-title">
-                      {predictData?.tournament || selectedTournamentCode} · {predictData?.round_name || `Тур ${predictData?.round_number ?? '—'}`}
+                      {predictData?.tournament || predictionsData?.tournament || selectedTournamentCode} · {predictData?.round_name || predictionsData?.round_name || `Тур ${predictData?.round_number ?? predictionsData?.round_number ?? '—'}`}
                     </div>
                     <div className="card-text">
-                      {predictError ? (
-                        <>Ошибка: {predictError}</>
-                      ) : !predictData ? (
+                      {predictError || predictionsError ? (
+                        <>
+                          {predictError ? `Ошибка активных матчей: ${predictError}` : null}
+                          {predictError && predictionsError ? <br /> : null}
+                          {predictionsError ? `Ошибка завершённых матчей: ${predictionsError}` : null}
+                        </>
+                      ) : !predictData || !predictionsData ? (
                         'Загружаю матчи...'
                       ) : predictData.joined === false ? (
                         predictData.message || 'Нужно вступить в турнир, чтобы ставить прогнозы.'
                       ) : (
-                        <>Открытых матчей: <b>{predictData.items?.length ?? 0}</b></>
+                        <>
+                          Открытых матчей: <b>{openMatchesCount}</b> · Завершённых: <b>{closedMatchesCount}</b>
+                          <br />
+                          Очки по завершённым: <b>{predictionsData.total_points_closed ?? 0}</b>
+                        </>
                       )}
                       {predictNotice ? (
                         <>
@@ -901,67 +921,98 @@ function App() {
                 </section>
 
                 <section className="cards space-top">
-                  <div className="card compact-list-card">
-                    {predictGroups.length === 0 ? (
-                      <div className="card-text">Открытых матчей нет.</div>
-                    ) : (
-                      predictGroups.map(([dateKey, matches]) => (
-                        <div key={dateKey} className="day-group">
-                          <div className="day-title">{dateKey}</div>
-                          {matches.map((m) => (
+                  {predictionsFilter === 'open' ? (
+                    <div className="card compact-list-card">
+                      {predictGroups.length === 0 ? (
+                        <div className="card-text">Открытых матчей нет.</div>
+                      ) : (
+                        predictGroups.map(([dateKey, matches]) => (
+                          <div key={dateKey} className="day-group">
+                            <div className="day-title">{dateKey}</div>
+                            {matches.map((m) => (
+                              <div className="compact-match" key={m.match_id}>
+                                {(() => {
+                                  const currentInput = normalizeScore(scoreInputs[m.match_id] || '')
+                                  const savedInput = normalizeScore(m.prediction || '')
+                                  const isDirty = currentInput !== savedInput
+                                  const hasSaved = savedInput.length > 0
+                                  const isSaving = savingMatchId === m.match_id
+                                  const canSave = isDirty
+                                  const saveVisualState = isSaving
+                                    ? 'is-saving'
+                                    : isDirty
+                                      ? 'is-dirty'
+                                      : hasSaved
+                                        ? 'is-saved'
+                                        : 'is-empty'
+                                  return (
+                                    <>
+                                      <div className="compact-meta">
+                                        {m.group_label ? <span className="group-small">[{m.group_label}]</span> : <span className="group-small">—</span>}
+                                        <span className="kickoff-small">{(m.kickoff || '').split(' ')[1] || ''} МСК</span>
+                                      </div>
+                                      <div className="compact-main">
+                                        <span className="team-name team-left">{teamWithFlag(m.home_team)}</span>
+                                        <input
+                                          className="score-inline-input"
+                                          value={scoreInputs[m.match_id] || ''}
+                                          onChange={(e) =>
+                                            setScoreInputs((prev) => ({
+                                              ...prev,
+                                              [m.match_id]: formatScoreInput(e.target.value),
+                                            }))
+                                          }
+                                          placeholder="-:-"
+                                          inputMode="numeric"
+                                        />
+                                        <span className="team-name team-right">{teamWithFlag(m.away_team)}</span>
+                                        <button
+                                          className={`save-btn compact-save-btn ${saveVisualState}`}
+                                          onClick={() => savePrediction(m.match_id)}
+                                          disabled={isSaving || !canSave}
+                                        >
+                                          {isSaving ? '…' : saveVisualState === 'is-empty' ? '' : '✓'}
+                                        </button>
+                                      </div>
+                                    </>
+                                  )
+                                })()}
+                              </div>
+                            ))}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  ) : closedPredictionGroups.length === 0 ? (
+                    <div className="card">
+                      <div className="card-text">Завершённых матчей пока нет.</div>
+                    </div>
+                  ) : (
+                    <div className="card compact-list-card">
+                      {closedPredictionGroups.map(([day, items]) => (
+                        <div className="day-group" key={day}>
+                          <div className="day-title">{day}</div>
+                          {items.map((m) => (
                             <div className="compact-match" key={m.match_id}>
-                              {(() => {
-                                const currentInput = normalizeScore(scoreInputs[m.match_id] || '')
-                                const savedInput = normalizeScore(m.prediction || '')
-                                const isDirty = currentInput !== savedInput
-                                const hasSaved = savedInput.length > 0
-                                const isSaving = savingMatchId === m.match_id
-                                const canSave = isDirty
-                                const saveVisualState = isSaving
-                                  ? 'is-saving'
-                                  : isDirty
-                                    ? 'is-dirty'
-                                    : hasSaved
-                                      ? 'is-saved'
-                                      : 'is-empty'
-                                return (
-                                  <>
-                                    <div className="compact-meta">
-                                      {m.group_label ? <span className="group-small">[{m.group_label}]</span> : <span className="group-small">—</span>}
-                                      <span className="kickoff-small">{(m.kickoff || '').split(' ')[1] || ''} МСК</span>
-                                    </div>
-                                    <div className="compact-main">
+                              <div className="compact-meta">
+                                {m.group_label ? <span className="group-small">[{m.group_label}]</span> : <span className="group-small">—</span>}
+                                <span className="kickoff-small">{(m.kickoff || '').split(' ')[1] || ''} МСК</span>
+                              </div>
+                              <div className="compact-main compact-main-result">
                                 <span className="team-name team-left">{teamWithFlag(m.home_team)}</span>
-                                      <input
-                                        className="score-inline-input"
-                                        value={scoreInputs[m.match_id] || ''}
-                                        onChange={(e) =>
-                                          setScoreInputs((prev) => ({
-                                            ...prev,
-                                            [m.match_id]: formatScoreInput(e.target.value),
-                                          }))
-                                        }
-                                        placeholder="-:-"
-                                        inputMode="numeric"
-                                      />
+                                <span className="score-inline-pill">{m.prediction || '-:-'}</span>
                                 <span className="team-name team-right">{teamWithFlag(m.away_team)}</span>
-                                      <button
-                                        className={`save-btn compact-save-btn ${saveVisualState}`}
-                                        onClick={() => savePrediction(m.match_id)}
-                                        disabled={isSaving || !canSave}
-                                      >
-                                        {isSaving ? '…' : saveVisualState === 'is-empty' ? '' : '✓'}
-                                      </button>
-                                    </div>
-                                  </>
-                                )
-                              })()}
+                                <span className="result-badge">{m.prediction ? `${m.emoji} ${m.points ?? 0}` : '❌ 0'}</span>
+                              </div>
+                              <div className="compact-note">
+                                Итог: {m.result || '—'}
+                              </div>
                             </div>
                           ))}
                         </div>
-                      ))
-                    )}
-                  </div>
+                      ))}
+                    </div>
+                  )}
                 </section>
               </>
             )}
@@ -1004,129 +1055,6 @@ function App() {
               </div>
             </div>
           </section>
-        ) : null}
-
-        {screen === 'predictions' ? (
-          <>
-            {showWcSelector ? (
-              <section className="cards">
-                <div className="card card-static">
-                  <div className="card-title">Этап турнира</div>
-                  <div className="tournament-row">
-                    {wcTopTabsPredictions.map((tab) => (
-                      <button
-                        key={tab.key}
-                        className={`tournament-chip ${stageTab === tab.key ? 'is-active' : ''}`}
-                        onClick={() => setStageTab(tab.key)}
-                      >
-                        {tab.label}
-                      </button>
-                    ))}
-                  </div>
-                  {stageTab === 'PO' ? (
-                    <div className="tournament-row">
-                      {wcPlayoffTabs.map((tab) => (
-                        <button
-                          key={tab.key}
-                          className={`tournament-chip ${playoffTab === tab.key ? 'is-active' : ''}`}
-                          onClick={() => setPlayoffTab(tab.key)}
-                        >
-                          {tab.label}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              </section>
-            ) : null}
-
-            {showWcSelector && stageTab === 'LT' ? (
-              <section className="cards">
-                <div className="card">
-                  <div className="card-title">Доп. прогнозы ЧМ 2026</div>
-                  <div className="card-text">
-                    {longtermError ? (
-                      <>Ошибка: {longtermError}</>
-                    ) : !longtermData ? (
-                      'Загружаю...'
-                    ) : (
-                      <>
-                        Дедлайн: <b>{longtermData.deadline_msk || '—'} МСК</b>
-                        <br />
-                        Победитель: <b>{longtermData.picks?.winner || 'не выбран'}</b>
-                        <br />
-                        Бомбардир: <b>{longtermData.picks?.scorer || 'не выбран'}</b>
-                        <br />
-                        После финала админ вручную начисляет по <b>5 очков</b> за каждый угаданный доп. прогноз.
-                      </>
-                    )}
-                  </div>
-                </div>
-              </section>
-            ) : (
-              <>
-                <section className="cards">
-                  <div className="card">
-                    <div className="card-title">
-                      {predictionsData?.tournament || selectedTournamentCode} · {predictionsData?.round_name || `Тур ${predictionsData?.round_number ?? '—'}`}
-                    </div>
-                    <div className="card-text">
-                      {predictionsError ? (
-                        <>Ошибка загрузки прогнозов: {predictionsError}</>
-                      ) : !predictionsData ? (
-                        'Загружаю прогнозы...'
-                      ) : (
-                        <>
-                          Итого по завершённым: <b>{predictionsData.total_points_closed ?? 0}</b> очк.
-                          <br />
-                          Матчей в туре: <b>{predictionsData.items?.length ?? 0}</b>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                </section>
-
-                <section className="cards space-top">
-                  {predictionGroups.length === 0 ? (
-                    <div className="card">
-                      <div className="card-text">Матчей в этом режиме пока нет.</div>
-                    </div>
-                  ) : (
-                    <div className="card compact-list-card">
-                      {predictionGroups.map(([day, items]) => (
-                        <div className="day-group" key={day}>
-                          <div className="day-title">{day}</div>
-                          {items.map((m) => (
-                            <div className="compact-match" key={m.match_id}>
-                              <div className="compact-meta">
-                                {m.group_label ? <span className="group-small">[{m.group_label}]</span> : <span className="group-small">—</span>}
-                                <span className="kickoff-small">{(m.kickoff || '').split(' ')[1] || ''} МСК</span>
-                              </div>
-                              <div className="compact-main compact-main-readonly">
-                                <span className="team-name team-left">{teamWithFlag(m.home_team)}</span>
-                                <span className="score-inline-pill">{m.prediction || '-:-'}</span>
-                                <span className="team-name team-right">{teamWithFlag(m.away_team)}</span>
-                                <span className={`result-dot ${m.status === 'closed' ? 'is-closed' : 'is-open'}`} title={m.status === 'closed' ? 'Матч завершён' : 'Матч открыт'}>
-                                  {m.status === 'closed' ? '✓' : '•'}
-                                </span>
-                              </div>
-                              <div className="compact-note">
-                                {m.status === 'closed'
-                                  ? m.prediction
-                                    ? `Итог ${m.result || '—'} · ${m.emoji} ${m.points ?? 0}`
-                                    : `Итог ${m.result || '—'} · без прогноза`
-                                  : ''}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </section>
-              </>
-            )}
-          </>
         ) : null}
 
         {screen === 'table' ? (
