@@ -62,6 +62,14 @@ def build_main_menu_keyboard(
     )
 
 
+def build_start_join_wc_keyboard() -> types.InlineKeyboardMarkup:
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [types.InlineKeyboardButton(text="ВСТУПИТЬ В ТУРНИР", callback_data="start_join_wc")]
+        ]
+    )
+
+
 # Надёжно для любого сервера: МСК = UTC+3 (без tzdata)
 def now_msk_naive() -> datetime:
     return (datetime.utcnow() + timedelta(hours=3)).replace(tzinfo=None)
@@ -1613,7 +1621,14 @@ def register_user_handlers(dp: Dispatcher):
         await state.update_data(round_number=round_number)
         await send_long(target, "\n".join(lines))
 
-    async def _request_display_name_for_join(message: types.Message, state: FSMContext, tournament: Tournament) -> None:
+    async def _request_display_name_for_join(
+        target: types.Message | types.CallbackQuery,
+        state: FSMContext,
+        tournament: Tournament,
+    ) -> None:
+        message = target.message if isinstance(target, types.CallbackQuery) else target
+        if message is None:
+            return
         await state.set_state(PredictRoundStates.waiting_for_display_name)
         await state.update_data(join_tournament_id=tournament.id, join_tournament_name=tournament.name)
         await message.answer(
@@ -1622,11 +1637,18 @@ def register_user_handlers(dp: Dispatcher):
             "Пример: Роман"
         )
 
-    async def _ensure_enrollment_open_for_join(target: types.Message) -> bool:
+    async def _ensure_enrollment_open_for_join(target: types.Message | types.CallbackQuery) -> bool:
         async with SessionLocal() as session:
             opened = await is_enrollment_open(session)
         if opened:
             return True
+        if isinstance(target, types.CallbackQuery):
+            if target.message is not None:
+                await target.message.answer(
+                    "🔒 Набор участников сейчас закрыт.\n"
+                    "Дождись открытия набора от администратора."
+                )
+            return False
         await target.answer(
             "🔒 Набор участников сейчас закрыт.\n"
             "Дождись открытия набора от администратора."
@@ -2763,33 +2785,35 @@ def register_user_handlers(dp: Dispatcher):
 
     @dp.message(CommandStart())
     async def cmd_start(message: types.Message):
-        tournament, default_round = await _get_user_tournament_context(message.from_user.id)
         async with SessionLocal() as session:
+            await upsert_user_from_message(session, message)
+            await set_selected_tournament_for_user(session, message.from_user.id, WC_TOURNAMENT_CODE)
+            tournament = await get_selected_tournament_for_user(session, message.from_user.id)
             is_joined = await is_user_in_tournament(session, message.from_user.id, tournament.id)
-            join_cta_text = await _get_join_cta_text(session, message.from_user.id, tournament.id)
-        await message.answer(
-            "🏆 Добро пожаловать в бот прогнозов.\n\n"
-            "Как начать (3 шага):\n"
-            "1) Нажми «✅ Вступить в турнир» и введи имя для таблицы\n"
-            "2) Открой «🎯 Поставить прогноз»\n"
-            "3) Поставь прогноз через «🎯 Поставить прогноз»\n\n"
-            f"Сейчас выбран турнир: {tournament.name}\n"
-            f"Текущий тур: {default_round}\n\n"
-            "Очки:\n"
-            "🎯 точный счёт — 4\n"
-            "📏 разница + исход — 2\n"
-            "✅ только исход — 1\n"
-            "❌ мимо — 0\n\n"
-            "Важно:\n"
-            "🕒 Время матчей и дедлайны — по Москве (МСК).\n"
-            "⛔️ После начала матча прогноз ставить/менять нельзя.\n"
-            "✅ Можно вводить счет как 2:0 или 2-0.",
-            reply_markup=build_main_menu_keyboard(
-                default_round=default_round,
-                is_joined=is_joined,
-                join_cta_text=join_cta_text,
-            ),
+            await session.commit()
+
+        text = (
+            "⚽  Вот это тебя корёжит! А всё потому что тебя ещё нет в новом турнире прогнозов World Cup 2026!\n"
+            "Ставишь по двоичной системе или читаешь футбол, как открытую книгу? Скоро узнаем.\n\n"
+            "Нажимай кнопку ниже и вступай в турнир!"
         )
+        if is_joined:
+            await message.answer("Ты уже участвуешь в турнире WC 2026 ✅", reply_markup=types.ReplyKeyboardRemove())
+            return
+        await message.answer(text, reply_markup=build_start_join_wc_keyboard())
+
+    @dp.callback_query(F.data == "start_join_wc")
+    async def cb_start_join_wc(callback: types.CallbackQuery, state: FSMContext):
+        if not await _ensure_enrollment_open_for_join(callback):
+            await callback.answer()
+            return
+        async with SessionLocal() as session:
+            await upsert_user_from_callback(session, callback)
+            await set_selected_tournament_for_user(session, callback.from_user.id, WC_TOURNAMENT_CODE)
+            tournament = await get_selected_tournament_for_user(session, callback.from_user.id)
+            await session.commit()
+        await _request_display_name_for_join(callback, state, tournament)
+        await callback.answer()
 
     @dp.message(Command("help"))
     async def cmd_help(message: types.Message):
