@@ -153,6 +153,13 @@ function App() {
   const [selectedTournamentCode, setSelectedTournamentCode] = useState<string>('WC2026')
   const [tournamentNotice, setTournamentNotice] = useState<string | null>(null)
   const [predictionsFilter, setPredictionsFilter] = useState<'open' | 'closed'>('open')
+  const [stageTab, setStageTab] = useState<'1' | '2' | '3' | 'PO'>('1')
+  const [playoffTab, setPlayoffTab] = useState<4 | 5 | 6 | 7 | 8 | 9>(4)
+
+  const selectedRoundNumber =
+    selectedTournamentCode === 'WC2026'
+      ? (stageTab === 'PO' ? playoffTab : Number(stageTab))
+      : undefined
 
   const formatScoreInput = (raw: string): string => {
     const digits = raw.replace(/\D/g, '').slice(0, 3)
@@ -166,12 +173,18 @@ function App() {
     return tgWebApp?.initData || WebApp.initData || ''
   }
 
-  const loadPredictCurrent = async (apiBase: string, initData: string, tournamentCode: string) => {
+  const loadPredictCurrent = async (
+    apiBase: string,
+    initData: string,
+    tournamentCode: string,
+    roundNumber?: number
+  ) => {
     const headers = {
       'X-Telegram-Init-Data': initData,
     }
     const tParam = encodeURIComponent(tournamentCode || 'RPL')
-    const res = await fetch(`${apiBase}/api/miniapp/predict/current?t=${tParam}`, { headers })
+    const rParam = roundNumber != null ? `&round=${encodeURIComponent(String(roundNumber))}` : ''
+    const res = await fetch(`${apiBase}/api/miniapp/predict/current?t=${tParam}${rParam}`, { headers })
     const data = (await res.json()) as PredictCurrentResponse
     if (!res.ok) {
       throw new Error(data.reason || data.error || `HTTP ${res.status}`)
@@ -264,7 +277,9 @@ function App() {
         setProfileError(String(err))
       })
 
-    fetch(`${apiBase}/api/miniapp/predictions/current?t=${tParam}`, { headers })
+    const rParam = selectedRoundNumber != null ? `&round=${encodeURIComponent(String(selectedRoundNumber))}` : ''
+
+    fetch(`${apiBase}/api/miniapp/predictions/current?t=${tParam}${rParam}`, { headers })
       .then(async (res) => {
         const data = (await res.json()) as PredictionsResponse
         if (!res.ok) {
@@ -277,7 +292,7 @@ function App() {
         setPredictionsError(String(err))
       })
 
-    loadPredictCurrent(apiBase, initData, selectedTournamentCode).catch((err) => {
+    loadPredictCurrent(apiBase, initData, selectedTournamentCode, selectedRoundNumber).catch((err) => {
       setPredictError(String(err))
     })
 
@@ -293,7 +308,7 @@ function App() {
       .catch((err) => {
         setTableError(String(err))
       })
-  }, [selectedTournamentCode])
+  }, [selectedTournamentCode, selectedRoundNumber])
 
   const selectTournament = async (code: string) => {
     if (!code || code === selectedTournamentCode) {
@@ -356,7 +371,7 @@ function App() {
         throw new Error(data.reason || data.error || `HTTP ${res.status}`)
       }
       setPredictNotice(`Ставка сохранена: ${data.prediction}`)
-      await loadPredictCurrent(apiBase, initData, selectedTournamentCode)
+      await loadPredictCurrent(apiBase, initData, selectedTournamentCode, selectedRoundNumber)
     } catch (err) {
       setPredictNotice(`Ошибка сохранения: ${String(err)}`)
     } finally {
@@ -375,6 +390,21 @@ function App() {
     { code: 'WC2026', icon: '⚽', label: 'WC' },
     { code: 'RPL', icon: '🏆', label: 'РПЛ' },
   ]
+  const wcTopTabs: Array<{ key: '1' | '2' | '3' | 'PO'; label: string }> = [
+    { key: '1', label: 'Тур 1' },
+    { key: '2', label: 'Тур 2' },
+    { key: '3', label: 'Тур 3' },
+    { key: 'PO', label: 'Плей-офф' },
+  ]
+  const wcPlayoffTabs: Array<{ key: 4 | 5 | 6 | 7 | 8 | 9; label: string }> = [
+    { key: 4, label: '1/16' },
+    { key: 5, label: '1/8' },
+    { key: 6, label: '1/4' },
+    { key: 7, label: '1/2' },
+    { key: 8, label: 'За 3-е' },
+    { key: 9, label: 'Финал' },
+  ]
+  const showWcSelector = selectedTournamentCode === 'WC2026'
 
   return (
     <div className="app-shell">
@@ -405,6 +435,38 @@ function App() {
       <main className="content">
         {screen === 'predict' ? (
           <>
+            {showWcSelector ? (
+              <section className="cards">
+                <div className="card card-static">
+                  <div className="card-title">Этап турнира</div>
+                  <div className="tournament-row">
+                    {wcTopTabs.map((tab) => (
+                      <button
+                        key={tab.key}
+                        className={`tournament-chip ${stageTab === tab.key ? 'is-active' : ''}`}
+                        onClick={() => setStageTab(tab.key)}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+                  {stageTab === 'PO' ? (
+                    <div className="tournament-row">
+                      {wcPlayoffTabs.map((tab) => (
+                        <button
+                          key={tab.key}
+                          className={`tournament-chip ${playoffTab === tab.key ? 'is-active' : ''}`}
+                          onClick={() => setPlayoffTab(tab.key)}
+                        >
+                          {tab.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </section>
+            ) : null}
+
             <section className="cards">
               <div className="card">
                 <div className="card-title">
@@ -514,6 +576,38 @@ function App() {
 
         {screen === 'predictions' ? (
           <>
+            {showWcSelector ? (
+              <section className="cards">
+                <div className="card card-static">
+                  <div className="card-title">Этап турнира</div>
+                  <div className="tournament-row">
+                    {wcTopTabs.map((tab) => (
+                      <button
+                        key={tab.key}
+                        className={`tournament-chip ${stageTab === tab.key ? 'is-active' : ''}`}
+                        onClick={() => setStageTab(tab.key)}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+                  {stageTab === 'PO' ? (
+                    <div className="tournament-row">
+                      {wcPlayoffTabs.map((tab) => (
+                        <button
+                          key={tab.key}
+                          className={`tournament-chip ${playoffTab === tab.key ? 'is-active' : ''}`}
+                          onClick={() => setPlayoffTab(tab.key)}
+                        >
+                          {tab.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </section>
+            ) : null}
+
             <section className="cards">
               <div className="card">
                 <div className="card-title">

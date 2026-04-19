@@ -568,6 +568,8 @@ async def predictions_current(request: web.Request) -> web.Response:
 
             round_min = int(tournament.round_min)
             round_max = int(tournament.round_max)
+            requested_round_raw = (request.query.get("round") or "").strip()
+            requested_round = int(requested_round_raw) if requested_round_raw.isdigit() else None
 
             stage_row = (
                 await session.execute(
@@ -615,6 +617,9 @@ async def predictions_current(request: web.Request) -> web.Response:
                     if int(r.open_cnt or 0) > 0:
                         current_round = int(r.round_number)
                         break
+
+            if requested_round is not None and int(round_min) <= int(requested_round) <= int(round_max):
+                current_round = int(requested_round)
 
             matches = (
                 await session.execute(
@@ -725,6 +730,8 @@ async def predict_current(request: web.Request) -> web.Response:
         async with SessionLocal() as session:
             tournament = await _resolve_tournament(session, int(tg_user_id), requested_code=request.query.get("t"))
             await session.commit()
+            requested_round_raw = (request.query.get("round") or "").strip()
+            requested_round = int(requested_round_raw) if requested_round_raw.isdigit() else None
 
             in_tournament = (
                 await session.execute(
@@ -791,6 +798,9 @@ async def predict_current(request: web.Request) -> web.Response:
                     break
             if rounds_rows and all(int(r.open_cnt or 0) <= 0 for r in rounds_rows):
                 current_round = int(rounds_rows[-1].round_number)
+
+            if requested_round is not None and int(round_min) <= int(requested_round) <= int(round_max):
+                current_round = int(requested_round)
 
             matches = (
                 await session.execute(
