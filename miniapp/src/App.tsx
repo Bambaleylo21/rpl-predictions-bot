@@ -311,6 +311,15 @@ function App() {
   }
   const showDebugPanels = import.meta.env.DEV || import.meta.env.VITE_DEBUG_PANELS === '1'
 
+  useEffect(() => {
+    try {
+      WebApp.ready()
+      WebApp.expand()
+    } catch {
+      // no-op outside Telegram
+    }
+  }, [])
+
   const getInitData = () => {
     const tgWebApp = (window as any).Telegram?.WebApp
     return tgWebApp?.initData || WebApp.initData || ''
@@ -1048,13 +1057,11 @@ function App() {
                                 </span>
                               </div>
                               <div className="compact-note">
-                                {m.status === 'open'
+                                {m.status === 'closed'
                                   ? m.prediction
-                                    ? 'Прогноз сохранён'
-                                    : 'Без прогноза'
-                                  : m.prediction
                                     ? `Итог ${m.result || '—'} · ${m.emoji} ${m.points ?? 0}`
-                                    : `Итог ${m.result || '—'} · без прогноза`}
+                                    : `Итог ${m.result || '—'} · без прогноза`
+                                  : ''}
                               </div>
                             </div>
                           ))}

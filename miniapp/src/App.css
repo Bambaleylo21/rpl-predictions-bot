@@ -127,7 +127,7 @@
 }
 
 .content {
-  padding: 10px 14px 90px;
+  padding: 10px 14px calc(90px + env(safe-area-inset-bottom, 0px));
 }
 
 .cards {
@@ -381,7 +381,7 @@
   position: fixed;
   left: 0;
   right: 0;
-  bottom: 0;
+  bottom: env(safe-area-inset-bottom, 0px);
   z-index: 30;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
