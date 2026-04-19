@@ -604,13 +604,15 @@ function App() {
       if (!res.ok || !data.ok) {
         throw new Error(data.reason || data.error || `HTTP ${res.status}`)
       }
-      setLongtermNotice(`Сохранено: ${pickType === 'winner' ? 'Победитель' : 'Бомбардир'} — ${data.pick_value}`)
+      setLongtermNotice(null)
 
       const headers = { 'X-Telegram-Init-Data': initData }
       const reload = await fetch(`${apiBase}/api/miniapp/longterm/current?t=${tParam}`, { headers })
       const reloadData = (await reload.json()) as LongtermResponse
       if (reload.ok && reloadData.ok) {
         setLongtermData(reloadData)
+        setWinnerPickInput(reloadData.picks?.winner || '')
+        setScorerPickInput(reloadData.picks?.scorer || '')
       }
     } catch (err) {
       setLongtermNotice(`Ошибка сохранения: ${String(err)}`)
@@ -638,6 +640,28 @@ function App() {
   ]
   const showWcSelector = selectedTournamentCode === 'WC2026'
   const longtermLocked = Boolean(longtermData?.locked)
+  const winnerCurrent = (longtermData?.picks?.winner || '').trim()
+  const scorerCurrent = (longtermData?.picks?.scorer || '').trim()
+  const winnerInputNormalized = winnerPickInput.trim()
+  const scorerInputNormalized = scorerPickInput.trim()
+  const winnerDirty = winnerInputNormalized !== winnerCurrent
+  const scorerDirty = scorerInputNormalized !== scorerCurrent
+  const winnerVisualState =
+    savingLongtermType === 'winner'
+      ? 'is-saving'
+      : winnerDirty
+        ? 'is-dirty'
+        : winnerCurrent
+          ? 'is-saved'
+          : 'is-empty'
+  const scorerVisualState =
+    savingLongtermType === 'scorer'
+      ? 'is-saving'
+      : scorerDirty
+        ? 'is-dirty'
+        : scorerCurrent
+          ? 'is-saved'
+          : 'is-empty'
 
   const wcTopTabsBase: Array<{ key: '1' | '2' | '3' | 'PO'; label: string }> = [
     { key: '1', label: 'Тур 1' },
@@ -814,15 +838,12 @@ function App() {
                         ))}
                       </select>
                       <button
-                        className="save-btn"
+                        className={`save-btn longterm-save-btn ${winnerVisualState}`}
                         onClick={() => saveLongtermPick('winner')}
-                        disabled={savingLongtermType === 'winner' || longtermLocked || longtermData?.joined === false}
+                        disabled={savingLongtermType === 'winner' || longtermLocked || longtermData?.joined === false || !winnerDirty}
                       >
-                        {savingLongtermType === 'winner' ? 'Сохраняю...' : 'Сохранить'}
+                        {savingLongtermType === 'winner' ? '…' : winnerVisualState === 'is-empty' ? '' : '✓'}
                       </button>
-                    </div>
-                    <div className="card-text">
-                      Текущий прогноз: <b>{longtermData?.picks?.winner || 'не выбран'}</b>
                     </div>
                   </div>
 
@@ -842,15 +863,12 @@ function App() {
                         ))}
                       </select>
                       <button
-                        className="save-btn"
+                        className={`save-btn longterm-save-btn ${scorerVisualState}`}
                         onClick={() => saveLongtermPick('scorer')}
-                        disabled={savingLongtermType === 'scorer' || longtermLocked || longtermData?.joined === false}
+                        disabled={savingLongtermType === 'scorer' || longtermLocked || longtermData?.joined === false || !scorerDirty}
                       >
-                        {savingLongtermType === 'scorer' ? 'Сохраняю...' : 'Сохранить'}
+                        {savingLongtermType === 'scorer' ? '…' : scorerVisualState === 'is-empty' ? '' : '✓'}
                       </button>
-                    </div>
-                    <div className="card-text">
-                      Текущий прогноз: <b>{longtermData?.picks?.scorer || 'не выбран'}</b>
                     </div>
                   </div>
                 </section>
