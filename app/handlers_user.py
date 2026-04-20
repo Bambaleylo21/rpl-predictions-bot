@@ -2789,7 +2789,7 @@ def register_user_handlers(dp: Dispatcher):
     @dp.message(CommandStart())
     async def cmd_start(message: types.Message):
         # Принудительно снимаем старую reply-клавиатуру у всех пользователей.
-        await message.answer(" ", reply_markup=types.ReplyKeyboardRemove())
+        await message.answer("Обновляю интерфейс…", reply_markup=types.ReplyKeyboardRemove())
 
         async with SessionLocal() as session:
             await upsert_user_from_message(session, message)
