@@ -421,6 +421,19 @@ body {
   color: #a6bbdf;
 }
 
+.compact-note-under-score {
+  margin-top: 4px;
+  display: grid;
+  grid-template-columns: 1fr 58px 1fr 56px;
+  align-items: center;
+}
+
+.compact-note-under-score-text {
+  grid-column: 2;
+  text-align: center;
+  white-space: nowrap;
+}
+
 .compact-save-btn {
   width: 34px;
   height: 34px;

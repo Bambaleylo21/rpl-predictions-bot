@@ -1326,107 +1326,113 @@ async def profile(request: web.Request) -> web.Response:
             resolved_predictions_count = int(stats_row.resolved_predictions_count or 0)
             hits_total = int(stats_row.exact_hits or 0) + int(stats_row.diff_hits or 0) + int(stats_row.outcome_hits or 0)
             hit_rate = round((hits_total * 100.0 / resolved_predictions_count), 1) if resolved_predictions_count > 0 else 0.0
-            achievements, ach_meta = await _build_profile_achievements(
-                session=session,
-                tournament_id=int(tournament.id),
-                tg_user_id=int(target_tg_user_id),
-                missed_matches=int(missed_matches),
-            )
-            achievements_earned = sum(1 for a in achievements if bool(a.get("earned")))
-
+            tournament_code_upper = (tournament.code or "").strip().upper()
+            achievements: list[dict[str, Any]] = []
+            ach_meta: dict[str, Any] = {}
+            achievements_earned = 0
             progress_candidates: list[dict[str, Any]] = []
+            next_achievement = None
 
-            def _add_progress_candidate(
-                *,
-                key: str,
-                title: str,
-                emoji: str,
-                current: int,
-                target: int,
-                positive_only: bool = True,
-            ) -> None:
-                if current >= target:
-                    return
-                if positive_only and current <= 0:
-                    return
-                progress_candidates.append(
-                    {
-                        "key": key,
-                        "title": title,
-                        "emoji": emoji,
-                        "current": int(current),
-                        "target": int(target),
-                        "left": int(target - current),
-                    }
+            if tournament_code_upper == WC_TOURNAMENT_CODE:
+                achievements, ach_meta = await _build_profile_achievements(
+                    session=session,
+                    tournament_id=int(tournament.id),
+                    tg_user_id=int(target_tg_user_id),
+                    missed_matches=int(missed_matches),
+                )
+                achievements_earned = sum(1 for a in achievements if bool(a.get("earned")))
+
+                def _add_progress_candidate(
+                    *,
+                    key: str,
+                    title: str,
+                    emoji: str,
+                    current: int,
+                    target: int,
+                    positive_only: bool = True,
+                ) -> None:
+                    if current >= target:
+                        return
+                    if positive_only and current <= 0:
+                        return
+                    progress_candidates.append(
+                        {
+                            "key": key,
+                            "title": title,
+                            "emoji": emoji,
+                            "current": int(current),
+                            "target": int(target),
+                            "left": int(target - current),
+                        }
+                    )
+
+                _add_progress_candidate(
+                    key="streak_exact_3",
+                    title="3 счёта подряд",
+                    emoji="🎯",
+                    current=int(ach_meta.get("max_streak_exact", 0)),
+                    target=3,
+                    positive_only=True,
+                )
+                _add_progress_candidate(
+                    key="streak_exact_5",
+                    title="5 счётов подряд",
+                    emoji="🎯",
+                    current=int(ach_meta.get("max_streak_exact", 0)),
+                    target=5,
+                    positive_only=True,
+                )
+                _add_progress_candidate(
+                    key="streak_diff_3",
+                    title="3 разницы подряд",
+                    emoji="📏",
+                    current=int(ach_meta.get("max_streak_diff", 0)),
+                    target=3,
+                    positive_only=True,
+                )
+                _add_progress_candidate(
+                    key="streak_diff_5",
+                    title="5 разниц подряд",
+                    emoji="📏",
+                    current=int(ach_meta.get("max_streak_diff", 0)),
+                    target=5,
+                    positive_only=True,
+                )
+                _add_progress_candidate(
+                    key="streak_diff_10",
+                    title="10 разниц подряд",
+                    emoji="📏",
+                    current=int(ach_meta.get("max_streak_diff", 0)),
+                    target=10,
+                    positive_only=True,
+                )
+                _add_progress_candidate(
+                    key="streak_outcome_3",
+                    title="3 исхода подряд",
+                    emoji="✅",
+                    current=int(ach_meta.get("max_streak_outcome", 0)),
+                    target=3,
+                    positive_only=True,
+                )
+                _add_progress_candidate(
+                    key="streak_outcome_5",
+                    title="5 исходов подряд",
+                    emoji="✅",
+                    current=int(ach_meta.get("max_streak_outcome", 0)),
+                    target=5,
+                    positive_only=True,
+                )
+                _add_progress_candidate(
+                    key="streak_outcome_10",
+                    title="10 исходов подряд",
+                    emoji="✅",
+                    current=int(ach_meta.get("max_streak_outcome", 0)),
+                    target=10,
+                    positive_only=True,
                 )
 
-            _add_progress_candidate(
-                key="streak_exact_3",
-                title="3 счёта подряд",
-                emoji="🎯",
-                current=int(ach_meta.get("max_streak_exact", 0)),
-                target=3,
-                positive_only=True,
-            )
-            _add_progress_candidate(
-                key="streak_exact_5",
-                title="5 счётов подряд",
-                emoji="🎯",
-                current=int(ach_meta.get("max_streak_exact", 0)),
-                target=5,
-                positive_only=True,
-            )
-            _add_progress_candidate(
-                key="streak_diff_3",
-                title="3 разницы подряд",
-                emoji="📏",
-                current=int(ach_meta.get("max_streak_diff", 0)),
-                target=3,
-                positive_only=True,
-            )
-            _add_progress_candidate(
-                key="streak_diff_5",
-                title="5 разниц подряд",
-                emoji="📏",
-                current=int(ach_meta.get("max_streak_diff", 0)),
-                target=5,
-                positive_only=True,
-            )
-            _add_progress_candidate(
-                key="streak_diff_10",
-                title="10 разниц подряд",
-                emoji="📏",
-                current=int(ach_meta.get("max_streak_diff", 0)),
-                target=10,
-                positive_only=True,
-            )
-            _add_progress_candidate(
-                key="streak_outcome_3",
-                title="3 исхода подряд",
-                emoji="✅",
-                current=int(ach_meta.get("max_streak_outcome", 0)),
-                target=3,
-                positive_only=True,
-            )
-            _add_progress_candidate(
-                key="streak_outcome_5",
-                title="5 исходов подряд",
-                emoji="✅",
-                current=int(ach_meta.get("max_streak_outcome", 0)),
-                target=5,
-                positive_only=True,
-            )
-            _add_progress_candidate(
-                key="streak_outcome_10",
-                title="10 исходов подряд",
-                emoji="✅",
-                current=int(ach_meta.get("max_streak_outcome", 0)),
-                target=10,
-                positive_only=True,
-            )
-
-            progress_candidates.sort(key=lambda x: (int(x["left"]), int(x["target"])))
-            next_achievement = progress_candidates[0] if progress_candidates else None
+                progress_candidates.sort(key=lambda x: (int(x["left"]), int(x["target"])))
+                next_achievement = progress_candidates[0] if progress_candidates else None
 
             recent_form_rows = (
                 await session.execute(

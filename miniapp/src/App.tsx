@@ -1347,8 +1347,10 @@ function App() {
                                 <span className="team-name team-right">{teamWithFlag(m.away_team)}</span>
                                 <span className="result-badge">{m.prediction ? `${m.emoji} ${m.points ?? 0}` : '❌ 0'}</span>
                               </div>
-                              <div className="compact-note">
-                                Итог: {m.result || '—'}
+                              <div className="compact-note compact-note-under-score">
+                                <span className="compact-note-under-score-text">
+                                  Итог: {m.result || '—'}
+                                </span>
                               </div>
                             </div>
                           ))}
