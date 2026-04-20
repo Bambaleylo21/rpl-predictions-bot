@@ -15,6 +15,7 @@ type MeResponse = {
   selected_tournament_code?: string | null
   selected_tournament_name?: string | null
   trusted?: boolean
+  is_admin?: boolean
   note: string
 }
 
@@ -198,7 +199,45 @@ type LongtermResponse = {
   }
 }
 
-type Screen = 'predict' | 'profile' | 'table'
+type Screen = 'predict' | 'profile' | 'table' | 'admin'
+
+type AdminRound = {
+  round: number
+  round_name: string
+  total: number
+  without_result: number
+}
+
+type AdminRoundsResponse = {
+  ok: boolean
+  error?: string
+  reason?: string
+  rounds?: AdminRound[]
+  current_round?: number
+}
+
+type AdminResultItem = {
+  match_id: number
+  home_team: string
+  away_team: string
+  group_label?: string | null
+  kickoff: string
+  has_result: boolean
+  result?: string | null
+  predictions_count?: number
+}
+
+type AdminResultsCurrentResponse = {
+  ok: boolean
+  error?: string
+  reason?: string
+  round_number?: number
+  round_name?: string
+  mode?: 'open' | 'all'
+  round_total?: number
+  without_result?: number
+  items?: AdminResultItem[]
+}
 
 const ENGLAND_FLAG = String.fromCodePoint(
   0x1f3f4,
@@ -348,6 +387,18 @@ function App() {
   const [tableSortKey, setTableSortKey] = useState<'total' | 'exact' | 'diff' | 'outcome' | 'missed' | 'bonus'>('total')
   const [tableSortDir, setTableSortDir] = useState<'desc' | 'asc'>('desc')
   const [achievementsExpanded, setAchievementsExpanded] = useState<boolean>(false)
+  const [adminRounds, setAdminRounds] = useState<AdminRound[]>([])
+  const [adminRound, setAdminRound] = useState<number | null>(null)
+  const [adminMode, setAdminMode] = useState<'open' | 'all'>('open')
+  const [adminResults, setAdminResults] = useState<AdminResultItem[]>([])
+  const [adminRoundName, setAdminRoundName] = useState<string>('')
+  const [adminRoundTotal, setAdminRoundTotal] = useState<number>(0)
+  const [adminWithoutResult, setAdminWithoutResult] = useState<number>(0)
+  const [adminError, setAdminError] = useState<string | null>(null)
+  const [adminNotice, setAdminNotice] = useState<string | null>(null)
+  const [adminSavingMatchId, setAdminSavingMatchId] = useState<number | null>(null)
+  const [adminScoreInputs, setAdminScoreInputs] = useState<Record<number, string>>({})
+  const [adminRecalcLoading, setAdminRecalcLoading] = useState<boolean>(false)
 
   const selectedRoundNumber =
     selectedTournamentCode === 'WC2026'
@@ -697,16 +748,172 @@ function App() {
     }
   }
 
+  const loadAdminRounds = async (apiBase: string, initData: string, tournamentCode: string) => {
+    const headers = { 'X-Telegram-Init-Data': initData }
+    const tParam = encodeURIComponent(tournamentCode || 'RPL')
+    const res = await fetch(`${apiBase}/api/miniapp/admin/rounds?t=${tParam}`, { headers })
+    const data = (await res.json()) as AdminRoundsResponse
+    if (!res.ok || !data.ok) {
+      throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+    }
+    const rounds = data.rounds || []
+    setAdminRounds(rounds)
+    setAdminRound((prev) => prev ?? (data.current_round || rounds[0]?.round || null))
+  }
+
+  const loadAdminResults = async (
+    apiBase: string,
+    initData: string,
+    tournamentCode: string,
+    roundNumber: number,
+    mode: 'open' | 'all'
+  ) => {
+    const headers = { 'X-Telegram-Init-Data': initData }
+    const tParam = encodeURIComponent(tournamentCode || 'RPL')
+    const rParam = encodeURIComponent(String(roundNumber))
+    const res = await fetch(`${apiBase}/api/miniapp/admin/results/current?t=${tParam}&round=${rParam}&mode=${mode}`, { headers })
+    const data = (await res.json()) as AdminResultsCurrentResponse
+    if (!res.ok || !data.ok) {
+      throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+    }
+    const items = data.items || []
+    setAdminResults(items)
+    setAdminRoundName(data.round_name || '')
+    setAdminRoundTotal(data.round_total || 0)
+    setAdminWithoutResult(data.without_result || 0)
+    const nextInputs: Record<number, string> = {}
+    for (const item of items) {
+      nextInputs[item.match_id] = item.result || ''
+    }
+    setAdminScoreInputs(nextInputs)
+  }
+
+  const saveAdminResult = async (matchId: number) => {
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    const score = normalizeScore(adminScoreInputs[matchId] || '')
+    if (!score) {
+      setAdminNotice('Введи счёт в формате 2:1 или 2-1')
+      return
+    }
+    setAdminSavingMatchId(matchId)
+    setAdminNotice(null)
+    try {
+      const tParam = encodeURIComponent(selectedTournamentCode || 'RPL')
+      const res = await fetch(`${apiBase}/api/miniapp/admin/result/set?t=${tParam}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Telegram-Init-Data': initData,
+        },
+        body: JSON.stringify({ match_id: matchId, score }),
+      })
+      const data = (await res.json()) as { ok?: boolean; error?: string; reason?: string; updated_points?: number }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      setAdminNotice(`Счёт сохранён. Обновлено очков: ${data.updated_points ?? 0}`)
+      if (adminRound != null) {
+        await loadAdminResults(apiBase, initData, selectedTournamentCode, adminRound, adminMode)
+      }
+    } catch (err) {
+      setAdminNotice(`Ошибка сохранения: ${String(err)}`)
+    } finally {
+      setAdminSavingMatchId(null)
+    }
+  }
+
+  const recalcAdminRound = async () => {
+    if (adminRound == null) return
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    setAdminRecalcLoading(true)
+    setAdminNotice(null)
+    try {
+      const tParam = encodeURIComponent(selectedTournamentCode || 'RPL')
+      const res = await fetch(`${apiBase}/api/miniapp/admin/recalc_round?t=${tParam}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Telegram-Init-Data': initData,
+        },
+        body: JSON.stringify({ round_number: adminRound }),
+      })
+      const data = (await res.json()) as {
+        ok?: boolean
+        error?: string
+        reason?: string
+        matches_recalced?: number
+        updated_points?: number
+      }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      setAdminNotice(
+        `Пересчёт завершён: матчей ${data.matches_recalced ?? 0}, обновлений очков ${data.updated_points ?? 0}`
+      )
+      await loadAdminResults(apiBase, initData, selectedTournamentCode, adminRound, adminMode)
+    } catch (err) {
+      setAdminNotice(`Ошибка пересчёта: ${String(err)}`)
+    } finally {
+      setAdminRecalcLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!meData?.is_admin) {
+      setAdminRounds([])
+      setAdminRound(null)
+      setAdminResults([])
+      setAdminError(null)
+      setAdminNotice(null)
+      if (screen === 'admin') {
+        setScreen('predict')
+      }
+      return
+    }
+
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    if (!initData || !selectedTournamentCode) return
+
+    loadAdminRounds(apiBase, initData, selectedTournamentCode)
+      .then(() => setAdminError(null))
+      .catch((err) => {
+        setAdminError(String(err))
+        setAdminRounds([])
+        setAdminRound(null)
+      })
+  }, [meData?.is_admin, selectedTournamentCode])
+
+  useEffect(() => {
+    if (!meData?.is_admin || adminRound == null) return
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    if (!initData || !selectedTournamentCode) return
+
+    loadAdminResults(apiBase, initData, selectedTournamentCode, adminRound, adminMode)
+      .then(() => setAdminError(null))
+      .catch((err) => {
+        setAdminError(String(err))
+        setAdminResults([])
+      })
+  }, [meData?.is_admin, selectedTournamentCode, adminRound, adminMode])
+
   const tabMeta: Record<Screen, { title: string; subtitle: string; icon: string }> = {
     profile: { title: 'Профиль', subtitle: 'Личная статистика участника', icon: '👤' },
     predict: { title: 'Матчи', subtitle: 'Открытые и завершённые матчи в одном месте', icon: '⚽' },
     table: { title: 'Таблица', subtitle: 'Позиции участников турнира', icon: '🏆' },
+    admin: { title: 'Админ', subtitle: 'Внесение итогов и пересчёт очков', icon: '🛠️' },
   }
   const bottomTabs: Array<{ key: Screen; icon: string; label: string }> = [
     { key: 'profile', icon: '👤', label: 'Профиль' },
     { key: 'predict', icon: '⚽', label: 'Матчи' },
     { key: 'table', icon: '🏆', label: 'Таблица' },
   ]
+  if (meData?.is_admin) {
+    bottomTabs.push({ key: 'admin', icon: '🛠️', label: 'Админ' })
+  }
 
   const tournamentButtons = [
     { code: 'WC2026', icon: '⚽', label: 'WC' },
@@ -1526,6 +1733,119 @@ function App() {
           </>
         ) : null}
 
+        {screen === 'admin' ? (
+          <>
+            <section className="cards">
+              <div className="card card-static">
+                <div className="card-title">Тур для внесения итогов</div>
+                <div className="tournament-row">
+                  {adminRounds.map((r) => (
+                    <button
+                      key={r.round}
+                      className={`tournament-chip ${adminRound === r.round ? 'is-active' : ''}`}
+                      onClick={() => setAdminRound(r.round)}
+                    >
+                      {r.round_name || `Тур ${r.round}`} · {r.without_result}/{r.total}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="admin-top-row">
+                  <div className="match-toggle">
+                    <button
+                      className={`match-toggle-btn ${adminMode === 'open' ? 'is-active' : ''}`}
+                      onClick={() => setAdminMode('open')}
+                    >
+                      Без итогов
+                    </button>
+                    <button
+                      className={`match-toggle-btn ${adminMode === 'all' ? 'is-active' : ''}`}
+                      onClick={() => setAdminMode('all')}
+                    >
+                      Все
+                    </button>
+                  </div>
+
+                  <button
+                    className="admin-recalc-btn"
+                    onClick={recalcAdminRound}
+                    disabled={adminRecalcLoading || adminRound == null}
+                  >
+                    {adminRecalcLoading ? 'Пересчёт…' : 'Пересчитать тур'}
+                  </button>
+                </div>
+
+                <div className="card-text">
+                  {adminRoundName ? (
+                    <>
+                      Выбран: <b>{adminRoundName}</b> · матчей: <b>{adminRoundTotal}</b> · без итогов: <b>{adminWithoutResult}</b>
+                    </>
+                  ) : (
+                    'Выбери тур.'
+                  )}
+                  {adminError ? (
+                    <>
+                      <br />
+                      Ошибка: {adminError}
+                    </>
+                  ) : null}
+                  {adminNotice ? (
+                    <>
+                      <br />
+                      {adminNotice}
+                    </>
+                  ) : null}
+                </div>
+              </div>
+            </section>
+
+            <section className="cards space-top">
+              <div className="card compact-list-card">
+                {adminResults.length === 0 ? (
+                  <div className="card-text">Матчей для показа нет.</div>
+                ) : (
+                  adminResults.map((m) => (
+                    <div className="compact-match" key={m.match_id}>
+                      <div className="compact-meta">
+                        {m.group_label ? <span className="group-small">[{m.group_label}]</span> : <span className="group-small">—</span>}
+                        <span className="kickoff-small">{m.kickoff || '—'}</span>
+                      </div>
+                      <div className="compact-main admin-main">
+                        <span className="team-name team-left">{teamWithFlag(m.home_team)}</span>
+                        <input
+                          className="score-inline-input"
+                          value={adminScoreInputs[m.match_id] || ''}
+                          onChange={(e) =>
+                            setAdminScoreInputs((prev) => ({
+                              ...prev,
+                              [m.match_id]: formatScoreInput(e.target.value),
+                            }))
+                          }
+                          placeholder="-:-"
+                          inputMode="numeric"
+                        />
+                        <span className="team-name team-right">{teamWithFlag(m.away_team)}</span>
+                        <button
+                          className={`save-btn compact-save-btn ${
+                            normalizeScore(adminScoreInputs[m.match_id] || '') ? 'is-dirty' : 'is-empty'
+                          }`}
+                          onClick={() => saveAdminResult(m.match_id)}
+                          disabled={adminSavingMatchId === m.match_id}
+                        >
+                          {adminSavingMatchId === m.match_id ? '…' : '✓'}
+                        </button>
+                      </div>
+                      <div className="compact-note">
+                        Итог: <b>{m.result || 'не задан'}</b> · Прогнозов: <b>{m.predictions_count ?? 0}</b>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </section>
+          </>
+        ) : null}
+
         {showDebugPanels ? (
           <>
             <section className="cards space-top">
@@ -1579,7 +1899,10 @@ function App() {
         <footer className="footer-note">Статус: Mini App авторизован и получает профиль из API.</footer>
       </main>
 
-      <nav className="bottom-tabs">
+      <nav
+        className="bottom-tabs"
+        style={{ gridTemplateColumns: `repeat(${bottomTabs.length}, minmax(0, 1fr))` }}
+      >
         {bottomTabs.map((tab) => (
           <button
             key={tab.key}

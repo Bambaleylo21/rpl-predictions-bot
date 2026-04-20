@@ -15,10 +15,12 @@ from sqlalchemy import case, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+from app.config import load_admin_ids
 from app.db import SessionLocal, init_db
 from app.display import display_round_name
 from app.league_table import build_active_stage_league_table
 from app.models import League, LeagueParticipant, LongtermPrediction, Match, Point, Prediction, Setting, Stage, Tournament, User, UserTournament
+from app.scoring import calculate_points
 
 logger = logging.getLogger(__name__)
 MSK_TZ = timezone(timedelta(hours=3))
@@ -26,6 +28,7 @@ DEFAULT_TOURNAMENT_CODE = "RPL"
 WC_TOURNAMENT_CODE = "WC2026"
 TOURNAMENT_SELECTED_KEY_PREFIX = "TOURNAMENT_SELECTED_U"
 LONGTERM_TYPES = ("winner", "scorer")
+ADMIN_IDS = load_admin_ids()
 WC_TOP_SCORER_OPTIONS = [
     "Килиан Мбаппе",
     "Эрлинг Холанд",
@@ -282,6 +285,25 @@ def _extract_verified_user(request: web.Request) -> tuple[dict[str, Any], dict[s
     return payload, user if isinstance(user, dict) else {}
 
 
+def _extract_verified_admin_user(request: web.Request) -> tuple[dict[str, Any], dict[str, Any]] | tuple[None, web.Response]:
+    auth_result = _extract_verified_user(request)
+    if auth_result[0] is None:
+        return auth_result
+    payload, user = auth_result
+    tg_user_id = user.get("id") if isinstance(user, dict) else None
+    if not tg_user_id or int(tg_user_id) not in ADMIN_IDS:
+        return None, web.json_response(
+            {
+                "ok": False,
+                "error": "forbidden",
+                "reason": "admin_required",
+                "signature_checked": True,
+            },
+            status=403,
+        )
+    return payload, user
+
+
 async def health(_request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "service": "miniapp-api"})
 
@@ -317,9 +339,352 @@ async def me(request: web.Request) -> web.Response:
             "trusted": True,
             "selected_tournament_code": selected_tournament_code,
             "selected_tournament_name": selected_tournament_name,
+            "is_admin": bool(tg_user_id and int(tg_user_id) in ADMIN_IDS),
             "note": "Telegram initData signature is valid.",
         }
     )
+
+
+def _parse_score_text(raw: str | None) -> tuple[int, int] | None:
+    s = str(raw or "").strip().replace("-", ":")
+    if ":" not in s:
+        return None
+    left, right = s.split(":", 1)
+    if not left.isdigit() or not right.isdigit():
+        return None
+    return int(left), int(right)
+
+
+async def _recalc_points_for_match_in_session(session, match_id: int) -> int:
+    updates = 0
+    match = (await session.execute(select(Match).where(Match.id == int(match_id)))).scalar_one_or_none()
+    if match is None or match.home_score is None or match.away_score is None:
+        return 0
+
+    preds = (await session.execute(select(Prediction).where(Prediction.match_id == int(match_id)))).scalars().all()
+    for p in preds:
+        calc = calculate_points(
+            pred_home=int(p.pred_home),
+            pred_away=int(p.pred_away),
+            real_home=int(match.home_score),
+            real_away=int(match.away_score),
+        )
+        point = (
+            await session.execute(
+                select(Point).where(
+                    Point.match_id == int(match_id),
+                    Point.tg_user_id == int(p.tg_user_id),
+                )
+            )
+        ).scalar_one_or_none()
+        if point is None:
+            session.add(
+                Point(
+                    match_id=int(match_id),
+                    tg_user_id=int(p.tg_user_id),
+                    points=int(calc.points),
+                    category=str(calc.category),
+                )
+            )
+            updates += 1
+        elif int(point.points or 0) != int(calc.points) or str(point.category or "") != str(calc.category):
+            point.points = int(calc.points)
+            point.category = str(calc.category)
+            updates += 1
+    return updates
+
+
+async def admin_rounds(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_admin_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = int(user.get("id"))
+
+        async with SessionLocal() as session:
+            tournament = await _resolve_tournament(session, tg_user_id, requested_code=request.query.get("t"))
+            rows = (
+                await session.execute(
+                    select(
+                        Match.round_number,
+                        func.count(Match.id).label("total_cnt"),
+                        func.sum(case(((Match.home_score.is_(None)) | (Match.away_score.is_(None)), 1), else_=0)).label(
+                            "without_result_cnt"
+                        ),
+                    )
+                    .where(
+                        Match.tournament_id == int(tournament.id),
+                        Match.is_placeholder == 0,
+                    )
+                    .group_by(Match.round_number)
+                    .order_by(Match.round_number.asc())
+                )
+            ).all()
+            await session.commit()
+
+        rounds = []
+        current_round = int(tournament.round_min)
+        if rows:
+            current_round = int(rows[-1].round_number)
+            for r in rows:
+                if int(r.without_result_cnt or 0) > 0:
+                    current_round = int(r.round_number)
+                    break
+            for r in rows:
+                rounds.append(
+                    {
+                        "round": int(r.round_number),
+                        "round_name": display_round_name(tournament.code, int(r.round_number)),
+                        "total": int(r.total_cnt or 0),
+                        "without_result": int(r.without_result_cnt or 0),
+                    }
+                )
+
+        return web.json_response(
+            {
+                "ok": True,
+                "trusted": True,
+                "is_admin": True,
+                "tournament_code": tournament.code,
+                "tournament_name": tournament.name,
+                "current_round": current_round,
+                "rounds": rounds,
+            }
+        )
+    except Exception as e:
+        logger.exception("miniapp admin_rounds error")
+        return web.json_response(
+            {"ok": False, "error": "admin_rounds_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
+async def admin_results_current(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_admin_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = int(user.get("id"))
+
+        requested_round_raw = (request.query.get("round") or "").strip()
+        requested_round = int(requested_round_raw) if requested_round_raw.isdigit() else None
+        mode = (request.query.get("mode") or "open").strip().lower()
+        if mode not in ("open", "all"):
+            mode = "open"
+
+        async with SessionLocal() as session:
+            tournament = await _resolve_tournament(session, tg_user_id, requested_code=request.query.get("t"))
+
+            rounds_rows = (
+                await session.execute(
+                    select(
+                        Match.round_number,
+                        func.sum(case(((Match.home_score.is_(None)) | (Match.away_score.is_(None)), 1), else_=0)).label(
+                            "without_result_cnt"
+                        ),
+                    )
+                    .where(
+                        Match.tournament_id == int(tournament.id),
+                        Match.is_placeholder == 0,
+                    )
+                    .group_by(Match.round_number)
+                    .order_by(Match.round_number.asc())
+                )
+            ).all()
+
+            current_round = int(tournament.round_min)
+            if rounds_rows:
+                current_round = int(rounds_rows[-1].round_number)
+                for r in rounds_rows:
+                    if int(r.without_result_cnt or 0) > 0:
+                        current_round = int(r.round_number)
+                        break
+            if requested_round is not None:
+                current_round = int(requested_round)
+
+            filters = [
+                Match.tournament_id == int(tournament.id),
+                Match.round_number == int(current_round),
+                Match.is_placeholder == 0,
+            ]
+            if mode == "open":
+                filters.append((Match.home_score.is_(None)) | (Match.away_score.is_(None)))
+
+            matches = (
+                await session.execute(
+                    select(Match)
+                    .where(*filters)
+                    .order_by(Match.kickoff_time.asc(), Match.id.asc())
+                )
+            ).scalars().all()
+
+            round_total_q = await session.execute(
+                select(func.count(Match.id)).where(
+                    Match.tournament_id == int(tournament.id),
+                    Match.round_number == int(current_round),
+                    Match.is_placeholder == 0,
+                )
+            )
+            round_total = int(round_total_q.scalar_one() or 0)
+            without_result_q = await session.execute(
+                select(func.count(Match.id)).where(
+                    Match.tournament_id == int(tournament.id),
+                    Match.round_number == int(current_round),
+                    Match.is_placeholder == 0,
+                    ((Match.home_score.is_(None)) | (Match.away_score.is_(None))),
+                )
+            )
+            without_result = int(without_result_q.scalar_one() or 0)
+
+            items = []
+            for m in matches:
+                preds_cnt_q = await session.execute(select(func.count(Prediction.id)).where(Prediction.match_id == int(m.id)))
+                preds_cnt = int(preds_cnt_q.scalar_one() or 0)
+                has_result = m.home_score is not None and m.away_score is not None
+                items.append(
+                    {
+                        "match_id": int(m.id),
+                        "home_team": str(m.home_team),
+                        "away_team": str(m.away_team),
+                        "group_label": m.group_label,
+                        "kickoff": m.kickoff_time.strftime("%d.%m %H:%M"),
+                        "has_result": bool(has_result),
+                        "result": f"{int(m.home_score)}:{int(m.away_score)}" if has_result else None,
+                        "predictions_count": preds_cnt,
+                    }
+                )
+
+            await session.commit()
+
+        return web.json_response(
+            {
+                "ok": True,
+                "trusted": True,
+                "is_admin": True,
+                "tournament_code": tournament.code,
+                "tournament_name": tournament.name,
+                "round_number": int(current_round),
+                "round_name": display_round_name(tournament.code, int(current_round)),
+                "mode": mode,
+                "round_total": round_total,
+                "without_result": without_result,
+                "items": items,
+            }
+        )
+    except Exception as e:
+        logger.exception("miniapp admin_results_current error")
+        return web.json_response(
+            {"ok": False, "error": "admin_results_current_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
+async def admin_result_set(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_admin_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = int(user.get("id"))
+
+        body = await request.json()
+        match_id = int(body.get("match_id") or 0)
+        score = _parse_score_text(body.get("score"))
+        if match_id <= 0 or score is None:
+            return web.json_response({"ok": False, "error": "invalid_payload"}, status=400)
+
+        home_score, away_score = score
+        async with SessionLocal() as session:
+            tournament = await _resolve_tournament(session, tg_user_id, requested_code=request.query.get("t"))
+            match = (
+                await session.execute(
+                    select(Match).where(
+                        Match.id == int(match_id),
+                        Match.tournament_id == int(tournament.id),
+                        Match.is_placeholder == 0,
+                    )
+                )
+            ).scalar_one_or_none()
+            if match is None:
+                return web.json_response({"ok": False, "error": "match_not_found"}, status=404)
+
+            match.home_score = int(home_score)
+            match.away_score = int(away_score)
+            updates = await _recalc_points_for_match_in_session(session, int(match.id))
+            await session.commit()
+
+        return web.json_response(
+            {
+                "ok": True,
+                "trusted": True,
+                "is_admin": True,
+                "match_id": int(match_id),
+                "result": f"{int(home_score)}:{int(away_score)}",
+                "updated_points": int(updates),
+            }
+        )
+    except (ValueError, TypeError):
+        return web.json_response({"ok": False, "error": "invalid_payload"}, status=400)
+    except Exception as e:
+        logger.exception("miniapp admin_result_set error")
+        return web.json_response(
+            {"ok": False, "error": "admin_result_set_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
+async def admin_recalc_round(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_admin_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = int(user.get("id"))
+
+        body = await request.json()
+        round_number = int(body.get("round_number") or 0)
+        if round_number <= 0:
+            return web.json_response({"ok": False, "error": "round_required"}, status=400)
+
+        async with SessionLocal() as session:
+            tournament = await _resolve_tournament(session, tg_user_id, requested_code=request.query.get("t"))
+            matches = (
+                await session.execute(
+                    select(Match.id).where(
+                        Match.tournament_id == int(tournament.id),
+                        Match.round_number == int(round_number),
+                        Match.is_placeholder == 0,
+                        Match.home_score.is_not(None),
+                        Match.away_score.is_not(None),
+                    )
+                )
+            ).all()
+
+            total_updates = 0
+            for (mid,) in matches:
+                total_updates += int(await _recalc_points_for_match_in_session(session, int(mid)))
+            await session.commit()
+
+        return web.json_response(
+            {
+                "ok": True,
+                "trusted": True,
+                "is_admin": True,
+                "round_number": int(round_number),
+                "matches_recalced": int(len(matches)),
+                "updated_points": int(total_updates),
+            }
+        )
+    except (ValueError, TypeError):
+        return web.json_response({"ok": False, "error": "invalid_payload"}, status=400)
+    except Exception as e:
+        logger.exception("miniapp admin_recalc_round error")
+        return web.json_response(
+            {"ok": False, "error": "admin_recalc_round_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
 
 
 async def tournaments_list(request: web.Request) -> web.Response:
@@ -2051,6 +2416,10 @@ def build_app() -> web.Application:
     app.router.add_post("/api/miniapp/predict/set", predict_set)
     app.router.add_get("/api/miniapp/longterm/current", longterm_current)
     app.router.add_post("/api/miniapp/longterm/set", longterm_set)
+    app.router.add_get("/api/miniapp/admin/rounds", admin_rounds)
+    app.router.add_get("/api/miniapp/admin/results/current", admin_results_current)
+    app.router.add_post("/api/miniapp/admin/result/set", admin_result_set)
+    app.router.add_post("/api/miniapp/admin/recalc_round", admin_recalc_round)
     return app
 
 

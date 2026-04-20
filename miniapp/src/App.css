@@ -355,6 +355,10 @@ body {
   grid-template-columns: 1fr 58px 1fr 56px;
 }
 
+.admin-main {
+  grid-template-columns: 1fr 58px 1fr 34px;
+}
+
 .team-name {
   font-size: 15px;
   color: #e5edff;
@@ -479,6 +483,29 @@ body {
   color: #e8eefb;
   padding: 8px 10px;
   cursor: pointer;
+}
+
+.admin-top-row {
+  margin-top: 10px;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.admin-recalc-btn {
+  border: 1px solid #2f4777;
+  border-radius: 10px;
+  background: #1d3d78;
+  color: #e8eefb;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.admin-recalc-btn:disabled {
+  opacity: 0.6;
 }
 
 .card-title {
