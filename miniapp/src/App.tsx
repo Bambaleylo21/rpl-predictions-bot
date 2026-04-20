@@ -426,6 +426,7 @@ function App() {
     let attempts = 0
     const maxAttempts = 8
     let timerId: ReturnType<typeof setTimeout> | null = null
+    const appBg = '#0b1220'
 
     const expandNow = () => {
       try {
@@ -437,6 +438,13 @@ function App() {
 
     try {
       WebApp.ready()
+      try {
+        WebApp.setBackgroundColor(appBg as any)
+        WebApp.setHeaderColor(appBg as any)
+        ;(WebApp as any).setBottomBarColor?.(appBg)
+      } catch {
+        // no-op for clients without these methods
+      }
       expandNow()
 
       const loopExpand = () => {
@@ -986,9 +994,6 @@ function App() {
     }
     return Object.entries(grouped)
   })()
-  const openMatchesCount = predictData?.items?.length ?? 0
-  const closedMatchesCount = closedPredictionItems.length
-
   useEffect(() => {
     if (stageTab === 'LT' && !allowLongtermTab) {
       setStageTab('1')
@@ -1060,7 +1065,6 @@ function App() {
       <header className="topbar sticky">
         <div className="topbar-row">
           <div>
-            <div className="badge">РПЛ Mini App</div>
             <h1>{tabMeta[screen].icon} {tabMeta[screen].title}</h1>
             <p>{tabMeta[screen].subtitle}</p>
           </div>
@@ -1237,38 +1241,31 @@ function App() {
               </>
             ) : (
               <>
-                <section className="cards">
-                  <div className="card">
-                    <div className="card-title">
-                      {predictData?.tournament || predictionsData?.tournament || selectedTournamentCode} · {predictData?.round_name || predictionsData?.round_name || `Тур ${predictData?.round_number ?? predictionsData?.round_number ?? '—'}`}
+                {(predictError || predictionsError || predictNotice || (!predictData || !predictionsData) || (predictData?.joined === false)) ? (
+                  <section className="cards">
+                    <div className="card">
+                      <div className="card-text">
+                        {predictError || predictionsError ? (
+                          <>
+                            {predictError ? `Ошибка активных матчей: ${predictError}` : null}
+                            {predictError && predictionsError ? <br /> : null}
+                            {predictionsError ? `Ошибка завершённых матчей: ${predictionsError}` : null}
+                          </>
+                        ) : !predictData || !predictionsData ? (
+                          'Загружаю матчи...'
+                        ) : predictData.joined === false ? (
+                          predictData.message || 'Нужно вступить в турнир, чтобы ставить прогнозы.'
+                        ) : null}
+                        {predictNotice ? (
+                          <>
+                            <br />
+                            {predictNotice}
+                          </>
+                        ) : null}
+                      </div>
                     </div>
-                    <div className="card-text">
-                      {predictError || predictionsError ? (
-                        <>
-                          {predictError ? `Ошибка активных матчей: ${predictError}` : null}
-                          {predictError && predictionsError ? <br /> : null}
-                          {predictionsError ? `Ошибка завершённых матчей: ${predictionsError}` : null}
-                        </>
-                      ) : !predictData || !predictionsData ? (
-                        'Загружаю матчи...'
-                      ) : predictData.joined === false ? (
-                        predictData.message || 'Нужно вступить в турнир, чтобы ставить прогнозы.'
-                      ) : (
-                        <>
-                          Открытых матчей: <b>{openMatchesCount}</b> · Завершённых: <b>{closedMatchesCount}</b>
-                          <br />
-                          Очки по завершённым: <b>{predictionsData.total_points_closed ?? 0}</b>
-                        </>
-                      )}
-                      {predictNotice ? (
-                        <>
-                          <br />
-                          {predictNotice}
-                        </>
-                      ) : null}
-                    </div>
-                  </div>
-                </section>
+                  </section>
+                ) : null}
 
                 <section className="cards space-top">
                   {predictionsFilter === 'open' ? (

@@ -23,7 +23,7 @@ body {
   position: sticky;
   top: 0;
   z-index: 20;
-  background: rgba(11, 18, 32, 0.92);
+  background: #0b1220;
   backdrop-filter: blur(8px);
   border-bottom: 1px solid rgba(56, 86, 141, 0.45);
 }
@@ -871,7 +871,7 @@ body {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 4px;
   padding: 6px 8px;
-  background: rgba(10, 16, 28, 0.96);
+  background: #0b1220;
   backdrop-filter: blur(10px);
   border-top: 1px solid rgba(56, 86, 141, 0.45);
 }
