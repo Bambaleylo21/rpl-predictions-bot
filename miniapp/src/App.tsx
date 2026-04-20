@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import './App.css'
 import WebApp from '@twa-dev/sdk'
+import wcActiveIcon from './assets/tournaments/wc-active.png'
+import wcInactiveIcon from './assets/tournaments/wc-inactive.png'
+import rplActiveIcon from './assets/tournaments/rpl-active.png'
+import rplInactiveIcon from './assets/tournaments/rpl-inactive.png'
 
 type MeResponse = {
   ok: boolean
@@ -916,8 +920,8 @@ function App() {
   }
 
   const tournamentButtons = [
-    { code: 'WC2026', icon: '⚽', label: 'WC' },
-    { code: 'RPL', icon: '🏆', label: 'РПЛ' },
+    { code: 'WC2026', label: 'WC', activeIcon: wcActiveIcon, inactiveIcon: wcInactiveIcon },
+    { code: 'RPL', label: 'РПЛ', activeIcon: rplActiveIcon, inactiveIcon: rplInactiveIcon },
   ]
   const showWcSelector = selectedTournamentCode === 'WC2026'
   const longtermLocked = Boolean(longtermData?.locked)
@@ -1069,7 +1073,10 @@ function App() {
                   onClick={() => selectTournament(t.code)}
                   title={t.label}
                 >
-                  <span>{t.icon}</span>
+                  <img
+                    src={selectedTournamentCode === t.code ? t.activeIcon : t.inactiveIcon}
+                    alt={t.label}
+                  />
                   <small>{t.label}</small>
                 </button>
               ))}

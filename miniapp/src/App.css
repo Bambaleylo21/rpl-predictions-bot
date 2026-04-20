@@ -113,9 +113,11 @@ body {
   opacity: 0.55;
 }
 
-.tournament-icon span {
-  font-size: 18px;
-  line-height: 1;
+.tournament-icon img {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  display: block;
 }
 
 .tournament-icon small {
