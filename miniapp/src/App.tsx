@@ -1176,10 +1176,14 @@ function App() {
               ) : profileData.joined ? (
                 <>
                   <div className="profile-hero">
-                    {profileData.photo_url || tgPhotoUrl ? (
+                    {(() => {
+                      const avatarSrc =
+                        profileData.photo_url ||
+                        (profileData.is_self_profile !== false ? tgPhotoUrl : null)
+                      return avatarSrc ? (
                       <img
                         className={`profile-avatar ${profileData.place === 1 ? 'is-top-1' : ''}`}
-                        src={profileData.photo_url || tgPhotoUrl || ''}
+                        src={avatarSrc}
                         alt="avatar"
                       />
                     ) : (
@@ -1189,7 +1193,7 @@ function App() {
                           return name.slice(0, 2).toUpperCase()
                         })()}
                       </div>
-                    )}
+                    )})()}
                     <div className="profile-hero-meta">
                       <div className="profile-name">
                         {profileData.display_name || (tgUsername ? `@${tgUsername}` : `ID ${tgUserId ?? '—'}`)}
