@@ -736,9 +736,29 @@ async def profile(request: web.Request) -> web.Response:
             tournament = await _resolve_tournament(session, int(tg_user_id), requested_code=request.query.get("t"))
             await session.commit()
 
+            target_user_raw = (request.query.get("target_user_id") or "").strip()
+            target_tg_user_id = int(tg_user_id)
+            if target_user_raw.isdigit():
+                candidate = int(target_user_raw)
+                if candidate > 0:
+                    target_tg_user_id = candidate
+
+            # Просмотр чужого профиля разрешаем только для участника выбранного турнира.
+            if int(target_tg_user_id) != int(tg_user_id):
+                target_participant = (
+                    await session.execute(
+                        select(UserTournament).where(
+                            UserTournament.tg_user_id == int(target_tg_user_id),
+                            UserTournament.tournament_id == int(tournament.id),
+                        )
+                    )
+                ).scalar_one_or_none()
+                if target_participant is None:
+                    target_tg_user_id = int(tg_user_id)
+
             user_row = (
                 await session.execute(
-                    select(User).where(User.tg_user_id == int(tg_user_id))
+                    select(User).where(User.tg_user_id == int(target_tg_user_id))
                 )
             ).scalar_one_or_none()
 
@@ -750,9 +770,11 @@ async def profile(request: web.Request) -> web.Response:
                         "joined": False,
                         "tournament_code": tournament.code,
                         "tournament_name": tournament.name,
-                        "tg_user_id": int(tg_user_id),
+                        "tg_user_id": int(target_tg_user_id),
+                        "viewed_tg_user_id": int(target_tg_user_id),
+                        "is_self_profile": int(target_tg_user_id) == int(tg_user_id),
                         "display_name": user.get("first_name") or user.get("username") or f"id:{tg_user_id}",
-                        "photo_url": user.get("photo_url"),
+                        "photo_url": user.get("photo_url") if int(target_tg_user_id) == int(tg_user_id) else None,
                         "message": "Пользователь есть в Telegram, но ещё не вступил в турнир бота.",
                     }
                 )
@@ -760,7 +782,7 @@ async def profile(request: web.Request) -> web.Response:
             user_tournament_row = (
                 await session.execute(
                     select(UserTournament).where(
-                        UserTournament.tg_user_id == int(tg_user_id),
+                        UserTournament.tg_user_id == int(target_tg_user_id),
                         UserTournament.tournament_id == int(tournament.id),
                     )
                 )
@@ -773,9 +795,11 @@ async def profile(request: web.Request) -> web.Response:
                         "joined": False,
                         "tournament_code": tournament.code,
                         "tournament_name": tournament.name,
-                        "tg_user_id": int(tg_user_id),
+                        "tg_user_id": int(target_tg_user_id),
+                        "viewed_tg_user_id": int(target_tg_user_id),
+                        "is_self_profile": int(target_tg_user_id) == int(tg_user_id),
                         "display_name": user.get("first_name") or user.get("username") or f"id:{tg_user_id}",
-                        "photo_url": user.get("photo_url"),
+                        "photo_url": user.get("photo_url") if int(target_tg_user_id) == int(tg_user_id) else None,
                         "message": f"Ты ещё не вступил в турнир «{tournament.name}».",
                     }
                 )
@@ -796,7 +820,7 @@ async def profile(request: web.Request) -> web.Response:
                         Point,
                         (Point.tg_user_id == User.tg_user_id) & (Point.match_id == Prediction.match_id),
                     )
-                    .where(User.tg_user_id == int(tg_user_id))
+                    .where(User.tg_user_id == int(target_tg_user_id))
                     .where(Match.tournament_id == int(tournament.id))
                 )
             ).one()
@@ -816,7 +840,7 @@ async def profile(request: web.Request) -> web.Response:
                 .select_from(Prediction)
                 .join(Match, Match.id == Prediction.match_id)
                 .where(
-                    Prediction.tg_user_id == int(tg_user_id),
+                    Prediction.tg_user_id == int(target_tg_user_id),
                     Match.tournament_id == int(tournament.id),
                     Match.is_placeholder == 0,
                     Match.kickoff_time <= now,
@@ -856,7 +880,7 @@ async def profile(request: web.Request) -> web.Response:
                     .join(League, League.id == LeagueParticipant.league_id)
                     .join(Stage, Stage.id == LeagueParticipant.stage_id)
                     .where(
-                        LeagueParticipant.tg_user_id == int(tg_user_id),
+                        LeagueParticipant.tg_user_id == int(target_tg_user_id),
                         LeagueParticipant.is_active == 1,
                         Stage.is_active == 1,
                     )
@@ -992,11 +1016,11 @@ async def profile(request: web.Request) -> web.Response:
                     .select_from(Match)
                     .outerjoin(
                         Prediction,
-                        (Prediction.match_id == Match.id) & (Prediction.tg_user_id == int(tg_user_id)),
+                        (Prediction.match_id == Match.id) & (Prediction.tg_user_id == int(target_tg_user_id)),
                     )
                     .outerjoin(
                         Point,
-                        (Point.match_id == Match.id) & (Point.tg_user_id == int(tg_user_id)),
+                        (Point.match_id == Match.id) & (Point.tg_user_id == int(target_tg_user_id)),
                     )
                     .where(
                         Match.tournament_id == int(tournament.id),
@@ -1026,19 +1050,19 @@ async def profile(request: web.Request) -> web.Response:
                 )
 
             if (tournament.code or "").strip().upper() == DEFAULT_TOURNAMENT_CODE:
-                table_rows, table_meta = await build_active_stage_league_table(int(tg_user_id))
+                table_rows, table_meta = await build_active_stage_league_table(int(target_tg_user_id))
                 user_place = next(
-                    (int(r.get("place", 0)) for r in table_rows if int(r.get("tg_user_id", 0)) == int(tg_user_id)),
+                    (int(r.get("place", 0)) for r in table_rows if int(r.get("tg_user_id", 0)) == int(target_tg_user_id)),
                     None,
                 ) if table_meta is not None else None
                 participants = int(table_meta.participants) if table_meta is not None else 0
             else:
                 rows, participants = await _build_overall_table_rows(session, int(tournament.id))
-                user_place = next((int(r["place"]) for r in rows if int(r["tg_user_id"]) == int(tg_user_id)), None)
+                user_place = next((int(r["place"]) for r in rows if int(r["tg_user_id"]) == int(target_tg_user_id)), None)
 
             tournament_history = await _build_profile_tournament_history(
                 session=session,
-                tg_user_id=int(tg_user_id),
+                tg_user_id=int(target_tg_user_id),
                 current_tournament_id=int(tournament.id),
             )
 
@@ -1049,10 +1073,12 @@ async def profile(request: web.Request) -> web.Response:
                     "joined": True,
                     "tournament_code": tournament.code,
                     "tournament_name": tournament.name,
-                    "tg_user_id": int(tg_user_id),
+                    "tg_user_id": int(target_tg_user_id),
+                    "viewed_tg_user_id": int(target_tg_user_id),
+                    "is_self_profile": int(target_tg_user_id) == int(tg_user_id),
                     "display_name": display_name,
                     "username": user_row.username,
-                    "photo_url": user.get("photo_url"),
+                    "photo_url": user.get("photo_url") if int(target_tg_user_id) == int(tg_user_id) else None,
                     "predictions_count": predictions_count,
                     "total_points": int(stats_row.total_points or 0) + int(user_tournament_row.bonus_points or 0),
                     "exact_hits": int(stats_row.exact_hits or 0),
@@ -1935,6 +1961,7 @@ async def table_current(request: web.Request) -> web.Response:
                     "user_place": user_place,
                     "rows": [
                         {
+                            "tg_user_id": int(r.get("tg_user_id", 0)),
                             "place": int(r.get("place", 0)),
                             "name": str(r.get("name", "")),
                             "total": int(r.get("total", 0)),

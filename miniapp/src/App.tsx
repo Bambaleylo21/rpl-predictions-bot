@@ -27,6 +27,8 @@ type ProfileResponse = {
   tournament_code?: string
   tournament_name?: string
   tg_user_id?: number
+  viewed_tg_user_id?: number
+  is_self_profile?: boolean
   display_name?: string
   username?: string | null
   photo_url?: string | null
@@ -147,6 +149,7 @@ type TableResponse = {
   participants?: number
   user_place?: number | null
   rows?: Array<{
+    tg_user_id?: number
     place: number
     name: string
     total: number
@@ -338,6 +341,7 @@ function App() {
   const [selectedTournamentCode, setSelectedTournamentCode] = useState<string>('WC2026')
   const [tournamentNotice, setTournamentNotice] = useState<string | null>(null)
   const [predictionsFilter, setPredictionsFilter] = useState<'open' | 'closed'>('open')
+  const [profileTargetUserId, setProfileTargetUserId] = useState<number | null>(null)
   const [stageTab, setStageTab] = useState<'1' | '2' | '3' | 'PO' | 'LT'>('1')
   const [playoffTab, setPlayoffTab] = useState<4 | 5 | 6 | 7 | 8 | 9>(4)
   const [tableRoundFilter, setTableRoundFilter] = useState<'ALL' | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9>('ALL')
@@ -498,8 +502,10 @@ function App() {
       'X-Telegram-Init-Data': initData,
     }
     const tParam = encodeURIComponent(selectedTournamentCode || 'RPL')
+    const targetParam =
+      profileTargetUserId != null ? `&target_user_id=${encodeURIComponent(String(profileTargetUserId))}` : ''
 
-    fetch(`${apiBase}/api/miniapp/profile?t=${tParam}`, { headers })
+    fetch(`${apiBase}/api/miniapp/profile?t=${tParam}${targetParam}`, { headers })
       .then(async (res) => {
         const data = (await res.json()) as ProfileResponse
         if (!res.ok) {
@@ -511,6 +517,18 @@ function App() {
       .catch((err) => {
         setProfileError(String(err))
       })
+  }, [selectedTournamentCode, profileTargetUserId])
+
+  useEffect(() => {
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    if (!initData) {
+      return
+    }
+    const headers = {
+      'X-Telegram-Init-Data': initData,
+    }
+    const tParam = encodeURIComponent(selectedTournamentCode || 'RPL')
 
     const rParam = selectedRoundNumber != null ? `&round=${encodeURIComponent(String(selectedRoundNumber))}` : ''
 
@@ -587,6 +605,7 @@ function App() {
       }
       const nextCode = data.selected_tournament_code || code
       setSelectedTournamentCode(nextCode)
+      setProfileTargetUserId(null)
       setTournamentNotice(`Выбран турнир: ${nextCode}`)
     } catch (err) {
       setTournamentNotice(`Ошибка выбора турнира: ${String(err)}`)
@@ -1139,6 +1158,17 @@ function App() {
         {screen === 'profile' ? (
           <section className="cards">
             <div className="card">
+              {profileData?.joined && profileData.is_self_profile === false ? (
+                <button
+                  className="profile-back-btn"
+                  onClick={() => {
+                    setScreen('table')
+                    setProfileTargetUserId(null)
+                  }}
+                >
+                  ← К таблице
+                </button>
+              ) : null}
               {profileError ? (
                 <div className="card-text">Ошибка загрузки профиля: {profileError}</div>
               ) : !profileData ? (
@@ -1439,7 +1469,21 @@ function App() {
                         key={`${r.place}-${r.name}`}
                       >
                         <div className="col-place">{r.place}</div>
-                        <div className="col-name col-name-text">{r.name}</div>
+                        <div className="col-name col-name-text">
+                          {r.tg_user_id ? (
+                            <button
+                              className="table-name-btn"
+                              onClick={() => {
+                                setProfileTargetUserId(r.tg_user_id || null)
+                                setScreen('profile')
+                              }}
+                            >
+                              {r.name}
+                            </button>
+                          ) : (
+                            r.name
+                          )}
+                        </div>
                         <div className="col-num">{r.total}</div>
                         <div className="col-num">{r.exact}</div>
                         <div className="col-num">{r.diff}</div>
@@ -1536,7 +1580,12 @@ function App() {
           <button
             key={tab.key}
             className={`tab-btn ${screen === tab.key ? 'is-active' : ''}`}
-            onClick={() => setScreen(tab.key)}
+            onClick={() => {
+              if (tab.key === 'profile') {
+                setProfileTargetUserId(null)
+              }
+              setScreen(tab.key)
+            }}
             aria-label={tab.label}
           >
             <span className="tab-icon">{tab.icon}</span>
