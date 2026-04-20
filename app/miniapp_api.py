@@ -1221,6 +1221,18 @@ async def profile(request: web.Request) -> web.Response:
                 await session.execute(
                     select(
                         func.count(Prediction.id).label("predictions_count"),
+                        func.coalesce(
+                            func.sum(
+                                case(
+                                    (
+                                        (Match.home_score.is_not(None)) & (Match.away_score.is_not(None)),
+                                        1,
+                                    ),
+                                    else_=0,
+                                )
+                            ),
+                            0,
+                        ).label("resolved_predictions_count"),
                         func.coalesce(func.sum(Point.points), 0).label("total_points"),
                         func.coalesce(func.sum(case((Point.category == "exact", 1), else_=0)), 0).label("exact_hits"),
                         func.coalesce(func.sum(case((Point.category == "diff", 1), else_=0)), 0).label("diff_hits"),
@@ -1311,8 +1323,9 @@ async def profile(request: web.Request) -> web.Response:
             )
 
             predictions_count = int(stats_row.predictions_count or 0)
+            resolved_predictions_count = int(stats_row.resolved_predictions_count or 0)
             hits_total = int(stats_row.exact_hits or 0) + int(stats_row.diff_hits or 0) + int(stats_row.outcome_hits or 0)
-            hit_rate = round((hits_total * 100.0 / predictions_count), 1) if predictions_count > 0 else 0.0
+            hit_rate = round((hits_total * 100.0 / resolved_predictions_count), 1) if resolved_predictions_count > 0 else 0.0
             achievements, ach_meta = await _build_profile_achievements(
                 session=session,
                 tournament_id=int(tournament.id),
