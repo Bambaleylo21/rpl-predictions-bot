@@ -58,6 +58,7 @@ async def _apply_postgres_schema_fixes(conn) -> None:
         # users
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMP NOT NULL DEFAULT NOW()",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name VARCHAR(64)",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS photo_url VARCHAR(512)",
         "ALTER TABLE users ALTER COLUMN created_at SET DEFAULT NOW()",
         "UPDATE users SET created_at = NOW() WHERE created_at IS NULL",
 
@@ -139,6 +140,7 @@ async def _apply_sqlite_schema_fixes(conn) -> None:
         "ALTER TABLE matches ADD COLUMN group_label VARCHAR(32)",
         "ALTER TABLE matches ADD COLUMN is_placeholder INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE users ADD COLUMN display_name VARCHAR(64)",
+        "ALTER TABLE users ADD COLUMN photo_url VARCHAR(512)",
         "UPDATE matches SET tournament_id = (SELECT id FROM tournaments WHERE code = 'RPL' LIMIT 1) WHERE tournament_id IS NULL",
         "UPDATE matches SET is_placeholder = COALESCE(is_placeholder, 0)",
         "CREATE INDEX IF NOT EXISTS ix_matches_tournament_id ON matches (tournament_id)",

@@ -11,7 +11,7 @@ from typing import Any
 from urllib.parse import parse_qs
 
 from aiohttp import web
-from sqlalchemy import case, func, select
+from sqlalchemy import case, false, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
@@ -304,6 +304,35 @@ def _extract_verified_admin_user(request: web.Request) -> tuple[dict[str, Any], 
     return payload, user
 
 
+async def _upsert_user_from_webapp(session, user: dict[str, Any]) -> User | None:
+    tg_user_id = user.get("id") if isinstance(user, dict) else None
+    if not tg_user_id:
+        return None
+    username = user.get("username") if isinstance(user, dict) else None
+    first_name = user.get("first_name") if isinstance(user, dict) else None
+    last_name = user.get("last_name") if isinstance(user, dict) else None
+    photo_url = user.get("photo_url") if isinstance(user, dict) else None
+    full_name = f"{first_name or ''} {last_name or ''}".strip() or None
+
+    row = (await session.execute(select(User).where(User.tg_user_id == int(tg_user_id)))).scalar_one_or_none()
+    if row is None:
+        row = User(
+            tg_user_id=int(tg_user_id),
+            username=username,
+            full_name=full_name,
+            photo_url=(str(photo_url).strip() or None) if photo_url else None,
+        )
+        session.add(row)
+        await session.flush()
+        return row
+
+    row.username = username
+    row.full_name = full_name
+    if photo_url:
+        row.photo_url = str(photo_url).strip() or row.photo_url
+    return row
+
+
 async def health(_request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "service": "miniapp-api"})
 
@@ -322,6 +351,7 @@ async def me(request: web.Request) -> web.Response:
     selected_tournament_name = None
     if tg_user_id:
         async with SessionLocal() as session:
+            await _upsert_user_from_webapp(session, user if isinstance(user, dict) else {})
             tournament = await _resolve_tournament(session, int(tg_user_id), requested_code=request.query.get("t"))
             await session.commit()
             selected_tournament_code = tournament.code
@@ -922,20 +952,34 @@ async def _build_profile_achievements(
     won_round = False
     lost_round = False
     if participant_ids:
-        played_rounds_rows = (
+        complete_rounds_rows = (
             await session.execute(
-                select(Match.round_number)
+                select(
+                    Match.round_number,
+                    func.count(Match.id).label("total_cnt"),
+                    func.sum(
+                        case(
+                            (
+                                (Match.home_score.is_not(None)) & (Match.away_score.is_not(None)),
+                                1,
+                            ),
+                            else_=0,
+                        )
+                    ).label("played_cnt"),
+                )
                 .where(
                     Match.tournament_id == int(tournament_id),
                     Match.is_placeholder == 0,
-                    Match.home_score.is_not(None),
-                    Match.away_score.is_not(None),
                 )
                 .group_by(Match.round_number)
                 .order_by(Match.round_number.asc())
             )
         ).all()
-        played_rounds = [int(r[0]) for r in played_rounds_rows]
+        complete_rounds = [
+            int(r.round_number)
+            for r in complete_rounds_rows
+            if int(r.total_cnt or 0) > 0 and int(r.played_cnt or 0) >= int(r.total_cnt or 0)
+        ]
         round_points_rows = (
             await session.execute(
                 select(Match.round_number, Point.tg_user_id, func.sum(Point.points))
@@ -946,6 +990,7 @@ async def _build_profile_achievements(
                     Match.is_placeholder == 0,
                     Match.home_score.is_not(None),
                     Match.away_score.is_not(None),
+                    Match.round_number.in_(complete_rounds) if complete_rounds else false(),
                 )
                 .group_by(Match.round_number, Point.tg_user_id)
             )
@@ -953,7 +998,7 @@ async def _build_profile_achievements(
         round_points_map: dict[tuple[int, int], int] = {
             (int(rnd), int(uid)): int(pts or 0) for rnd, uid, pts in round_points_rows
         }
-        for rnd in played_rounds:
+        for rnd in complete_rounds:
             values = [int(round_points_map.get((int(rnd), int(uid)), 0)) for uid in participant_ids]
             if not values:
                 continue
@@ -1100,6 +1145,8 @@ async def profile(request: web.Request) -> web.Response:
         async with SessionLocal() as session:
             tournament = await _resolve_tournament(session, int(tg_user_id), requested_code=request.query.get("t"))
             await session.commit()
+            await _upsert_user_from_webapp(session, user if isinstance(user, dict) else {})
+            await session.commit()
 
             target_user_raw = (request.query.get("target_user_id") or "").strip()
             target_tg_user_id = int(tg_user_id)
@@ -1138,7 +1185,7 @@ async def profile(request: web.Request) -> web.Response:
                         "tg_user_id": int(target_tg_user_id),
                         "viewed_tg_user_id": int(target_tg_user_id),
                         "is_self_profile": int(target_tg_user_id) == int(tg_user_id),
-                        "display_name": user.get("first_name") or user.get("username") or f"id:{tg_user_id}",
+                        "display_name": user.get("first_name") or user.get("username") or f"id:{target_tg_user_id}",
                         "photo_url": user.get("photo_url") if int(target_tg_user_id) == int(tg_user_id) else None,
                         "message": "Пользователь есть в Telegram, но ещё не вступил в турнир бота.",
                     }
@@ -1163,8 +1210,9 @@ async def profile(request: web.Request) -> web.Response:
                         "tg_user_id": int(target_tg_user_id),
                         "viewed_tg_user_id": int(target_tg_user_id),
                         "is_self_profile": int(target_tg_user_id) == int(tg_user_id),
-                        "display_name": user.get("first_name") or user.get("username") or f"id:{tg_user_id}",
-                        "photo_url": user.get("photo_url") if int(target_tg_user_id) == int(tg_user_id) else None,
+                        "display_name": user.get("first_name") or user.get("username") or f"id:{target_tg_user_id}",
+                        "photo_url": user_row.photo_url
+                        or (user.get("photo_url") if int(target_tg_user_id) == int(tg_user_id) else None),
                         "message": f"Ты ещё не вступил в турнир «{tournament.name}».",
                     }
                 )
@@ -1268,7 +1316,7 @@ async def profile(request: web.Request) -> web.Response:
             achievements, ach_meta = await _build_profile_achievements(
                 session=session,
                 tournament_id=int(tournament.id),
-                tg_user_id=int(tg_user_id),
+                tg_user_id=int(target_tg_user_id),
                 missed_matches=int(missed_matches),
             )
             achievements_earned = sum(1 for a in achievements if bool(a.get("earned")))
@@ -1443,7 +1491,8 @@ async def profile(request: web.Request) -> web.Response:
                     "is_self_profile": int(target_tg_user_id) == int(tg_user_id),
                     "display_name": display_name,
                     "username": user_row.username,
-                    "photo_url": user.get("photo_url") if int(target_tg_user_id) == int(tg_user_id) else None,
+                    "photo_url": user_row.photo_url
+                    or (user.get("photo_url") if int(target_tg_user_id) == int(tg_user_id) else None),
                     "predictions_count": predictions_count,
                     "total_points": int(stats_row.total_points or 0) + int(user_tournament_row.bonus_points or 0),
                     "exact_hits": int(stats_row.exact_hits or 0),
