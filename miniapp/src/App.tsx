@@ -1115,6 +1115,7 @@ function App() {
               <section className="cards">
                 <div className="card card-static segment-card">
                   <div className="card-title">Этап турнира</div>
+                  <div className="segment-hint">Нажми, чтобы выбрать этап</div>
                   <div className="tournament-row">
                     {wcTopTabsMatches.map((tab) => (
                       <button
@@ -1600,6 +1601,7 @@ function App() {
               <section className="cards">
                 <div className="card card-static">
                   <div className="card-title">Раунд таблицы</div>
+                  <div className="segment-hint">Нажми, чтобы выбрать раунд</div>
                   <div className="tournament-row">
                     <button
                       className={`tournament-chip ${tableRoundFilter === 'ALL' ? 'is-active' : ''}`}
@@ -1767,6 +1769,7 @@ function App() {
             <section className="cards">
               <div className="card card-static">
                 <div className="card-title">Тур для внесения итогов</div>
+                <div className="segment-hint">Нажми, чтобы выбрать тур и матч</div>
                 <div className="tournament-row">
                   {adminRounds.map((r) => (
                     <button
