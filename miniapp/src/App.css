@@ -1,8 +1,37 @@
+:root {
+  --bg-0: #0b1220;
+  --bg-1: #101a2d;
+  --bg-2: #13223a;
+  --surface-1: #16233b;
+  --surface-2: #122345;
+  --surface-3: #0f1f3c;
+  --surface-input: #0e1a31;
+  --line-1: #263a61;
+  --line-2: #2f4777;
+  --line-3: rgba(56, 86, 141, 0.45);
+  --text-main: #e8eefb;
+  --text-strong: #ecf2ff;
+  --text-muted: #b9c8e6;
+  --text-dim: #9fb2da;
+  --accent: #4d79d8;
+  --accent-strong: #1d3d78;
+  --success: #1f8a4c;
+  --success-line: #44bf75;
+  --radius-card: 16px;
+  --radius-control: 12px;
+  --radius-pill: 999px;
+  --shadow-soft: 0 10px 30px rgba(4, 10, 20, 0.24);
+}
+
 html,
 body,
 #root {
   min-height: 100%;
-  background: #0b1220;
+  background: var(--bg-0);
+  color: var(--text-main);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Inter, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 body {
@@ -11,8 +40,8 @@ body {
 
 .app-shell {
   min-height: var(--tg-viewport-stable-height, 100vh);
-  background: linear-gradient(180deg, #0b1220 0%, #101a2d 60%, #13223a 100%);
-  color: #e8eefb;
+  background: linear-gradient(180deg, var(--bg-0) 0%, var(--bg-1) 58%, var(--bg-2) 100%);
+  color: var(--text-main);
 }
 
 .topbar {
@@ -23,9 +52,9 @@ body {
   position: sticky;
   top: 0;
   z-index: 20;
-  background: #0b1220;
-  backdrop-filter: blur(8px);
-  border-bottom: 1px solid rgba(56, 86, 141, 0.45);
+  background: color-mix(in srgb, var(--bg-0) 90%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--line-3);
 }
 
 .topbar-row {
@@ -54,14 +83,15 @@ body {
 
 .topbar h1 {
   margin: 0;
-  font-size: 24px;
+  font-size: 32px;
+  letter-spacing: -0.02em;
   line-height: 1.1;
 }
 
 .topbar p {
   margin: 7px 0 0;
-  color: #b9c8e6;
-  font-size: 13px;
+  color: var(--text-muted);
+  font-size: 14px;
 }
 
 .tournament-icons {
@@ -74,21 +104,22 @@ body {
   display: grid;
   grid-template-columns: 1fr 1fr;
   padding: 2px;
-  border: 1px solid #2f4777;
-  border-radius: 999px;
-  background: #122345;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
   width: 180px;
 }
 
 .match-toggle-btn {
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: transparent;
   color: #b8caef;
   padding: 5px 8px;
   font-size: 12px;
   line-height: 1;
   cursor: pointer;
+  transition: background-color 0.16s ease, color 0.16s ease, transform 0.12s ease;
 }
 
 .match-toggle-btn.is-active {
@@ -96,11 +127,15 @@ body {
   color: #fff;
 }
 
+.match-toggle-btn:active {
+  transform: translateY(1px);
+}
+
 .tournament-icon {
   width: 52px;
-  border: 1px solid #2f4777;
-  border-radius: 12px;
-  background: #122345;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-control);
+  background: var(--surface-2);
   color: #dce9ff;
   display: flex;
   flex-direction: column;
@@ -129,8 +164,9 @@ body {
 .tournament-icon.is-active {
   filter: none;
   opacity: 1;
-  border-color: #4d79d8;
-  background: #1d3d78;
+  border-color: var(--accent);
+  background: var(--accent-strong);
+  box-shadow: 0 0 0 1px rgba(77, 121, 216, 0.24) inset;
 }
 
 .notice-line {
@@ -146,7 +182,7 @@ body {
 .cards {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 10px;
+  gap: 12px;
 }
 
 .space-top {
@@ -154,12 +190,13 @@ body {
 }
 
 .card {
-  background: #16233b;
-  border: 1px solid #263a61;
-  border-radius: 14px;
+  background: var(--surface-1);
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-card);
   text-align: left;
   padding: 14px;
-  color: #ecf2ff;
+  color: var(--text-strong);
+  box-shadow: var(--shadow-soft);
 }
 
 .card-user-highlight {
@@ -293,13 +330,14 @@ body {
 
 .score-input {
   width: 88px;
-  border: 1px solid #2f4777;
-  border-radius: 10px;
-  background: #0e1a31;
-  color: #e8eefb;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-control);
+  background: var(--surface-input);
+  color: var(--text-main);
   padding: 8px 10px;
   font-size: 16px;
   line-height: 1.2;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, background-color 0.16s ease;
 }
 
 .select-input {
@@ -380,14 +418,15 @@ body {
 
 .score-inline-input {
   width: 58px;
-  border: 1px solid #2f4777;
+  border: 1px solid var(--line-2);
   border-radius: 8px;
-  background: #0e1a31;
-  color: #e8eefb;
+  background: var(--surface-input);
+  color: var(--text-main);
   padding: 6px 6px;
   text-align: center;
   font-size: 16px;
   line-height: 1.2;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, background-color 0.16s ease;
 }
 
 .score-inline-pill {
@@ -492,12 +531,22 @@ body {
 }
 
 .save-btn {
-  border: 1px solid #2f4777;
-  border-radius: 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-control);
   background: #1a2f56;
-  color: #e8eefb;
+  color: var(--text-main);
   padding: 8px 10px;
   cursor: pointer;
+  transition: transform 0.12s ease, filter 0.16s ease, border-color 0.16s ease, background-color 0.16s ease;
+}
+
+.save-btn:active {
+  transform: translateY(1px);
+}
+
+.save-btn:disabled {
+  opacity: 0.75;
+  cursor: default;
 }
 
 .admin-top-row {
@@ -869,16 +918,16 @@ body {
   z-index: 30;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 4px;
-  padding: 6px 8px;
-  background: #0b1220;
-  backdrop-filter: blur(10px);
-  border-top: 1px solid rgba(56, 86, 141, 0.45);
+  gap: 6px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--bg-0) 90%, transparent);
+  backdrop-filter: blur(14px);
+  border-top: 1px solid var(--line-3);
 }
 
 .tab-btn {
   border: 1px solid transparent;
-  border-radius: 12px;
+  border-radius: 14px;
   background: transparent;
   color: #9ab0da;
   padding: 7px 4px 6px;
@@ -891,12 +940,14 @@ body {
   font-size: 11px;
   font-weight: 600;
   cursor: pointer;
+  transition: all 0.16s ease;
 }
 
 .tab-btn.is-active {
   border-color: rgba(77, 121, 216, 0.45);
   background: rgba(29, 61, 120, 0.72);
   color: #ffffff;
+  box-shadow: 0 6px 18px rgba(29, 61, 120, 0.35);
 }
 
 .tab-icon {
@@ -910,6 +961,14 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 100%;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: none;
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 2px rgba(77, 121, 216, 0.28);
 }
 
 @media (min-width: 700px) {
