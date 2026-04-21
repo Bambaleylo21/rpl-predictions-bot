@@ -345,43 +345,58 @@ body {
 }
 
 .compact-list-card {
-  padding: 10px 12px;
+  padding: 8px;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
 }
 
 .day-group + .day-group {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid rgba(79, 112, 174, 0.35);
+  margin-top: 10px;
 }
 
 .day-title {
   font-size: 12px;
-  color: #9fb2da;
+  color: var(--text-dim);
   font-weight: 700;
-  margin: 2px 0 6px;
-  padding-left: 2px;
+  margin: 0 0 6px;
+  padding-left: 0;
+}
+
+.day-group-inset {
+  border: 1px solid var(--line-1);
+  background: var(--surface-1);
+  border-radius: var(--radius-card);
+  padding: 10px 10px 8px;
+  box-shadow: var(--shadow-soft);
 }
 
 .compact-match {
   padding: 8px 2px 10px;
 }
 
+.compact-match + .compact-match {
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(79, 112, 174, 0.25);
+}
+
 .compact-meta {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
 }
 
 .group-small {
   font-size: 11px;
-  color: #8ea4ce;
+  color: #90a8d5;
   font-weight: 600;
 }
 
 .kickoff-small {
   font-size: 11px;
-  color: #8ea4ce;
+  color: #90a8d5;
 }
 
 .compact-main {
@@ -400,12 +415,13 @@ body {
 }
 
 .team-name {
-  font-size: 15px;
-  color: #e5edff;
+  font-size: 16px;
+  color: var(--text-strong);
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  letter-spacing: -0.01em;
 }
 
 .team-left {
@@ -457,9 +473,9 @@ body {
 }
 
 .compact-note {
-  margin-top: 4px;
+  margin-top: 6px;
   font-size: 12px;
-  color: #a6bbdf;
+  color: var(--text-dim);
 }
 
 .compact-note-under-score {
@@ -574,13 +590,50 @@ body {
 
 .card-title {
   font-weight: 700;
-  font-size: 17px;
+  font-size: 18px;
+  letter-spacing: -0.01em;
 }
 
 .card-text {
   margin-top: 4px;
-  color: #b7c6e5;
+  color: var(--text-muted);
   font-size: 14px;
+  line-height: 1.35;
+}
+
+.segment-card {
+  padding: 12px;
+}
+
+.matches-overview-card {
+  padding: 10px 12px;
+}
+
+.matches-overview-head {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.matches-overview-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.matches-overview-pill {
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 5px 10px;
+  white-space: nowrap;
+}
+
+.matches-overview-pill b {
+  color: var(--text-strong);
 }
 
 .profile-hero {

@@ -985,6 +985,8 @@ function App() {
     return Object.entries(grouped)
   })()
   const closedPredictionItems = (predictionsData?.items || []).filter((m) => m.status === 'closed')
+  const openPredictionCount = predictData?.items?.length || 0
+  const closedPredictionCount = closedPredictionItems.length
   const closedPredictionGroups = (() => {
     const grouped: Record<string, typeof closedPredictionItems> = {}
     for (const item of closedPredictionItems) {
@@ -1111,7 +1113,7 @@ function App() {
           <>
             {showWcSelector ? (
               <section className="cards">
-                <div className="card card-static">
+                <div className="card card-static segment-card">
                   <div className="card-title">Этап турнира</div>
                   <div className="tournament-row">
                     {wcTopTabsMatches.map((tab) => (
@@ -1137,6 +1139,27 @@ function App() {
                       ))}
                     </div>
                   ) : null}
+                </div>
+              </section>
+            ) : null}
+
+            {predictData?.joined !== false && (predictData || predictionsData) ? (
+              <section className="cards space-top">
+                <div className="card card-static matches-overview-card">
+                  <div className="matches-overview-head">Сводка матчей</div>
+                  <div className="matches-overview-row">
+                    <span className="matches-overview-pill">
+                      Активные: <b>{openPredictionCount}</b>
+                    </span>
+                    <span className="matches-overview-pill">
+                      Завершённые: <b>{closedPredictionCount}</b>
+                    </span>
+                    {predictionsData?.total_points_closed != null ? (
+                      <span className="matches-overview-pill">
+                        Очки: <b>{predictionsData.total_points_closed}</b>
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
               </section>
             ) : null}
@@ -1274,7 +1297,7 @@ function App() {
                         <div className="card-text">Открытых матчей нет.</div>
                       ) : (
                         predictGroups.map(([dateKey, matches]) => (
-                          <div key={dateKey} className="day-group">
+                          <div key={dateKey} className="day-group day-group-inset">
                             <div className="day-title">{dateKey}</div>
                             {matches.map((m) => (
                               <div className="compact-match" key={m.match_id}>
@@ -1337,7 +1360,7 @@ function App() {
                   ) : (
                     <div className="card compact-list-card">
                       {closedPredictionGroups.map(([day, items]) => (
-                        <div className="day-group" key={day}>
+                        <div className="day-group day-group-inset" key={day}>
                           <div className="day-title">{day}</div>
                           {items.map((m) => (
                             <div className="compact-match" key={m.match_id}>
