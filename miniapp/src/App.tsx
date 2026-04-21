@@ -596,6 +596,10 @@ function App() {
   }, [selectedTournamentCode, profileTargetUserId, profileData?.viewed_tg_user_id])
 
   useEffect(() => {
+    setAchievementsExpanded(false)
+  }, [selectedTournamentCode, profileTargetUserId, profileData?.viewed_tg_user_id])
+
+  useEffect(() => {
     const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
     const initData = getInitData()
     if (!initData) {
@@ -1071,9 +1075,7 @@ function App() {
     setTableSortDir(key === 'missed' ? 'asc' : 'desc')
   }
 
-  const earnedAchievements = (profileData?.achievements || []).filter((a) => a.earned)
-  const lockedAchievements = (profileData?.achievements || []).filter((a) => !a.earned)
-  const visibleLockedAchievements = achievementsExpanded ? lockedAchievements : []
+  const allAchievements = profileData?.achievements || []
 
   return (
     <div className="app-shell">
@@ -1556,44 +1558,42 @@ function App() {
                   ) : null}
 
                   <div className="profile-achievements">
-                    <div className="profile-achievements-head">
-                      <span>Награды</span>
-                      <b>
-                        {profileData.achievements_earned ?? 0}/{profileData.achievements_total ?? 0}
-                      </b>
-                    </div>
-                    {lockedAchievements.length > 0 ? (
-                      <button
-                        className="profile-achievements-toggle"
-                        onClick={() => setAchievementsExpanded((v) => !v)}
-                      >
-                        {achievementsExpanded
-                          ? 'Скрыть неактивные'
-                          : `Показать все (${lockedAchievements.length} скрыто)`}
-                      </button>
-                    ) : null}
-                    <div className="profile-achievements-grid">
-                      {earnedAchievements.map((a) => (
-                        <div
-                          key={a.key}
-                          className={`profile-achievement ${a.earned ? 'is-earned' : 'is-locked'}`}
-                          title={a.description || a.title}
+                    <div className="profile-achievements-head-row">
+                      <div className="profile-achievements-head">
+                        <span>Ачивки</span>
+                        <b>
+                          {profileData.achievements_earned ?? 0}/{profileData.achievements_total ?? 0}
+                        </b>
+                      </div>
+                      {allAchievements.length > 0 ? (
+                        <button
+                          className="profile-history-toggle"
+                          onClick={() => setAchievementsExpanded((v) => !v)}
                         >
-                          <span className="profile-achievement-emoji">{a.emoji}</span>
-                          <span className="profile-achievement-title">{a.title}</span>
-                        </div>
-                      ))}
-                      {visibleLockedAchievements.map((a) => (
-                        <div
-                          key={a.key}
-                          className="profile-achievement is-locked"
-                          title={a.description || a.title}
-                        >
-                          <span className="profile-achievement-emoji">{a.emoji}</span>
-                          <span className="profile-achievement-title">{a.title}</span>
-                        </div>
-                      ))}
+                          {achievementsExpanded ? 'Скрыть' : 'Показать'}
+                        </button>
+                      ) : null}
                     </div>
+                    {achievementsExpanded ? (
+                      <div className="profile-achievements-grid">
+                        {allAchievements.map((a) => (
+                          <div
+                            key={a.key}
+                            className={`profile-achievement ${a.earned ? 'is-earned' : 'is-locked'}`}
+                            title={a.description || a.title}
+                          >
+                            <span className="profile-achievement-emoji">{a.emoji}</span>
+                            <span className="profile-achievement-title">{a.title}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : allAchievements.length === 0 ? (
+                      <div className="card-text">Пока нет доступных ачивок.</div>
+                    ) : (
+                      <div className="profile-trophy-summary">
+                        Скрыто: <b>{allAchievements.length}</b>
+                      </div>
+                    )}
                   </div>
 
                   <div className="profile-history">
@@ -1610,9 +1610,9 @@ function App() {
                       ) : null}
                     </div>
 
-                    {(profileData.legacy_trophies || []).length > 0 ? (
+                    {((profileData.legacy_trophies || []).length > 0 || (profileData.tournament_history || []).length > 0) ? (
                       <div className="profile-trophy-summary">
-                        🏆 Трофеев: <b>{(profileData.legacy_trophies || []).length}</b>
+                        Записей в истории: <b>{(profileData.legacy_trophies || []).length + (profileData.tournament_history || []).length}</b>
                       </div>
                     ) : null}
 

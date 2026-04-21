@@ -985,10 +985,17 @@ body {
   cursor: default;
 }
 
-.profile-achievements-head {
+.profile-achievements-head-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 8px;
+}
+
+.profile-achievements-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   color: #a9bde4;
   font-size: 12px;
 }
