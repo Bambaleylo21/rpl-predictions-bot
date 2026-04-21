@@ -1108,7 +1108,7 @@ function App() {
         {tournamentNotice ? <div className="notice-line">{tournamentNotice}</div> : null}
       </header>
 
-      <main className="content">
+      <main className={`content screen-${screen}`}>
         {screen === 'predict' ? (
           <>
             {showWcSelector ? (
