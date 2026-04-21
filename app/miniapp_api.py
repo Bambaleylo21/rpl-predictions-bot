@@ -1481,6 +1481,70 @@ async def profile(request: web.Request) -> web.Response:
                     }
                 )
 
+            # Статусы формы считаем по текущей "живой" серии от последнего завершённого матча.
+            # Категории серии:
+            # - fire: есть прогноз и очки > 0
+            # - cold: есть прогноз, но очки == 0
+            # - slow: прогноза нет
+            form_streak_rows = (
+                await session.execute(
+                    select(
+                        Match.id,
+                        Point.points,
+                        Prediction.id.label("has_pred"),
+                    )
+                    .select_from(Match)
+                    .outerjoin(
+                        Prediction,
+                        (Prediction.match_id == Match.id) & (Prediction.tg_user_id == int(target_tg_user_id)),
+                    )
+                    .outerjoin(
+                        Point,
+                        (Point.match_id == Match.id) & (Point.tg_user_id == int(target_tg_user_id)),
+                    )
+                    .where(
+                        Match.tournament_id == int(tournament.id),
+                        Match.is_placeholder == 0,
+                        Match.home_score.is_not(None),
+                        Match.away_score.is_not(None),
+                    )
+                    .order_by(Match.kickoff_time.desc(), Match.id.desc())
+                )
+            ).all()
+            fire_streak = 0
+            cold_streak = 0
+            slow_streak = 0
+            if form_streak_rows:
+                first_has_pred = form_streak_rows[0].has_pred is not None
+                first_points = int(form_streak_rows[0].points or 0) if first_has_pred else 0
+                if not first_has_pred:
+                    kind = "slow"
+                elif first_points > 0:
+                    kind = "fire"
+                else:
+                    kind = "cold"
+
+                for _mid, pts, has_pred in form_streak_rows:
+                    row_has_pred = has_pred is not None
+                    row_points = int(pts or 0) if row_has_pred else 0
+                    row_kind = "slow" if not row_has_pred else ("fire" if row_points > 0 else "cold")
+                    if row_kind != kind:
+                        break
+                    if kind == "fire":
+                        fire_streak += 1
+                    elif kind == "cold":
+                        cold_streak += 1
+                    else:
+                        slow_streak += 1
+
+            form_statuses: list[str] = []
+            if fire_streak >= 3:
+                form_statuses.append("🔥 В огне")
+            if cold_streak >= 3:
+                form_statuses.append("❄️ Плохая форма")
+            if slow_streak >= 3:
+                form_statuses.append("⛔ Тормозишь")
+
             if (tournament.code or "").strip().upper() == DEFAULT_TOURNAMENT_CODE:
                 table_rows, table_meta = await build_active_stage_league_table(int(target_tg_user_id))
                 user_place = next(
@@ -1488,9 +1552,34 @@ async def profile(request: web.Request) -> web.Response:
                     None,
                 ) if table_meta is not None else None
                 participants = int(table_meta.participants) if table_meta is not None else 0
+                rows_for_statuses = table_rows
             else:
                 rows, participants = await _build_overall_table_rows(session, int(tournament.id))
                 user_place = next((int(r["place"]) for r in rows if int(r["tg_user_id"]) == int(target_tg_user_id)), None)
+                rows_for_statuses = rows
+
+            live_statuses: list[str] = []
+            if user_place == 1:
+                live_statuses.append("Лидер таблицы")
+
+            def _best_status(field: str, label: str) -> None:
+                if not rows_for_statuses:
+                    return
+                max_value = max(int(r.get(field, 0)) for r in rows_for_statuses)
+                if max_value <= 0:
+                    return
+                my_row = next(
+                    (r for r in rows_for_statuses if int(r.get("tg_user_id", 0)) == int(target_tg_user_id)),
+                    None,
+                )
+                if my_row is None:
+                    return
+                if int(my_row.get(field, 0)) == int(max_value):
+                    live_statuses.append(label)
+
+            _best_status("exact", "Лучший по 🎯 точным")
+            _best_status("diff", "Лучший по 📏 разнице")
+            _best_status("outcome", "Лучший по ✅ исходам")
 
             tournament_history = await _build_profile_tournament_history(
                 session=session,
@@ -1529,6 +1618,8 @@ async def profile(request: web.Request) -> web.Response:
                     "achievements_total": int(len(achievements)),
                     "next_achievement": next_achievement,
                     "recent_form": recent_form,
+                    "live_statuses": live_statuses,
+                    "form_statuses": form_statuses,
                     "tournament_history": tournament_history,
                     "league_name": league_row.league_name if league_row else None,
                     "stage_name": league_row.stage_name if league_row else None,

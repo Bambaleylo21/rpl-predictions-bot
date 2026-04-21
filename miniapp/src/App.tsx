@@ -72,6 +72,8 @@ type ProfileResponse = {
     points: number
     label: string
   }>
+  live_statuses?: string[]
+  form_statuses?: string[]
   tournament_history?: Array<{
     tournament_code: string
     tournament_name: string
@@ -1480,6 +1482,35 @@ function App() {
                     🎯 <b>{profileData.exact_hits ?? 0}</b> · 📏 <b>{profileData.diff_hits ?? 0}</b> · ✅{' '}
                     <b>{profileData.outcome_hits ?? 0}</b> · Всего прогнозов: <b>{profileData.predictions_count ?? 0}</b>
                   </div>
+
+                  {(profileData.live_statuses || []).length > 0 || (profileData.form_statuses || []).length > 0 ? (
+                    <div className="profile-statuses">
+                      {(profileData.live_statuses || []).length > 0 ? (
+                        <>
+                          <div className="profile-statuses-head">Live</div>
+                          <div className="profile-statuses-row">
+                            {(profileData.live_statuses || []).map((s, idx) => (
+                              <span className="profile-status-chip" key={`live-${idx}-${s}`}>
+                                {s}
+                              </span>
+                            ))}
+                          </div>
+                        </>
+                      ) : null}
+                      {(profileData.form_statuses || []).length > 0 ? (
+                        <>
+                          <div className="profile-statuses-head">Форма</div>
+                          <div className="profile-statuses-row">
+                            {(profileData.form_statuses || []).map((s, idx) => (
+                              <span className="profile-status-chip is-form" key={`form-${idx}-${s}`}>
+                                {s}
+                              </span>
+                            ))}
+                          </div>
+                        </>
+                      ) : null}
+                    </div>
+                  ) : null}
 
                   <div className="profile-progress">
                     <div className="profile-progress-head">
