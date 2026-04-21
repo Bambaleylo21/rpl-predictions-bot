@@ -1,5 +1,6 @@
 from aiogram import Dispatcher, F, types
 from aiogram.filters import CommandStart, Command
+from aiogram.filters.command import CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
@@ -2787,7 +2788,7 @@ def register_user_handlers(dp: Dispatcher):
             )
 
     @dp.message(CommandStart())
-    async def cmd_start(message: types.Message):
+    async def cmd_start(message: types.Message, command: CommandObject):
         # Принудительно снимаем старую reply-клавиатуру у всех пользователей.
         await message.answer("Обновляю интерфейс…", reply_markup=types.ReplyKeyboardRemove())
 
@@ -2797,6 +2798,14 @@ def register_user_handlers(dp: Dispatcher):
             tournament = await get_selected_tournament_for_user(session, message.from_user.id)
             is_joined = await is_user_in_tournament(session, message.from_user.id, tournament.id)
             await session.commit()
+
+        start_arg = (command.args or "").strip().lower()
+        deep_join_wc = start_arg in {"join_wc2026", "join_wc", "wc2026", "wc", "join"}
+        if deep_join_wc and not is_joined:
+            if not await _ensure_enrollment_open_for_join(message):
+                return
+            await _request_display_name_for_join(message, state, tournament)
+            return
 
         text = (
             "⚽  Вот это тебя корёжит! А всё потому что тебя ещё нет в новом турнире прогнозов World Cup 2026!\n"
