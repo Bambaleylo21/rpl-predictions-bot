@@ -1433,25 +1433,41 @@ function App() {
                         })()}
                       </div>
                     )})()}
-                    <div className="profile-hero-meta">
-                      <div className="profile-name">
-                        {profileData.display_name || (tgUsername ? `@${tgUsername}` : `ID ${tgUserId ?? '—'}`)}
+                    <div className="profile-hero-main">
+                      <div className="profile-hero-meta">
+                        <div className="profile-name">
+                          {profileData.display_name || (tgUsername ? `@${tgUsername}` : `ID ${tgUserId ?? '—'}`)}
+                        </div>
+                        {profileData.tournament_code === 'WC2026' ? (
+                          <div className="profile-subline">{profileData.tournament_name || 'Турнир'}</div>
+                        ) : (
+                          <>
+                            <div className="profile-subline">
+                              {profileData.tournament_name || 'Турнир'} · {profileData.league_name || 'Лига —'}
+                            </div>
+                            <div className="profile-subline">
+                              Этап: {profileData.stage_name || '—'}
+                              {profileData.stage_round_min != null && profileData.stage_round_max != null
+                                ? ` (${profileData.stage_round_min}-${profileData.stage_round_max})`
+                                : ''}
+                            </div>
+                          </>
+                        )}
                       </div>
-                      {profileData.tournament_code === 'WC2026' ? (
-                        <div className="profile-subline">{profileData.tournament_name || 'Турнир'}</div>
-                      ) : (
-                        <>
-                          <div className="profile-subline">
-                            {profileData.tournament_name || 'Турнир'} · {profileData.league_name || 'Лига —'}
-                          </div>
-                          <div className="profile-subline">
-                            Этап: {profileData.stage_name || '—'}
-                            {profileData.stage_round_min != null && profileData.stage_round_max != null
-                              ? ` (${profileData.stage_round_min}-${profileData.stage_round_max})`
-                              : ''}
-                          </div>
-                        </>
-                      )}
+                      {(profileData.live_statuses || []).length > 0 || (profileData.form_statuses || []).length > 0 ? (
+                        <div className="profile-inline-statuses">
+                          {(profileData.live_statuses || []).slice(0, 2).map((s, idx) => (
+                            <div className="profile-inline-status" key={`inline-live-${idx}-${s}`}>
+                              {s}
+                            </div>
+                          ))}
+                          {(profileData.form_statuses || []).slice(0, 1).map((s, idx) => (
+                            <div className="profile-inline-status is-form" key={`inline-form-${idx}-${s}`}>
+                              {s}
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
                   </div>
 
@@ -1482,35 +1498,6 @@ function App() {
                     🎯 <b>{profileData.exact_hits ?? 0}</b> · 📏 <b>{profileData.diff_hits ?? 0}</b> · ✅{' '}
                     <b>{profileData.outcome_hits ?? 0}</b> · Всего прогнозов: <b>{profileData.predictions_count ?? 0}</b>
                   </div>
-
-                  {(profileData.live_statuses || []).length > 0 || (profileData.form_statuses || []).length > 0 ? (
-                    <div className="profile-statuses">
-                      {(profileData.live_statuses || []).length > 0 ? (
-                        <>
-                          <div className="profile-statuses-head">Live</div>
-                          <div className="profile-statuses-row">
-                            {(profileData.live_statuses || []).map((s, idx) => (
-                              <span className="profile-status-chip" key={`live-${idx}-${s}`}>
-                                {s}
-                              </span>
-                            ))}
-                          </div>
-                        </>
-                      ) : null}
-                      {(profileData.form_statuses || []).length > 0 ? (
-                        <>
-                          <div className="profile-statuses-head">Форма</div>
-                          <div className="profile-statuses-row">
-                            {(profileData.form_statuses || []).map((s, idx) => (
-                              <span className="profile-status-chip is-form" key={`form-${idx}-${s}`}>
-                                {s}
-                              </span>
-                            ))}
-                          </div>
-                        </>
-                      ) : null}
-                    </div>
-                  ) : null}
 
                   <div className="profile-progress">
                     <div className="profile-progress-head">
