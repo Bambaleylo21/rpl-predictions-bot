@@ -1073,10 +1073,39 @@ body {
 .profile-history-head {
   color: #a9bde4;
   font-size: 12px;
-  margin-bottom: 8px;
+}
+
+.profile-history-head-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.profile-history-toggle {
+  border: 1px solid #2f4777;
+  border-radius: 999px;
+  background: #1a2f56;
+  color: #dce9ff;
+  padding: 5px 10px;
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.profile-history-toggle:active {
+  transform: translateY(1px);
+}
+
+.profile-trophy-summary {
+  margin-top: 7px;
+  color: #bcd0f5;
+  font-size: 12px;
 }
 
 .profile-history-list {
+  margin-top: 8px;
   display: grid;
   gap: 8px;
 }

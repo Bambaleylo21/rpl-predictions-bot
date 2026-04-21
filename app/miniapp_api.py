@@ -62,6 +62,38 @@ WC_TOP_SCORER_OPTIONS = [
     "Флориан Вирц",
 ]
 
+LEGACY_TROPHIES = [
+    {"season": "2025/26", "title": "Лига Кайратовна", "format": "Группа ЛЧ", "place": 1, "username": "ImRus32"},
+    {"season": "2025/26", "title": "Лига Кайратовна", "format": "Группа ЛЧ", "place": 2, "username": "kuznetsoff32"},
+    {"season": "2025/26", "title": "Лига Кайратовна", "format": "Группа ЛЧ", "place": 3, "username": "artgorlin"},
+    {"season": "2025", "title": "РПЛ - говно!", "format": "РПЛ (1-18 тур) · Высшая лига", "place": 1, "username": "ImRus32"},
+    {"season": "2025", "title": "РПЛ - говно!", "format": "РПЛ (1-18 тур) · Низшая лига", "place": 1, "username": "kuznetsoff32"},
+    {"season": "2025", "title": 'ТП "Ради денег"', "format": "Клубный ЧМ", "place": 1, "username": "kuznetsoff32"},
+    {"season": "2025", "title": "Выносити Сити", "format": "ЛЧ плейофф", "place": 1, "username": "artgorlin"},
+    {"season": "2025", "title": "Достоевский кап", "format": "РПЛ (19-30 тур) · Высшая лига", "place": 1, "username": "perepelkinSlava"},
+    {"season": "2025", "title": "Достоевский кап", "format": "РПЛ (19-30 тур) · Низшая лига", "place": 1, "username": "ImRus32"},
+    {"season": "2024", "title": "Под пивко", "format": "РПЛ (1-18 тур) · Высшая лига", "place": 1, "username": "perepelkinSlava"},
+    {"season": "2024", "title": "Под пивко", "format": "РПЛ (1-18 тур) · Низшая лига", "place": 1, "username": "Efanchik"},
+    {"season": "2024", "title": "Чемпионат Гейропы", "format": "ЧЕ 2022", "place": 1, "username": "nyaka19"},
+    {"season": "2024", "title": "Последний турнир", "format": "РПЛ (19-30 тур)", "place": 1, "username": "ImRus32"},
+    {"season": "2023/24", "title": "Лига Шампионьонов", "format": "ЛЧ", "place": 1, "username": "ImRus32"},
+    {"season": "2023", "title": "Турнир имени Саши Доронина", "format": "РПЛ (19-30 тур)", "place": 1, "username": "THEALEX32"},
+    {"season": "2023", "title": "Всё будет хорошо", "format": "РПЛ (1-18 тур)", "place": 1, "username": "marykozhanova"},
+    {"season": "2022", "title": "КОТар прогноз", "format": "ЧМ 2022", "place": 1, "username": "THEALEX32"},
+    {"season": "2022", "title": "eFan ID cup", "format": "РПЛ (18-30 тур)", "place": 1, "username": "THEALEX32"},
+    {"season": "2022", "title": "Кожановый мяч", "format": "РПЛ (1-17 тур)", "place": 1, "username": "marykozhanova"},
+    {"season": "2021", "title": "Чемпионат трёх матчей сборной России", "format": "ЧЕ 2021", "place": 1, "username": "THEALEX32"},
+    {"season": "2021", "title": "Турнир Открытая Книга", "format": "РПЛ", "place": 1, "username": "artgorlin"},
+    {"season": "2019", "title": "кубак памити арфаграфии Ивгения Реудского", "format": "РПЛ 1 часть", "place": 1, "username": "Efanchik"},
+    {"season": "2018", "title": "No Criminality Cup", "format": "РПЛ 2 часть", "place": 1, "username": "perepelkinSlava"},
+    {"season": "2017", "title": "Кубок Небесной Шлюхи", "format": "РПЛ 1 часть", "place": 1, "username": "THEALEX32"},
+    {"season": "2017", "title": "Petooshock Trophy", "format": "РПЛ 2 часть", "place": 1, "username": "tsykun"},
+    {"season": "2016", "title": "Усы Черчесова", "format": "РПЛ 1 часть", "place": 1, "username": "THEALEX32"},
+    {"season": "2014", "title": "Ярошик Cup", "format": "РПЛ 2 часть", "place": 1, "username": "THEALEX32"},
+    {"season": "2012", "title": "Чаша Бышовца", "format": "РПЛ 11-20 тур", "place": 1, "username": "Maks_032"},
+    {"season": "2012", "title": "Кубок Бубнова", "format": "РПЛ 1-10 тур", "place": 1, "username": "Maks_032"},
+]
+
 
 def _parse_init_data(init_data: str) -> dict[str, Any]:
     """
@@ -84,6 +116,32 @@ def _parse_init_data(init_data: str) -> dict[str, Any]:
 
 def _selected_tournament_key(tg_user_id: int) -> str:
     return f"{TOURNAMENT_SELECTED_KEY_PREFIX}{int(tg_user_id)}"
+
+
+def _normalize_username(value: str | None) -> str:
+    s = (value or "").strip().lower()
+    while s.startswith("@"):
+        s = s[1:]
+    return s
+
+
+def _legacy_trophies_for_username(username: str | None) -> list[dict[str, Any]]:
+    uname = _normalize_username(username)
+    if not uname:
+        return []
+    rows: list[dict[str, Any]] = []
+    for item in LEGACY_TROPHIES:
+        if _normalize_username(str(item.get("username") or "")) != uname:
+            continue
+        rows.append(
+            {
+                "season": str(item.get("season") or ""),
+                "title": str(item.get("title") or ""),
+                "format": str(item.get("format") or ""),
+                "place": int(item.get("place") or 0),
+            }
+        )
+    return rows
 
 
 async def _get_setting(session, key: str) -> str | None:
@@ -1586,6 +1644,7 @@ async def profile(request: web.Request) -> web.Response:
                 tg_user_id=int(target_tg_user_id),
                 current_tournament_id=int(tournament.id),
             )
+            legacy_trophies = _legacy_trophies_for_username(user_row.username)
 
             return web.json_response(
                 {
@@ -1621,6 +1680,7 @@ async def profile(request: web.Request) -> web.Response:
                     "live_statuses": live_statuses,
                     "form_statuses": form_statuses,
                     "tournament_history": tournament_history,
+                    "legacy_trophies": legacy_trophies,
                     "league_name": league_row.league_name if league_row else None,
                     "stage_name": league_row.stage_name if league_row else None,
                     "stage_round_min": int(league_row.round_min) if league_row and league_row.round_min is not None else None,
