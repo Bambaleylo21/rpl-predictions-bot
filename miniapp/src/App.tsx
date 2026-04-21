@@ -56,6 +56,7 @@ type ProfileResponse = {
     title: string
     emoji: string
     earned: boolean
+    taken_by_other?: boolean
     description?: string
   }>
   next_achievement?: {
@@ -1076,6 +1077,20 @@ function App() {
   }
 
   const allAchievements = profileData?.achievements || []
+  const earnedAchievements = allAchievements.filter((a) => a.earned)
+  const lockedAchievements = allAchievements.filter((a) => !a.earned)
+  const visibleLockedAchievements = achievementsExpanded ? lockedAchievements : []
+  const legacyTrophies = profileData?.legacy_trophies || []
+  const tournamentHistory = profileData?.tournament_history || []
+  const medalGold =
+    legacyTrophies.filter((h) => h.place === 1).length +
+    tournamentHistory.filter((h) => h.place === 1).length
+  const medalSilver =
+    legacyTrophies.filter((h) => h.place === 2).length +
+    tournamentHistory.filter((h) => h.place === 2).length
+  const medalBronze =
+    legacyTrophies.filter((h) => h.place === 3).length +
+    tournamentHistory.filter((h) => h.place === 3).length
 
   return (
     <div className="app-shell">
@@ -1528,28 +1543,17 @@ function App() {
                     </div>
                   </div>
 
-                  {profileData.next_achievement ? (
-                    <div className="profile-next-achievement">
-                      <div className="profile-next-head">
-                        <span>До следующей ачивки</span>
-                      </div>
-                      <div className="profile-next-title">
-                        {profileData.next_achievement.emoji} {profileData.next_achievement.title}
-                      </div>
-                      <div className="profile-next-meta">
-                        Прогресс: {profileData.next_achievement.current}/{profileData.next_achievement.target} · осталось {profileData.next_achievement.left}
-                      </div>
-                    </div>
-                  ) : null}
-
                   {(profileData.recent_form || []).length > 0 ? (
                     <div className="profile-form">
                       <div className="profile-form-head">Форма (последние матчи)</div>
                       <div className="profile-form-list">
                         {(profileData.recent_form || []).map((item, idx) => (
-                          <div className="profile-form-item" key={`${idx}-${item.round}-${item.label}`}>
+                          <div
+                            className="profile-form-item"
+                            key={`${idx}-${item.round}-${item.label}`}
+                            title={item.label}
+                          >
                             <span className="profile-form-emoji">{item.emoji}</span>
-                            <span className="profile-form-round">Т{item.round}</span>
                             <span className="profile-form-points">{item.points}</span>
                           </div>
                         ))}
@@ -1565,7 +1569,7 @@ function App() {
                           {profileData.achievements_earned ?? 0}/{profileData.achievements_total ?? 0}
                         </b>
                       </div>
-                      {allAchievements.length > 0 ? (
+                      {lockedAchievements.length > 0 ? (
                         <button
                           className="profile-history-toggle"
                           onClick={() => setAchievementsExpanded((v) => !v)}
@@ -1574,12 +1578,22 @@ function App() {
                         </button>
                       ) : null}
                     </div>
-                    {achievementsExpanded ? (
+                    {allAchievements.length > 0 ? (
                       <div className="profile-achievements-grid">
-                        {allAchievements.map((a) => (
+                        {earnedAchievements.map((a) => (
                           <div
                             key={a.key}
-                            className={`profile-achievement ${a.earned ? 'is-earned' : 'is-locked'}`}
+                            className="profile-achievement is-earned"
+                            title={a.description || a.title}
+                          >
+                            <span className="profile-achievement-emoji">{a.emoji}</span>
+                            <span className="profile-achievement-title">{a.title}</span>
+                          </div>
+                        ))}
+                        {visibleLockedAchievements.map((a) => (
+                          <div
+                            key={a.key}
+                            className={`profile-achievement is-locked ${a.taken_by_other ? 'is-taken' : ''}`}
                             title={a.description || a.title}
                           >
                             <span className="profile-achievement-emoji">{a.emoji}</span>
@@ -1587,20 +1601,29 @@ function App() {
                           </div>
                         ))}
                       </div>
-                    ) : allAchievements.length === 0 ? (
-                      <div className="card-text">Пока нет доступных ачивок.</div>
                     ) : (
-                      <div className="profile-trophy-summary">
-                        Скрыто: <b>{allAchievements.length}</b>
-                      </div>
+                      <div className="card-text">Пока нет доступных ачивок.</div>
                     )}
                   </div>
+
+                  {profileData.next_achievement ? (
+                    <div className="profile-next-achievement">
+                      <div className="profile-next-head">
+                        <span>До следующей ачивки</span>
+                      </div>
+                      <div className="profile-next-title">
+                        {profileData.next_achievement.emoji} {profileData.next_achievement.title}
+                      </div>
+                      <div className="profile-next-meta">
+                        Прогресс: {profileData.next_achievement.current}/{profileData.next_achievement.target} · осталось {profileData.next_achievement.left}
+                      </div>
+                    </div>
+                  ) : null}
 
                   <div className="profile-history">
                     <div className="profile-history-head-row">
                       <div className="profile-history-head">История турниров</div>
-                      {((profileData.legacy_trophies || []).length > 0 ||
-                        (profileData.tournament_history || []).length > 0) ? (
+                      {(legacyTrophies.length > 0 || tournamentHistory.length > 0) ? (
                         <button
                           className="profile-history-toggle"
                           onClick={() => setHistoryExpanded((v) => !v)}
@@ -1610,17 +1633,17 @@ function App() {
                       ) : null}
                     </div>
 
-                    {((profileData.legacy_trophies || []).length > 0 || (profileData.tournament_history || []).length > 0) ? (
+                    {(legacyTrophies.length > 0 || tournamentHistory.length > 0) ? (
                       <div className="profile-trophy-summary">
-                        Записей в истории: <b>{(profileData.legacy_trophies || []).length + (profileData.tournament_history || []).length}</b>
+                        🥇 <b>{medalGold}</b> · 🥈 <b>{medalSilver}</b> · 🥉 <b>{medalBronze}</b>
                       </div>
                     ) : null}
 
                     {historyExpanded ? (
                       <>
-                        {(profileData.legacy_trophies || []).length > 0 ? (
+                        {legacyTrophies.length > 0 ? (
                           <div className="profile-history-list">
-                            {(profileData.legacy_trophies || []).map((h, idx) => (
+                            {legacyTrophies.map((h, idx) => (
                               <div className="profile-history-item" key={`legacy-${idx}-${h.season}-${h.title}`}>
                                 <div className="profile-history-title">
                                   {h.season} · {h.title}
@@ -1633,9 +1656,9 @@ function App() {
                           </div>
                         ) : null}
 
-                        {(profileData.tournament_history || []).length > 0 ? (
+                        {tournamentHistory.length > 0 ? (
                           <div className="profile-history-list">
-                            {(profileData.tournament_history || []).map((h) => (
+                            {tournamentHistory.map((h) => (
                               <div className="profile-history-item" key={`${h.tournament_code}-${h.tournament_name}`}>
                                 <div className="profile-history-title">{h.tournament_name}</div>
                                 <div className="profile-history-meta">
@@ -1652,8 +1675,8 @@ function App() {
                     ) : null}
 
                     {!historyExpanded &&
-                    (profileData.legacy_trophies || []).length === 0 &&
-                    (profileData.tournament_history || []).length === 0 ? (
+                    legacyTrophies.length === 0 &&
+                    tournamentHistory.length === 0 ? (
                       <div className="card-text">Пока нет завершённых турниров в истории.</div>
                     ) : null}
                   </div>
