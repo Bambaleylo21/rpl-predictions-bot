@@ -1385,7 +1385,10 @@ async def profile(request: web.Request) -> web.Response:
 
             predictions_count = int(stats_row.predictions_count or 0)
             resolved_predictions_count = int(stats_row.resolved_predictions_count or 0)
-            hits_total = int(stats_row.exact_hits or 0) + int(stats_row.diff_hits or 0) + int(stats_row.outcome_hits or 0)
+            exact_hits = int(stats_row.exact_hits or 0)
+            diff_hits = int(stats_row.diff_hits or 0)
+            outcome_hits = int(stats_row.outcome_hits or 0)
+            hits_total = exact_hits + diff_hits + outcome_hits
             hit_rate = round((hits_total * 100.0 / resolved_predictions_count), 1) if resolved_predictions_count > 0 else 0.0
             tournament_code_upper = (tournament.code or "").strip().upper()
             achievements: list[dict[str, Any]] = []
@@ -1728,9 +1731,9 @@ async def profile(request: web.Request) -> web.Response:
                     or (user.get("photo_url") if int(target_tg_user_id) == int(tg_user_id) else None),
                     "predictions_count": predictions_count,
                     "total_points": int(stats_row.total_points or 0) + int(user_tournament_row.bonus_points or 0),
-                    "exact_hits": int(stats_row.exact_hits or 0),
-                    "diff_hits": int(stats_row.diff_hits or 0),
-                    "outcome_hits": int(stats_row.outcome_hits or 0),
+                    "exact_hits": exact_hits,
+                    "diff_hits": diff_hits,
+                    "outcome_hits": outcome_hits,
                     "hit_rate": hit_rate,
                     "missed_matches": int(missed_matches),
                     "place": user_place,
