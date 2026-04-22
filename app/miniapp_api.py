@@ -1738,8 +1738,7 @@ async def _crowd_stats_for_matches(session, tournament_id: int, match_ids: list[
             .join(
                 UserTournament,
                 (UserTournament.tg_user_id == Prediction.tg_user_id)
-                & (UserTournament.tournament_id == int(tournament_id))
-                & (UserTournament.is_active == 1),
+                & (UserTournament.tournament_id == int(tournament_id)),
             )
             .where(Prediction.match_id.in_(match_ids))
             .group_by(Prediction.match_id)
