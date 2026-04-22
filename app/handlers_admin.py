@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import random
 import re
 from datetime import datetime, timedelta
 from aiogram import Dispatcher, F, types
@@ -13,7 +14,7 @@ from sqlalchemy import case, delete, select, func
 
 from app.config import load_admin_ids
 from app.db import SessionLocal
-from app.display import display_team_name, display_tournament_name
+from app.display import display_round_name, display_team_name, display_tournament_name
 from app.models import (
     League,
     LeagueMovement,
@@ -68,6 +69,55 @@ except ValueError:
     EXACT_HIT_PUSH_DELAY_SEC = 0.12
 
 ENROLL_LIST_PAGE_SIZE = 8
+
+
+ROUND_PUSH_OPENERS: dict[str, list[str]] = {
+    "group": [
+        "Ну что, дуркуешь или футбол читаешь? ХА-ХА-ХА. Групповой этап закрыт.",
+        "Очень много брака было, но тур закрыли. Поехали смотреть, кто в порядке.",
+        "При Бескове такого бы не простили, но цифры уже на табло. Разбираем тур.",
+        "Тур закрыт. Сейчас без эмоций: только факты и кто где стоит.",
+    ],
+    "playoff": [
+        "Плей-офф — это уже мясо. Раунд закрыт, считаем, кто выдержал давление.",
+        "На вылет шуток нет. Этот этап закрыт, смотрим по делу.",
+        "Тут не до романтики: кто ошибся — тот улетел. Раунд посчитан.",
+        "Плей-офф всё оголяет. Закрыли раунд, пора к цифрам.",
+    ],
+    "third_place": [
+        "Матч за третье место закрыт. Последние разборы перед финальным аккордом.",
+        "Бронзовый этап закрыт. Сейчас коротко по фактам.",
+        "Тур за 3-е место посчитан. Смотрим, кто дожал.",
+    ],
+    "final": [
+        "Финал закрыт. ХА-ХА-ХА, вот где всё и решилось.",
+        "Турнир закрыт официально. Сейчас главный разбор по цифрам.",
+        "Последний свисток прозвучал. Финал посчитан, итоги на стол.",
+    ],
+    "generic": [
+        "Раунд закрыт. Переходим к разбору по фактам.",
+        "Этап посчитан. Смотрим без лишних слов: кто где.",
+    ],
+}
+
+
+def _round_push_bucket(round_number: int) -> str:
+    rn = int(round_number or 0)
+    if rn in (1, 2, 3):
+        return "group"
+    if rn in (4, 5, 6, 7):
+        return "playoff"
+    if rn == 8:
+        return "third_place"
+    if rn == 9:
+        return "final"
+    return "generic"
+
+
+def _pick_round_push_opener(round_number: int) -> str:
+    bucket = _round_push_bucket(round_number)
+    variants = ROUND_PUSH_OPENERS.get(bucket) or ROUND_PUSH_OPENERS["generic"]
+    return random.choice(variants)
 
 
 class AdminSetResultStates(StatesGroup):
@@ -436,6 +486,62 @@ async def _maybe_send_round_closed_summary(bot, tournament_id: int, round_number
         diff_pretty = ", ".join(pretty_name(x) for x in diff_ids) if diff_ids else "—"
         outcome_pretty = ", ".join(pretty_name(x) for x in outcome_ids) if outcome_ids else "—"
 
+        if leaderboard_rows:
+            best_pts = int(leaderboard_rows[0][1] or 0)
+            mvp_ids = [int(r[0]) for r in leaderboard_rows if int(r[1] or 0) == best_pts]
+            mvp_text = ", ".join(pretty_name(uid) for uid in mvp_ids)
+        else:
+            best_pts = 0
+            mvp_text = "—"
+
+        match_hit_rows_q = await session.execute(
+            select(
+                Match.id,
+                Match.home_team,
+                Match.away_team,
+                func.count(Prediction.id).label("pred_total"),
+                func.coalesce(func.sum(case((Point.points > 0, 1), else_=0)), 0).label("pred_hits"),
+            )
+            .select_from(Match)
+            .outerjoin(Prediction, Prediction.match_id == Match.id)
+            .outerjoin(
+                Point,
+                (Point.tg_user_id == Prediction.tg_user_id) & (Point.match_id == Prediction.match_id),
+            )
+            .where(
+                Match.tournament_id == tournament_id,
+                Match.round_number == round_number,
+                Match.source == "manual",
+            )
+            .group_by(Match.id, Match.home_team, Match.away_team)
+            .order_by(Match.id.asc())
+        )
+        match_hit_rows = match_hit_rows_q.all()
+
+        guessed_candidates: list[tuple[float, str]] = []
+        for _match_id, home_team, away_team, pred_total, pred_hits in match_hit_rows:
+            total_pred = int(pred_total or 0)
+            if total_pred <= 0:
+                continue
+            hit_pred = int(pred_hits or 0)
+            hit_rate = (hit_pred / total_pred) * 100.0
+            label = f"{display_team_name(home_team)} — {display_team_name(away_team)}"
+            guessed_candidates.append((hit_rate, label))
+
+        if guessed_candidates:
+            most_guessed_rate, most_guessed_match = max(guessed_candidates, key=lambda x: x[0])
+            least_guessed_rate, least_guessed_match = min(guessed_candidates, key=lambda x: x[0])
+            teaser_match_line = (
+                f"Самый сложный матч: {least_guessed_match} ({least_guessed_rate:.0f}%). "
+                f"Самый читаемый: {most_guessed_match} ({most_guessed_rate:.0f}%)."
+            )
+        else:
+            teaser_match_line = "По матчам этого тура пока нет валидной выборки прогнозов."
+
+        round_label = display_round_name(tournament.code if tournament else None, int(round_number))
+        opener_line = _pick_round_push_opener(int(round_number))
+        teaser_top_line = f"Лидер этапа: {mvp_text} — {best_pts} очк."
+
         streak_rows_q = await session.execute(
             select(Point.tg_user_id, Match.kickoff_time, Point.points, Match.id)
             .select_from(Point)
@@ -487,7 +593,10 @@ async def _maybe_send_round_closed_summary(bot, tournament_id: int, round_number
                 else:
                     mood = "Этот тур не зашёл, но всё можно вернуть в следующем."
                 text = (
-                    f"🏁 Тур {round_number} завершён ({tournament_name})\n\n"
+                    f"🏁 {round_label} завершён\n"
+                    f"{opener_line}\n"
+                    f"{teaser_top_line}\n"
+                    f"{teaser_match_line}\n\n"
                     f"{place_mark} Место в туре: {place}/{participants}\n"
                     f"📊 Очки за тур: {total_pts}\n"
                     f"🎯{exact} | 📏{diff} | ✅{outcome}\n"
@@ -498,7 +607,10 @@ async def _maybe_send_round_closed_summary(bot, tournament_id: int, round_number
                 )
             else:
                 text = (
-                    f"🏁 Тур {round_number} завершён ({tournament_name})\n\n"
+                    f"🏁 {round_label} завершён\n"
+                    f"{opener_line}\n"
+                    f"{teaser_top_line}\n"
+                    f"{teaser_match_line}\n\n"
                     "В этом туре у тебя не было прогнозов.\n"
                     f"🔥 Серия сейчас: {current_streak}\n"
                     f"🏅 Лучшая серия: {best_streak}\n\n"
@@ -567,14 +679,6 @@ async def _maybe_send_round_closed_summary(bot, tournament_id: int, round_number
             top3_lines: list[str] = []
             for i, (tg_user_id, total_pts, _exact, _diff, _outcome) in enumerate(leaderboard_rows[:3], start=1):
                 top3_lines.append(f"{i}. {pretty_name(int(tg_user_id))} — {int(total_pts or 0)}")
-
-            if leaderboard_rows:
-                best_pts = int(leaderboard_rows[0][1] or 0)
-                mvp_ids = [int(r[0]) for r in leaderboard_rows if int(r[1] or 0) == best_pts]
-                mvp_text = ", ".join(pretty_name(uid) for uid in mvp_ids)
-            else:
-                best_pts = 0
-                mvp_text = "—"
 
             public_lines = [f"🏁 Итоги тура {round_number} ({tournament_name})", ""]
             public_lines.append(f"🏅 MVP: {best_pts} — {mvp_text}")
