@@ -100,6 +100,20 @@ async def _apply_postgres_schema_fixes(conn) -> None:
 
         # settings (на всякий — не валимся, даже если create_all уже сделает)
         "CREATE TABLE IF NOT EXISTS settings (key VARCHAR(64) PRIMARY KEY, value VARCHAR(256) NOT NULL, created_at TIMESTAMP NOT NULL DEFAULT NOW())",
+        # duels
+        "CREATE TABLE IF NOT EXISTS duels (id SERIAL PRIMARY KEY, tournament_id INTEGER NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE, match_id INTEGER NOT NULL REFERENCES matches(id) ON DELETE CASCADE, challenger_tg_user_id BIGINT NOT NULL, opponent_tg_user_id BIGINT NOT NULL, pair_low_tg_user_id BIGINT NOT NULL, pair_high_tg_user_id BIGINT NOT NULL, challenger_pred_home INTEGER NOT NULL, challenger_pred_away INTEGER NOT NULL, opponent_pred_home INTEGER, opponent_pred_away INTEGER, status VARCHAR(16) NOT NULL DEFAULT 'pending', winner_tg_user_id BIGINT, outcome VARCHAR(16), risk_multiplier_bp INTEGER NOT NULL DEFAULT 100, elo_delta_challenger INTEGER NOT NULL DEFAULT 0, elo_delta_opponent INTEGER NOT NULL DEFAULT 0, created_at TIMESTAMP NOT NULL DEFAULT NOW(), responded_at TIMESTAMP NULL, resolved_at TIMESTAMP NULL, CONSTRAINT uq_duels_match_pair UNIQUE (match_id, pair_low_tg_user_id, pair_high_tg_user_id))",
+        "CREATE INDEX IF NOT EXISTS ix_duels_tournament_id ON duels (tournament_id)",
+        "CREATE INDEX IF NOT EXISTS ix_duels_match_id ON duels (match_id)",
+        "CREATE INDEX IF NOT EXISTS ix_duels_challenger_tg_user_id ON duels (challenger_tg_user_id)",
+        "CREATE INDEX IF NOT EXISTS ix_duels_opponent_tg_user_id ON duels (opponent_tg_user_id)",
+        "CREATE INDEX IF NOT EXISTS ix_duels_status ON duels (status)",
+        "CREATE INDEX IF NOT EXISTS ix_duels_winner_tg_user_id ON duels (winner_tg_user_id)",
+
+        # duel elo
+        "CREATE TABLE IF NOT EXISTS duel_elo (id SERIAL PRIMARY KEY, tournament_id INTEGER NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE, tg_user_id BIGINT NOT NULL, rating INTEGER NOT NULL DEFAULT 1000, duels_total INTEGER NOT NULL DEFAULT 0, wins INTEGER NOT NULL DEFAULT 0, losses INTEGER NOT NULL DEFAULT 0, draws INTEGER NOT NULL DEFAULT 0, created_at TIMESTAMP NOT NULL DEFAULT NOW(), updated_at TIMESTAMP NOT NULL DEFAULT NOW(), CONSTRAINT uq_duel_elo_tournament_user UNIQUE (tournament_id, tg_user_id))",
+        "CREATE INDEX IF NOT EXISTS ix_duel_elo_tournament_id ON duel_elo (tournament_id)",
+        "CREATE INDEX IF NOT EXISTS ix_duel_elo_tg_user_id ON duel_elo (tg_user_id)",
+
         "INSERT INTO user_tournaments (tg_user_id, tournament_id) SELECT u.tg_user_id, t.id FROM users u CROSS JOIN tournaments t WHERE t.code = 'RPL' ON CONFLICT (tg_user_id, tournament_id) DO NOTHING",
         # manual-only режим: удаляем API-матчи
         "DELETE FROM points WHERE match_id IN (SELECT id FROM matches WHERE source <> 'manual' OR api_fixture_id IS NOT NULL)",
@@ -149,6 +163,18 @@ async def _apply_sqlite_schema_fixes(conn) -> None:
 
         # backfill memberships for existing users into RPL
         "INSERT OR IGNORE INTO user_tournaments (tg_user_id, tournament_id) SELECT u.tg_user_id, t.id FROM users u CROSS JOIN tournaments t WHERE t.code = 'RPL'",
+        # duels
+        "CREATE TABLE IF NOT EXISTS duels (id INTEGER PRIMARY KEY AUTOINCREMENT, tournament_id INTEGER NOT NULL, match_id INTEGER NOT NULL, challenger_tg_user_id BIGINT NOT NULL, opponent_tg_user_id BIGINT NOT NULL, pair_low_tg_user_id BIGINT NOT NULL, pair_high_tg_user_id BIGINT NOT NULL, challenger_pred_home INTEGER NOT NULL, challenger_pred_away INTEGER NOT NULL, opponent_pred_home INTEGER, opponent_pred_away INTEGER, status VARCHAR(16) NOT NULL DEFAULT 'pending', winner_tg_user_id BIGINT, outcome VARCHAR(16), risk_multiplier_bp INTEGER NOT NULL DEFAULT 100, elo_delta_challenger INTEGER NOT NULL DEFAULT 0, elo_delta_opponent INTEGER NOT NULL DEFAULT 0, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, responded_at TIMESTAMP NULL, resolved_at TIMESTAMP NULL, CONSTRAINT uq_duels_match_pair UNIQUE (match_id, pair_low_tg_user_id, pair_high_tg_user_id))",
+        "CREATE INDEX IF NOT EXISTS ix_duels_tournament_id ON duels (tournament_id)",
+        "CREATE INDEX IF NOT EXISTS ix_duels_match_id ON duels (match_id)",
+        "CREATE INDEX IF NOT EXISTS ix_duels_challenger_tg_user_id ON duels (challenger_tg_user_id)",
+        "CREATE INDEX IF NOT EXISTS ix_duels_opponent_tg_user_id ON duels (opponent_tg_user_id)",
+        "CREATE INDEX IF NOT EXISTS ix_duels_status ON duels (status)",
+        "CREATE INDEX IF NOT EXISTS ix_duels_winner_tg_user_id ON duels (winner_tg_user_id)",
+        # duel elo
+        "CREATE TABLE IF NOT EXISTS duel_elo (id INTEGER PRIMARY KEY AUTOINCREMENT, tournament_id INTEGER NOT NULL, tg_user_id BIGINT NOT NULL, rating INTEGER NOT NULL DEFAULT 1000, duels_total INTEGER NOT NULL DEFAULT 0, wins INTEGER NOT NULL DEFAULT 0, losses INTEGER NOT NULL DEFAULT 0, draws INTEGER NOT NULL DEFAULT 0, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT uq_duel_elo_tournament_user UNIQUE (tournament_id, tg_user_id))",
+        "CREATE INDEX IF NOT EXISTS ix_duel_elo_tournament_id ON duel_elo (tournament_id)",
+        "CREATE INDEX IF NOT EXISTS ix_duel_elo_tg_user_id ON duel_elo (tg_user_id)",
         # predictions.updated_at
         "ALTER TABLE predictions ADD COLUMN updated_at TIMESTAMP",
         "UPDATE predictions SET updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)",

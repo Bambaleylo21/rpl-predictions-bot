@@ -317,3 +317,72 @@ class LeagueMovement(Base):
         default=datetime.utcnow,
         server_default=func.now(),
     )
+
+
+class Duel(Base):
+    __tablename__ = "duels"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    tournament_id: Mapped[int] = mapped_column(ForeignKey("tournaments.id", ondelete="CASCADE"), nullable=False, index=True)
+    match_id: Mapped[int] = mapped_column(ForeignKey("matches.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    challenger_tg_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    opponent_tg_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    pair_low_tg_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    pair_high_tg_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+
+    challenger_pred_home: Mapped[int] = mapped_column(Integer, nullable=False)
+    challenger_pred_away: Mapped[int] = mapped_column(Integer, nullable=False)
+    opponent_pred_home: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    opponent_pred_away: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", server_default="pending", index=True)
+    winner_tg_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    outcome: Mapped[str | None] = mapped_column(String(16), nullable=True)  # challenger_win | opponent_win | draw
+
+    risk_multiplier_bp: Mapped[int] = mapped_column(Integer, nullable=False, default=100, server_default="100")
+    elo_delta_challenger: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    elo_delta_opponent: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        server_default=func.now(),
+    )
+    responded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("match_id", "pair_low_tg_user_id", "pair_high_tg_user_id", name="uq_duels_match_pair"),
+    )
+
+
+class DuelElo(Base):
+    __tablename__ = "duel_elo"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    tournament_id: Mapped[int] = mapped_column(ForeignKey("tournaments.id", ondelete="CASCADE"), nullable=False, index=True)
+    tg_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    rating: Mapped[int] = mapped_column(Integer, nullable=False, default=1000, server_default="1000")
+    duels_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    wins: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    losses: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    draws: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tournament_id", "tg_user_id", name="uq_duel_elo_tournament_user"),
+    )

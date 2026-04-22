@@ -15,6 +15,7 @@ from sqlalchemy import case, delete, select, func
 from app.config import load_admin_ids
 from app.db import SessionLocal
 from app.display import display_round_name, display_team_name, display_tournament_name
+from app.duels import finalize_duels_for_match
 from app.models import (
     League,
     LeagueMovement,
@@ -1694,12 +1695,16 @@ async def admin_set_result(message: types.Message):
         await session.commit()
 
         updates = await recalc_points_for_match_in_session(session, match_id)
+        duel_events = await finalize_duels_for_match(session, int(match_id))
+        await session.commit()
 
     sent_exact_pushes = await _maybe_send_exact_hit_pushes(message.bot, match.id)
     await message.answer(
         f"✅ Результат сохранён: {display_team_name(match.home_team)} — {display_team_name(match.away_team)} | {home_score}:{away_score}. "
         f"Пересчитано очков: {updates}"
     )
+    if duel_events:
+        await message.answer(f"⚔️ Дуэлей 1x1 рассчитано: {len(duel_events)}")
     if sent_exact_pushes > 0:
         await message.answer(f"📬 Пуш «точный счёт» отправлен: {sent_exact_pushes}")
     live_text, round_closed = await _build_admin_match_result_live_update(match.id)
@@ -1907,6 +1912,8 @@ async def admin_set_result_score_input(message: types.Message, state: FSMContext
         await session.commit()
 
         updates = await recalc_points_for_match_in_session(session, match_id)
+        duel_events = await finalize_duels_for_match(session, int(match_id))
+        await session.commit()
 
     await state.clear()
     sent_exact_pushes = await _maybe_send_exact_hit_pushes(message.bot, match.id)
@@ -1914,6 +1921,8 @@ async def admin_set_result_score_input(message: types.Message, state: FSMContext
         f"✅ Результат сохранён: {display_team_name(match.home_team)} — {display_team_name(match.away_team)} | {home_score}:{away_score}. "
         f"Пересчитано очков: {updates}"
     )
+    if duel_events:
+        await message.answer(f"⚔️ Дуэлей 1x1 рассчитано: {len(duel_events)}")
     if sent_exact_pushes > 0:
         await message.answer(f"📬 Пуш «точный счёт» отправлен: {sent_exact_pushes}")
     live_text, round_closed = await _build_admin_match_result_live_update(match.id)

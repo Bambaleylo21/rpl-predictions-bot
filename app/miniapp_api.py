@@ -18,8 +18,9 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from app.config import load_admin_ids
 from app.db import SessionLocal, init_db
 from app.display import display_round_name
+from app.duels import create_duel, finalize_duels_for_match, get_duel_hub, respond_duel
 from app.league_table import build_active_stage_league_table
-from app.models import League, LeagueParticipant, LongtermPrediction, Match, Point, Prediction, Setting, Stage, Tournament, User, UserTournament
+from app.models import Duel, League, LeagueParticipant, LongtermPrediction, Match, Point, Prediction, Setting, Stage, Tournament, User, UserTournament
 from app.scoring import calculate_points
 
 logger = logging.getLogger(__name__)
@@ -701,6 +702,7 @@ async def admin_result_set(request: web.Request) -> web.Response:
             match.home_score = int(home_score)
             match.away_score = int(away_score)
             updates = await _recalc_points_for_match_in_session(session, int(match.id))
+            duel_events = await finalize_duels_for_match(session, int(match.id))
             await session.commit()
 
         return web.json_response(
@@ -711,6 +713,7 @@ async def admin_result_set(request: web.Request) -> web.Response:
                 "match_id": int(match_id),
                 "result": f"{int(home_score)}:{int(away_score)}",
                 "updated_points": int(updates),
+                "updated_duels": int(len(duel_events)),
             }
         )
     except (ValueError, TypeError):
@@ -2623,6 +2626,150 @@ async def longterm_set(request: web.Request) -> web.Response:
         )
 
 
+async def duels_current(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = user.get("id") if isinstance(user, dict) else None
+        if not tg_user_id:
+            return web.json_response({"ok": False, "error": "user_not_found_in_init_data"}, status=400)
+
+        async with SessionLocal() as session:
+            tournament = await _resolve_tournament(session, int(tg_user_id), requested_code=request.query.get("t"))
+            in_tournament = (
+                await session.execute(
+                    select(UserTournament.id).where(
+                        UserTournament.tg_user_id == int(tg_user_id),
+                        UserTournament.tournament_id == int(tournament.id),
+                    )
+                )
+            ).first() is not None
+            if not in_tournament:
+                return web.json_response(
+                    {
+                        "ok": True,
+                        "trusted": True,
+                        "joined": False,
+                        "message": "Сначала вступи в турнир, чтобы открыть блок 1x1.",
+                    }
+                )
+
+            hub = await get_duel_hub(session, tournament_id=int(tournament.id), tg_user_id=int(tg_user_id))
+            await session.commit()
+
+        return web.json_response(
+            {
+                "ok": True,
+                "trusted": True,
+                "joined": True,
+                "tournament_code": tournament.code,
+                "tournament_name": tournament.name,
+                **hub,
+            }
+        )
+    except Exception as e:
+        logger.exception("miniapp duels_current error")
+        return web.json_response(
+            {"ok": False, "error": "duels_current_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
+async def duels_challenge(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = user.get("id") if isinstance(user, dict) else None
+        if not tg_user_id:
+            return web.json_response({"ok": False, "error": "user_not_found_in_init_data"}, status=400)
+
+        body = await request.json()
+        match_id = int(body.get("match_id") or 0)
+        opponent_tg_user_id = int(body.get("opponent_tg_user_id") or 0)
+        pred_home = int(body.get("pred_home") or 0)
+        pred_away = int(body.get("pred_away") or 0)
+        if match_id <= 0 or opponent_tg_user_id <= 0:
+            return web.json_response({"ok": False, "error": "invalid_payload"}, status=400)
+
+        async with SessionLocal() as session:
+            tournament = await _resolve_tournament(session, int(tg_user_id), requested_code=request.query.get("t"))
+            duel = await create_duel(
+                session,
+                tournament_id=int(tournament.id),
+                challenger_tg_user_id=int(tg_user_id),
+                opponent_tg_user_id=int(opponent_tg_user_id),
+                match_id=int(match_id),
+                challenger_pred_home=int(pred_home),
+                challenger_pred_away=int(pred_away),
+            )
+            await session.commit()
+
+        return web.json_response(
+            {
+                "ok": True,
+                "duel_id": int(duel.id),
+                "status": str(duel.status),
+            }
+        )
+    except ValueError as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=400)
+    except Exception as e:
+        logger.exception("miniapp duels_challenge error")
+        return web.json_response(
+            {"ok": False, "error": "duels_challenge_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
+async def duels_respond(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = user.get("id") if isinstance(user, dict) else None
+        if not tg_user_id:
+            return web.json_response({"ok": False, "error": "user_not_found_in_init_data"}, status=400)
+
+        body = await request.json()
+        duel_id = int(body.get("duel_id") or 0)
+        action = str(body.get("action") or "").strip().lower()
+        if duel_id <= 0 or action not in ("accept", "decline"):
+            return web.json_response({"ok": False, "error": "invalid_payload"}, status=400)
+        pred_home = body.get("pred_home")
+        pred_away = body.get("pred_away")
+
+        async with SessionLocal() as session:
+            duel = await respond_duel(
+                session,
+                duel_id=int(duel_id),
+                responder_tg_user_id=int(tg_user_id),
+                accept=action == "accept",
+                pred_home=int(pred_home) if pred_home is not None else None,
+                pred_away=int(pred_away) if pred_away is not None else None,
+            )
+            await session.commit()
+        return web.json_response(
+            {
+                "ok": True,
+                "duel_id": int(duel.id),
+                "status": str(duel.status),
+            }
+        )
+    except ValueError as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=400)
+    except Exception as e:
+        logger.exception("miniapp duels_respond error")
+        return web.json_response(
+            {"ok": False, "error": "duels_respond_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
 async def table_current(request: web.Request) -> web.Response:
     try:
         auth_result = _extract_verified_user(request)
@@ -2766,6 +2913,9 @@ def build_app() -> web.Application:
     app.router.add_post("/api/miniapp/predict/set", predict_set)
     app.router.add_get("/api/miniapp/longterm/current", longterm_current)
     app.router.add_post("/api/miniapp/longterm/set", longterm_set)
+    app.router.add_get("/api/miniapp/duels/current", duels_current)
+    app.router.add_post("/api/miniapp/duels/challenge", duels_challenge)
+    app.router.add_post("/api/miniapp/duels/respond", duels_respond)
     app.router.add_get("/api/miniapp/admin/rounds", admin_rounds)
     app.router.add_get("/api/miniapp/admin/results/current", admin_results_current)
     app.router.add_post("/api/miniapp/admin/result/set", admin_result_set)

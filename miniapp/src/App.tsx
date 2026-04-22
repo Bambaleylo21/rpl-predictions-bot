@@ -221,7 +221,61 @@ type LongtermResponse = {
   }
 }
 
-type Screen = 'predict' | 'profile' | 'table' | 'admin'
+type DuelItem = {
+  duel_id: number
+  status: 'pending' | 'accepted' | 'finished' | 'declined' | 'expired'
+  match_id: number
+  home_team: string
+  away_team: string
+  group_label?: string | null
+  kickoff: string
+  result?: string | null
+  challenger_tg_user_id: number
+  challenger_name: string
+  challenger_pred: string
+  opponent_tg_user_id: number
+  opponent_name: string
+  opponent_pred?: string | null
+  risk_multiplier_bp: number
+  outcome?: string | null
+  winner_tg_user_id?: number | null
+  elo_delta_challenger: number
+  elo_delta_opponent: number
+}
+
+type DuelsResponse = {
+  ok: boolean
+  error?: string
+  reason?: string
+  trusted?: boolean
+  joined?: boolean
+  message?: string
+  tournament_code?: string
+  tournament_name?: string
+  elo?: {
+    rating: number
+    duels_total: number
+    wins: number
+    losses: number
+    draws: number
+  }
+  match_options?: Array<{
+    match_id: number
+    home_team: string
+    away_team: string
+    group_label?: string | null
+    kickoff: string
+    blocked_for_user?: boolean
+  }>
+  opponents?: Array<{
+    tg_user_id: number
+    display_name: string
+  }>
+  active?: DuelItem[]
+  finished?: DuelItem[]
+}
+
+type Screen = 'predict' | 'duels' | 'profile' | 'table' | 'admin'
 
 type AdminRound = {
   round: number
@@ -437,6 +491,15 @@ function App() {
   const [adminSavingMatchId, setAdminSavingMatchId] = useState<number | null>(null)
   const [adminScoreInputs, setAdminScoreInputs] = useState<Record<number, string>>({})
   const [adminRecalcLoading, setAdminRecalcLoading] = useState<boolean>(false)
+  const [duelsData, setDuelsData] = useState<DuelsResponse | null>(null)
+  const [duelsError, setDuelsError] = useState<string | null>(null)
+  const [duelsNotice, setDuelsNotice] = useState<string | null>(null)
+  const [duelMatchId, setDuelMatchId] = useState<number>(0)
+  const [duelOpponentId, setDuelOpponentId] = useState<number>(0)
+  const [duelScoreInput, setDuelScoreInput] = useState<string>('')
+  const [duelBusyId, setDuelBusyId] = useState<number | null>(null)
+  const [duelsFilter, setDuelsFilter] = useState<'active' | 'finished'>('active')
+  const [duelAcceptInputs, setDuelAcceptInputs] = useState<Record<number, string>>({})
 
   const selectedRoundNumber =
     selectedTournamentCode === 'WC2026'
@@ -531,6 +594,28 @@ function App() {
       nextInputs[item.match_id] = item.prediction || ''
     }
     setScoreInputs(nextInputs)
+  }
+
+  const loadDuelsCurrent = async (apiBase: string, initData: string, tournamentCode: string) => {
+    const headers = {
+      'X-Telegram-Init-Data': initData,
+    }
+    const tParam = encodeURIComponent(tournamentCode || 'RPL')
+    const res = await fetch(`${apiBase}/api/miniapp/duels/current?t=${tParam}`, { headers })
+    const data = (await res.json()) as DuelsResponse
+    if (!res.ok || !data.ok) {
+      throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+    }
+    setDuelsData(data)
+    setDuelsError(null)
+
+    if (!duelMatchId && (data.match_options || []).length > 0) {
+      const firstOpen = (data.match_options || []).find((m) => !m.blocked_for_user)
+      if (firstOpen) setDuelMatchId(firstOpen.match_id)
+    }
+    if (!duelOpponentId && (data.opponents || []).length > 0) {
+      setDuelOpponentId(data.opponents?.[0]?.tg_user_id || 0)
+    }
   }
 
   useEffect(() => {
@@ -702,6 +787,10 @@ function App() {
       .catch((err) => {
         setLongtermError(String(err))
       })
+
+    loadDuelsCurrent(apiBase, initData, selectedTournamentCode).catch((err) => {
+      setDuelsError(String(err))
+    })
   }, [selectedTournamentCode, selectedRoundNumber, tableRoundFilter])
 
   const selectTournament = async (code: string) => {
@@ -816,6 +905,88 @@ function App() {
       setLongtermNotice(`Ошибка сохранения: ${String(err)}`)
     } finally {
       setSavingLongtermType(null)
+    }
+  }
+
+  const createDuelChallenge = async () => {
+    const score = normalizeScore(duelScoreInput)
+    if (!duelMatchId || !duelOpponentId || !score) {
+      setDuelsNotice('Выбери матч, соперника и счёт в формате 2:1.')
+      return
+    }
+    const [left, right] = score.split(':')
+    const predHome = Number(left)
+    const predAway = Number(right)
+
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    setDuelsNotice(null)
+    setDuelBusyId(-1)
+    try {
+      const tParam = encodeURIComponent(selectedTournamentCode || 'RPL')
+      const res = await fetch(`${apiBase}/api/miniapp/duels/challenge?t=${tParam}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Telegram-Init-Data': initData,
+        },
+        body: JSON.stringify({
+          match_id: duelMatchId,
+          opponent_tg_user_id: duelOpponentId,
+          pred_home: predHome,
+          pred_away: predAway,
+        }),
+      })
+      const data = (await res.json()) as { ok?: boolean; error?: string; reason?: string }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      setDuelsNotice('Вызов отправлен.')
+      setDuelScoreInput('')
+      await loadDuelsCurrent(apiBase, initData, selectedTournamentCode)
+    } catch (err) {
+      setDuelsNotice(`Ошибка 1x1: ${String(err)}`)
+    } finally {
+      setDuelBusyId(null)
+    }
+  }
+
+  const respondDuel = async (duelId: number, action: 'accept' | 'decline', score?: string) => {
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    setDuelBusyId(duelId)
+    setDuelsNotice(null)
+    try {
+      const payload: Record<string, any> = { duel_id: duelId, action }
+      if (action === 'accept') {
+        const normalized = normalizeScore(score || '')
+        if (!normalized) {
+          throw new Error('Для принятия введи счёт 2:1')
+        }
+        const [l, r] = normalized.split(':')
+        payload.pred_home = Number(l)
+        payload.pred_away = Number(r)
+      }
+
+      const tParam = encodeURIComponent(selectedTournamentCode || 'RPL')
+      const res = await fetch(`${apiBase}/api/miniapp/duels/respond?t=${tParam}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Telegram-Init-Data': initData,
+        },
+        body: JSON.stringify(payload),
+      })
+      const data = (await res.json()) as { ok?: boolean; error?: string; reason?: string; status?: string }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      setDuelsNotice(action === 'accept' ? 'Вызов принят.' : 'Вызов отклонён.')
+      await loadDuelsCurrent(apiBase, initData, selectedTournamentCode)
+    } catch (err) {
+      setDuelsNotice(`Ошибка 1x1: ${String(err)}`)
+    } finally {
+      setDuelBusyId(null)
     }
   }
 
@@ -974,12 +1145,14 @@ function App() {
   const tabMeta: Record<Screen, { title: string; subtitle: string; icon: string }> = {
     profile: { title: 'Профиль', subtitle: 'Личная статистика участника', icon: '👤' },
     predict: { title: 'Матчи', subtitle: 'Открытые и завершённые матчи в одном месте', icon: '⚽' },
+    duels: { title: '1x1', subtitle: 'Вызовы, споры и рейтинг Elo', icon: '⚔️' },
     table: { title: 'Таблица', subtitle: 'Позиции участников турнира', icon: '🏆' },
     admin: { title: 'Админ', subtitle: 'Внесение итогов и пересчёт очков', icon: '🛠️' },
   }
   const bottomTabs: Array<{ key: Screen; icon: string; label: string }> = [
     { key: 'profile', icon: '👤', label: 'Профиль' },
     { key: 'predict', icon: '⚽', label: 'Матчи' },
+    { key: 'duels', icon: '⚔️', label: '1x1' },
     { key: 'table', icon: '🏆', label: 'Таблица' },
   ]
   if (meData?.is_admin) {
@@ -1736,6 +1909,172 @@ function App() {
               )}
             </div>
           </section>
+        ) : null}
+
+        {screen === 'duels' ? (
+          <>
+            <section className="cards">
+              <div className="card">
+                {duelsError ? (
+                  <div className="card-text">Ошибка загрузки 1x1: {duelsError}</div>
+                ) : !duelsData ? (
+                  <div className="card-text">Загружаю блок 1x1...</div>
+                ) : duelsData.joined === false ? (
+                  <div className="card-text">{duelsData.message || 'Сначала вступи в турнир.'}</div>
+                ) : (
+                  <>
+                    <div className="card-title">Рейтинг Elo</div>
+                    <div className="profile-hits-line">
+                      Elo: <b>{duelsData.elo?.rating ?? 1000}</b> · W <b>{duelsData.elo?.wins ?? 0}</b> · L{' '}
+                      <b>{duelsData.elo?.losses ?? 0}</b> · D <b>{duelsData.elo?.draws ?? 0}</b> · всего{' '}
+                      <b>{duelsData.elo?.duels_total ?? 0}</b>
+                    </div>
+
+                    <div className="card-title" style={{ marginTop: 10 }}>Бросить вызов</div>
+                    <div className="predict-row">
+                      <select
+                        className="score-input select-input"
+                        value={duelMatchId ? String(duelMatchId) : ''}
+                        onChange={(e) => setDuelMatchId(Number(e.target.value || 0))}
+                      >
+                        <option value="">Матч</option>
+                        {(duelsData.match_options || []).map((m) => (
+                          <option key={m.match_id} value={m.match_id} disabled={Boolean(m.blocked_for_user)}>
+                            {m.kickoff} · {m.home_team} — {m.away_team}{m.blocked_for_user ? ' (занят)' : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="predict-row" style={{ marginTop: 8 }}>
+                      <select
+                        className="score-input select-input"
+                        value={duelOpponentId ? String(duelOpponentId) : ''}
+                        onChange={(e) => setDuelOpponentId(Number(e.target.value || 0))}
+                      >
+                        <option value="">Соперник</option>
+                        {(duelsData.opponents || []).map((u) => (
+                          <option key={u.tg_user_id} value={u.tg_user_id}>
+                            {u.display_name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="predict-row" style={{ marginTop: 8 }}>
+                      <input
+                        className="score-input"
+                        value={duelScoreInput}
+                        onChange={(e) => setDuelScoreInput(formatScoreInput(e.target.value))}
+                        placeholder="-:-"
+                        inputMode="numeric"
+                      />
+                      <button
+                        className={`save-btn ${normalizeScore(duelScoreInput) ? 'is-dirty' : 'is-empty'}`}
+                        onClick={createDuelChallenge}
+                        disabled={duelBusyId === -1}
+                      >
+                        {duelBusyId === -1 ? '…' : normalizeScore(duelScoreInput) ? '✓' : ''}
+                      </button>
+                    </div>
+                    {duelsNotice ? <div className="card-text" style={{ marginTop: 10 }}>{duelsNotice}</div> : null}
+                  </>
+                )}
+              </div>
+            </section>
+
+            {duelsData?.joined ? (
+              <section className="cards space-top">
+                <div className="card card-static">
+                  <div className="match-toggle">
+                    <button
+                      className={`match-toggle-btn ${duelsFilter === 'active' ? 'is-active' : ''}`}
+                      onClick={() => setDuelsFilter('active')}
+                    >
+                      Активные
+                    </button>
+                    <button
+                      className={`match-toggle-btn ${duelsFilter === 'finished' ? 'is-active' : ''}`}
+                      onClick={() => setDuelsFilter('finished')}
+                    >
+                      Завершённые
+                    </button>
+                  </div>
+                </div>
+              </section>
+            ) : null}
+
+            {duelsData?.joined ? (
+              <section className="cards space-top">
+                <div className="card compact-list-card">
+                  {(duelsFilter === 'active' ? duelsData.active : duelsData.finished)?.length ? (
+                    (duelsFilter === 'active' ? duelsData.active : duelsData.finished)!.map((d) => {
+                      const isIncomingPending =
+                        d.status === 'pending' && tgUserId != null && Number(d.opponent_tg_user_id) === Number(tgUserId)
+                      const isMine = tgUserId != null && Number(d.challenger_tg_user_id) === Number(tgUserId)
+                      return (
+                        <div className="compact-match" key={`duel-${d.duel_id}`}>
+                          <div className="compact-meta">
+                            {d.group_label ? <span className="group-small">[{d.group_label}]</span> : <span className="group-small">—</span>}
+                            <span className="kickoff-small">{d.kickoff} МСК</span>
+                          </div>
+                          <div className="compact-main compact-main-result">
+                            <span className="team-name team-left">{teamWithFlag(d.home_team)}</span>
+                            <span className="score-inline-pill">{isMine ? d.challenger_pred : (d.opponent_pred || '-:-')}</span>
+                            <span className="team-name team-right">{teamWithFlag(d.away_team)}</span>
+                            <span className="result-badge">{d.status}</span>
+                          </div>
+                          <div className="compact-note">
+                            {d.challenger_name} {d.challenger_pred} vs {d.opponent_name} {d.opponent_pred || '—'}
+                            {d.result ? <> · Итог: <b>{d.result}</b></> : null}
+                            {d.status === 'finished' ? (
+                              <>
+                                {' '}
+                                · ΔElo {isMine ? (d.elo_delta_challenger >= 0 ? `+${d.elo_delta_challenger}` : d.elo_delta_challenger) : (d.elo_delta_opponent >= 0 ? `+${d.elo_delta_opponent}` : d.elo_delta_opponent)}
+                              </>
+                            ) : null}
+                          </div>
+
+                          {isIncomingPending ? (
+                            <div className="predict-row" style={{ marginTop: 8 }}>
+                              <input
+                                className="score-input"
+                                value={duelAcceptInputs[d.duel_id] || ''}
+                                onChange={(e) =>
+                                  setDuelAcceptInputs((prev) => ({
+                                    ...prev,
+                                    [d.duel_id]: formatScoreInput(e.target.value),
+                                  }))
+                                }
+                                placeholder="-:-"
+                                inputMode="numeric"
+                              />
+                              <button
+                                className="save-btn is-dirty"
+                                onClick={() => respondDuel(d.duel_id, 'accept', duelAcceptInputs[d.duel_id] || '')}
+                                disabled={duelBusyId === d.duel_id}
+                              >
+                                ✓
+                              </button>
+                              <button
+                                className="save-btn is-empty"
+                                onClick={() => respondDuel(d.duel_id, 'decline')}
+                                disabled={duelBusyId === d.duel_id}
+                              >
+                                ×
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      )
+                    })
+                  ) : (
+                    <div className="card-text">
+                      {duelsFilter === 'active' ? 'Активных дуэлей пока нет.' : 'Завершённых дуэлей пока нет.'}
+                    </div>
+                  )}
+                </div>
+              </section>
+            ) : null}
+          </>
         ) : null}
 
         {screen === 'table' ? (
