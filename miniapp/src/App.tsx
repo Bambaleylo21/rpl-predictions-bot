@@ -437,7 +437,6 @@ function App() {
   const [adminSavingMatchId, setAdminSavingMatchId] = useState<number | null>(null)
   const [adminScoreInputs, setAdminScoreInputs] = useState<Record<number, string>>({})
   const [adminRecalcLoading, setAdminRecalcLoading] = useState<boolean>(false)
-  const [refreshingAll, setRefreshingAll] = useState<boolean>(false)
 
   const selectedRoundNumber =
     selectedTournamentCode === 'WC2026'
@@ -820,108 +819,6 @@ function App() {
     }
   }
 
-  const refreshAllData = async () => {
-    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
-    const initData = getInitData()
-    if (!initData) {
-      return
-    }
-    const headers = { 'X-Telegram-Init-Data': initData }
-    const tParam = encodeURIComponent(selectedTournamentCode || 'RPL')
-    const targetParam =
-      profileTargetUserId != null ? `&target_user_id=${encodeURIComponent(String(profileTargetUserId))}` : ''
-    const rParam = selectedRoundNumber != null ? `&round=${encodeURIComponent(String(selectedRoundNumber))}` : ''
-    const tableRoundParam =
-      selectedTournamentCode === 'WC2026' && tableRoundFilter !== 'ALL'
-        ? `&round=${encodeURIComponent(String(tableRoundFilter))}`
-        : ''
-
-    setRefreshingAll(true)
-    await Promise.allSettled([
-      (async () => {
-        try {
-          const meRes = await fetch(`${apiBase}/api/miniapp/me`, { headers })
-          const meJson = (await meRes.json()) as MeResponse
-          if (!meRes.ok) throw new Error(meJson.reason || meJson.error || `HTTP ${meRes.status}`)
-          setMeData(meJson)
-          setApiError(null)
-        } catch (err) {
-          setApiError(String(err))
-        }
-      })(),
-      (async () => {
-        try {
-          const res = await fetch(`${apiBase}/api/miniapp/profile?t=${tParam}${targetParam}`, { headers })
-          const data = (await res.json()) as ProfileResponse
-          if (!res.ok) throw new Error(data.reason || data.error || `HTTP ${res.status}`)
-          setProfileData(data)
-          setProfileError(null)
-        } catch (err) {
-          setProfileError(String(err))
-        }
-      })(),
-      (async () => {
-        try {
-          const res = await fetch(`${apiBase}/api/miniapp/predictions/current?t=${tParam}${rParam}`, { headers })
-          const data = (await res.json()) as PredictionsResponse
-          if (!res.ok) throw new Error(data.reason || data.error || `HTTP ${res.status}`)
-          setPredictionsData(data)
-          setPredictionsError(null)
-        } catch (err) {
-          setPredictionsError(String(err))
-        }
-      })(),
-      (async () => {
-        try {
-          await loadPredictCurrent(apiBase, initData, selectedTournamentCode, selectedRoundNumber)
-          setPredictError(null)
-        } catch (err) {
-          setPredictError(String(err))
-        }
-      })(),
-      (async () => {
-        try {
-          const res = await fetch(`${apiBase}/api/miniapp/table/current?t=${tParam}${tableRoundParam}`, { headers })
-          const data = (await res.json()) as TableResponse
-          if (!res.ok) throw new Error(data.reason || data.error || `HTTP ${res.status}`)
-          setTableData(data)
-          setTableError(null)
-        } catch (err) {
-          setTableError(String(err))
-        }
-      })(),
-      (async () => {
-        try {
-          const res = await fetch(`${apiBase}/api/miniapp/longterm/current?t=${tParam}`, { headers })
-          const data = (await res.json()) as LongtermResponse
-          if (!res.ok) throw new Error(data.reason || data.error || `HTTP ${res.status}`)
-          setLongtermData(data)
-          setLongtermError(null)
-          setWinnerPickInput(data.picks?.winner || '')
-          setScorerPickInput(data.picks?.scorer || '')
-        } catch (err) {
-          setLongtermError(String(err))
-        }
-      })(),
-      ...(meData?.is_admin
-        ? [
-            (async () => {
-              try {
-                await loadAdminRounds(apiBase, initData, selectedTournamentCode)
-                if (adminRound != null) {
-                  await loadAdminResults(apiBase, initData, selectedTournamentCode, adminRound, adminMode)
-                }
-                setAdminError(null)
-              } catch (err) {
-                setAdminError(String(err))
-              }
-            })(),
-          ]
-        : []),
-    ])
-    setRefreshingAll(false)
-  }
-
   const loadAdminRounds = async (apiBase: string, initData: string, tournamentCode: string) => {
     const headers = { 'X-Telegram-Init-Data': initData }
     const tParam = encodeURIComponent(tournamentCode || 'RPL')
@@ -1245,33 +1142,21 @@ function App() {
             <p>{tabMeta[screen].subtitle}</p>
           </div>
           <div className="header-controls">
-            <div className="header-top-actions">
-              <div className="tournament-icons">
-                {tournamentButtons.map((t) => (
-                  <button
-                    key={t.code}
-                    className={`tournament-icon ${selectedTournamentCode === t.code ? 'is-active' : ''}`}
-                    onClick={() => selectTournament(t.code)}
-                    title={t.label}
-                    disabled={refreshingAll}
-                  >
-                    <img
-                      src={selectedTournamentCode === t.code ? t.activeIcon : t.inactiveIcon}
-                      alt={t.label}
-                    />
-                    <small>{t.label}</small>
-                  </button>
-                ))}
-              </div>
-              <button
-                className={`global-refresh-btn ${refreshingAll ? 'is-loading' : ''}`}
-                onClick={refreshAllData}
-                disabled={refreshingAll}
-                title="Обновить данные"
-                aria-label="Обновить данные"
-              >
-                🔄
-              </button>
+            <div className="tournament-icons">
+              {tournamentButtons.map((t) => (
+                <button
+                  key={t.code}
+                  className={`tournament-icon ${selectedTournamentCode === t.code ? 'is-active' : ''}`}
+                  onClick={() => selectTournament(t.code)}
+                  title={t.label}
+                >
+                  <img
+                    src={selectedTournamentCode === t.code ? t.activeIcon : t.inactiveIcon}
+                    alt={t.label}
+                  />
+                  <small>{t.label}</small>
+                </button>
+              ))}
             </div>
             {screen === 'predict' && !(showWcSelector && stageTab === 'LT') ? (
               <div className="match-toggle">
