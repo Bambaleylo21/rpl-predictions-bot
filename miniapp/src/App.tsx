@@ -67,6 +67,7 @@ type ProfileResponse = {
     target: number
     left: number
   } | null
+  insights?: string[]
   recent_form?: Array<{
     round: number
     emoji: string
@@ -423,6 +424,7 @@ function App() {
   const [tableSortDir, setTableSortDir] = useState<'desc' | 'asc'>('desc')
   const [achievementsExpanded, setAchievementsExpanded] = useState<boolean>(false)
   const [historyExpanded, setHistoryExpanded] = useState<boolean>(false)
+  const [currentInsight, setCurrentInsight] = useState<string | null>(null)
   const [adminRounds, setAdminRounds] = useState<AdminRound[]>([])
   const [adminRound, setAdminRound] = useState<number | null>(null)
   const [adminMode, setAdminMode] = useState<'open' | 'all'>('open')
@@ -621,6 +623,23 @@ function App() {
   useEffect(() => {
     setAchievementsExpanded(false)
   }, [selectedTournamentCode, profileTargetUserId, profileData?.viewed_tg_user_id])
+
+  useEffect(() => {
+    if (screen !== 'profile') return
+    const pool = profileData?.insights || []
+    if (!pool.length) {
+      setCurrentInsight(null)
+      return
+    }
+    const idx = Math.floor(Math.random() * pool.length)
+    setCurrentInsight(pool[idx] || null)
+  }, [
+    screen,
+    selectedTournamentCode,
+    profileTargetUserId,
+    profileData?.viewed_tg_user_id,
+    profileData?.insights?.join('||'),
+  ])
 
   useEffect(() => {
     const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
@@ -1566,6 +1585,13 @@ function App() {
                       Сыграно {profileData.played_matches ?? 0} из {profileData.total_matches ?? 0} матчей
                     </div>
                   </div>
+
+                  {currentInsight ? (
+                    <div className="profile-insight">
+                      <div className="profile-insight-head">Инсайты</div>
+                      <div className="profile-insight-text">{currentInsight}</div>
+                    </div>
+                  ) : null}
 
                   {(profileData.recent_form || []).length > 0 ? (
                     <div className="profile-form">

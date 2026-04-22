@@ -1642,6 +1642,69 @@ async def profile(request: web.Request) -> web.Response:
             _best_status("diff", "Лучший по 📏 разнице")
             _best_status("outcome", "Лучший по ✅ исходам")
 
+            insights: list[str] = []
+
+            def _add_insight(text: str) -> None:
+                t = (text or "").strip()
+                if not t:
+                    return
+                if t not in insights:
+                    insights.append(t)
+
+            if predictions_count == 0:
+                _add_insight("Пока нет прогнозов. Поставь первый прогноз, чтобы запустить личную статистику.")
+            elif resolved_predictions_count == 0:
+                _add_insight("Прогнозы уже стоят. Ждём первые результаты матчей, чтобы посчитать форму и точность.")
+
+            if resolved_predictions_count >= 4:
+                if hit_rate >= 70.0:
+                    _add_insight(f"Отличная точность: {hit_rate:.1f}%. Ты стабильно берёшь очки на дистанции.")
+                elif hit_rate < 35.0:
+                    _add_insight(f"Точность сейчас {hit_rate:.1f}%. Попробуй меньше рисковать с точным счётом.")
+
+            if exact_hits >= 2:
+                _add_insight(f"Точных счётов уже {exact_hits}. Это сильный буст по очкам в таблице.")
+            if diff_hits >= 3:
+                _add_insight(f"Угаданных разниц: {diff_hits}. Надёжная стратегия для стабильного набора.")
+            if outcome_hits >= 3:
+                _add_insight(f"Исходы заходят: {outcome_hits}. База работает, можно усиливать точными.")
+
+            if started_total >= 3:
+                if missed_matches == 0:
+                    _add_insight("Пока без пропусков. Дисциплина даёт преимущество на длинной дистанции.")
+                elif missed_matches >= 3:
+                    _add_insight(f"Пропущено {missed_matches} матчей. Регулярные ставки могут быстро вернуть позиции.")
+                else:
+                    _add_insight(f"Есть пропуски ({missed_matches}). Закрывай туры полностью, чтобы не терять лёгкие очки.")
+
+            if participants > 1 and user_place is not None:
+                if user_place == 1:
+                    _add_insight("Ты лидер таблицы. Удержать первое место обычно сложнее, чем взять его.")
+                elif user_place <= 3:
+                    _add_insight(f"Ты в топ-{user_place}. Один удачный тур может поднять на первое место.")
+                else:
+                    _add_insight(f"Текущее место: {user_place}/{participants}. Впереди ещё много очков в матче-апах.")
+
+            if fire_streak >= 3:
+                _add_insight(f"Серия с очками: {fire_streak}. Ты в хорошем темпе.")
+            if cold_streak >= 3:
+                _add_insight(f"Серия без очков: {cold_streak}. Можно выправить форму на следующем блоке матчей.")
+            if slow_streak >= 3:
+                _add_insight(f"Без прогнозов подряд: {slow_streak} матчей. Вернись в ритм, чтобы не выпадать из гонки.")
+
+            if next_achievement is not None and int(next_achievement.get("left") or 0) <= 2:
+                _add_insight(
+                    f"До ачивки «{next_achievement.get('title', '')}» осталось {int(next_achievement.get('left') or 0)}."
+                )
+
+            if tournament_progress_pct <= 10.0 and predictions_count > 0:
+                _add_insight("Турнир только начинается. Ранний отрыв легко создать за счёт дисциплины.")
+            elif tournament_progress_pct >= 80.0:
+                _add_insight("Финиш турнира близко. Сейчас особенно важен каждый матч.")
+
+            if not insights:
+                _add_insight("Поставь прогноз на ближайший матч — и здесь появятся персональные инсайты.")
+
             tournament_history = await _build_profile_tournament_history(
                 session=session,
                 tg_user_id=int(target_tg_user_id),
@@ -1679,6 +1742,7 @@ async def profile(request: web.Request) -> web.Response:
                     "achievements_earned": int(achievements_earned),
                     "achievements_total": int(len(achievements)),
                     "next_achievement": next_achievement,
+                    "insights": insights,
                     "recent_form": recent_form,
                     "live_statuses": live_statuses,
                     "form_statuses": form_statuses,
