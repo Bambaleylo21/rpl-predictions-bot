@@ -379,11 +379,11 @@ const crowdText = (item: {
   crowd_away_pct?: number
 }): string | null => {
   const count = Number(item.crowd_count || 0)
-  if (count < 4) return null
+  if (count < 4) return `0% · 0% · 0%`
   const h = Number(item.crowd_home_pct || 0)
   const d = Number(item.crowd_draw_pct || 0)
   const a = Number(item.crowd_away_pct || 0)
-  return `👥 П1 ${h}% · X ${d}% · П2 ${a}%`
+  return `${h}% · ${d}% · ${a}%`
 }
 
 function App() {
