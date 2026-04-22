@@ -856,6 +856,7 @@ async def _build_profile_achievements(
                 "title": title,
                 "emoji": emoji,
                 "earned": bool(earned),
+                "taken_by_other": False,
                 "description": description,
             }
         )
@@ -893,6 +894,8 @@ async def _build_profile_achievements(
             earned=(holder_id is not None and holder_id == int(tg_user_id)),
             description=f"Самый ранний прогноз, который дал категорию {emoji}.",
         )
+        if holder_id is not None and holder_id != int(tg_user_id):
+            achievements[-1]["taken_by_other"] = True
 
     # Серии: считаем по завершённым матчам турнира; пропуск или другая категория рвут серию.
     closed_match_rows = (
@@ -1519,7 +1522,7 @@ async def profile(request: web.Request) -> web.Response:
                         Match.away_score.is_not(None),
                     )
                     .order_by(Match.kickoff_time.desc(), Match.id.desc())
-                    .limit(8)
+                    .limit(5)
                 )
             ).all()
             recent_form = []
@@ -1710,6 +1713,54 @@ def _point_category_emoji(category: str | None, points: int | None) -> str:
         return "✅"
     if int(points or 0) <= 0:
         return "❌"
+    return "❌"
+
+
+async def _crowd_stats_for_matches(session, tournament_id: int, match_ids: list[int]) -> dict[int, dict[str, int]]:
+    """
+    Возвращает агрегированную статистику по прогнозам комьюнити:
+    total/home/draw/away в процентах (0-100) + total count.
+    Учитываем только активных участников выбранного турнира.
+    """
+    if not match_ids:
+        return {}
+
+    rows = (
+        await session.execute(
+            select(
+                Prediction.match_id.label("match_id"),
+                func.count(Prediction.id).label("total_cnt"),
+                func.sum(case((Prediction.pred_home > Prediction.pred_away, 1), else_=0)).label("home_cnt"),
+                func.sum(case((Prediction.pred_home == Prediction.pred_away, 1), else_=0)).label("draw_cnt"),
+                func.sum(case((Prediction.pred_home < Prediction.pred_away, 1), else_=0)).label("away_cnt"),
+            )
+            .select_from(Prediction)
+            .join(
+                UserTournament,
+                (UserTournament.tg_user_id == Prediction.tg_user_id)
+                & (UserTournament.tournament_id == int(tournament_id))
+                & (UserTournament.is_active == 1),
+            )
+            .where(Prediction.match_id.in_(match_ids))
+            .group_by(Prediction.match_id)
+        )
+    ).all()
+
+    out: dict[int, dict[str, int]] = {}
+    for r in rows:
+        total = int(r.total_cnt or 0)
+        if total <= 0:
+            continue
+        home = int(r.home_cnt or 0)
+        draw = int(r.draw_cnt or 0)
+        away = int(r.away_cnt or 0)
+        out[int(r.match_id)] = {
+            "crowd_count": total,
+            "crowd_home_pct": int(round((home * 100.0) / total)),
+            "crowd_draw_pct": int(round((draw * 100.0) / total)),
+            "crowd_away_pct": int(round((away * 100.0) / total)),
+        }
+    return out
     return "✅"
 
 
@@ -1944,6 +1995,7 @@ async def predictions_current(request: web.Request) -> web.Response:
             match_ids = [int(m.id) for m in matches]
             preds_map: dict[int, Prediction] = {}
             points_map: dict[int, Point] = {}
+            crowd_map: dict[int, dict[str, int]] = {}
 
             if match_ids:
                 preds = (
@@ -1965,6 +2017,7 @@ async def predictions_current(request: web.Request) -> web.Response:
                     )
                 ).scalars().all()
                 points_map = {int(p.match_id): p for p in points}
+                crowd_map = await _crowd_stats_for_matches(session, int(tournament.id), match_ids)
 
             items: list[dict[str, Any]] = []
             total_points = 0
@@ -1976,6 +2029,7 @@ async def predictions_current(request: web.Request) -> web.Response:
                     total_points += points_val
 
                 is_closed = m.home_score is not None and m.away_score is not None
+                crowd = crowd_map.get(int(m.id), {})
                 items.append(
                     {
                         "match_id": int(m.id),
@@ -1989,6 +2043,10 @@ async def predictions_current(request: web.Request) -> web.Response:
                         "points": points_val,
                         "category": pt.category if pt is not None else None,
                         "emoji": _point_category_emoji(pt.category if pt is not None else None, points_val),
+                        "crowd_count": int(crowd.get("crowd_count", 0)),
+                        "crowd_home_pct": int(crowd.get("crowd_home_pct", 0)),
+                        "crowd_draw_pct": int(crowd.get("crowd_draw_pct", 0)),
+                        "crowd_away_pct": int(crowd.get("crowd_away_pct", 0)),
                     }
                 )
 
@@ -2175,6 +2233,7 @@ async def predict_current(request: web.Request) -> web.Response:
 
             match_ids = [int(m.id) for m in matches]
             preds_map: dict[int, Prediction] = {}
+            crowd_map: dict[int, dict[str, int]] = {}
             if match_ids:
                 preds = (
                     await session.execute(
@@ -2185,10 +2244,12 @@ async def predict_current(request: web.Request) -> web.Response:
                     )
                 ).scalars().all()
                 preds_map = {int(p.match_id): p for p in preds}
+                crowd_map = await _crowd_stats_for_matches(session, int(tournament.id), match_ids)
 
             items: list[dict[str, Any]] = []
             for m in matches:
                 pred = preds_map.get(int(m.id))
+                crowd = crowd_map.get(int(m.id), {})
                 items.append(
                     {
                         "match_id": int(m.id),
@@ -2197,6 +2258,10 @@ async def predict_current(request: web.Request) -> web.Response:
                         "group_label": m.group_label,
                         "kickoff": m.kickoff_time.strftime("%d.%m %H:%M"),
                         "prediction": f"{pred.pred_home}:{pred.pred_away}" if pred is not None else None,
+                        "crowd_count": int(crowd.get("crowd_count", 0)),
+                        "crowd_home_pct": int(crowd.get("crowd_home_pct", 0)),
+                        "crowd_draw_pct": int(crowd.get("crowd_draw_pct", 0)),
+                        "crowd_away_pct": int(crowd.get("crowd_away_pct", 0)),
                     }
                 )
 

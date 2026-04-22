@@ -123,6 +123,10 @@ type PredictionsResponse = {
     points: number | null
     category: string | null
     emoji: string
+    crowd_count?: number
+    crowd_home_pct?: number
+    crowd_draw_pct?: number
+    crowd_away_pct?: number
   }>
 }
 
@@ -145,6 +149,10 @@ type PredictCurrentResponse = {
     group_label?: string | null
     kickoff: string
     prediction: string | null
+    crowd_count?: number
+    crowd_home_pct?: number
+    crowd_draw_pct?: number
+    crowd_away_pct?: number
   }>
 }
 
@@ -362,6 +370,20 @@ const teamWithFlag = (team: string): string => {
   const fallbackFlag = TEAM_FLAGS[normalized]
   const found = flag || fallbackFlag
   return found ? `${found} ${name}` : name
+}
+
+const crowdText = (item: {
+  crowd_count?: number
+  crowd_home_pct?: number
+  crowd_draw_pct?: number
+  crowd_away_pct?: number
+}): string | null => {
+  const count = Number(item.crowd_count || 0)
+  if (count < 4) return null
+  const h = Number(item.crowd_home_pct || 0)
+  const d = Number(item.crowd_draw_pct || 0)
+  const a = Number(item.crowd_away_pct || 0)
+  return `👥 П1 ${h}% · X ${d}% · П2 ${a}%`
 }
 
 function App() {
@@ -1352,6 +1374,7 @@ function App() {
                                         {m.group_label ? <span className="group-small">[{m.group_label}]</span> : <span className="group-small">—</span>}
                                         <span className="kickoff-small">{(m.kickoff || '').split(' ')[1] || ''} МСК</span>
                                       </div>
+                                      {crowdText(m) ? <div className="community-small">{crowdText(m)}</div> : null}
                                       <div className="compact-main">
                                         <span className="team-name team-left">{teamWithFlag(m.home_team)}</span>
                                         <input
@@ -1399,6 +1422,7 @@ function App() {
                                 {m.group_label ? <span className="group-small">[{m.group_label}]</span> : <span className="group-small">—</span>}
                                 <span className="kickoff-small">{(m.kickoff || '').split(' ')[1] || ''} МСК</span>
                               </div>
+                              {crowdText(m) ? <div className="community-small">{crowdText(m)}</div> : null}
                               <div className="compact-main compact-main-result">
                                 <span className="team-name team-left">{teamWithFlag(m.home_team)}</span>
                                 <span className="score-inline-pill">{m.prediction || '-:-'}</span>

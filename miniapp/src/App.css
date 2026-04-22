@@ -457,6 +457,14 @@ body {
   gap: 6px;
 }
 
+.community-small {
+  margin-bottom: 5px;
+  color: #89a3d4;
+  font-size: 10px;
+  line-height: 1.15;
+  letter-spacing: 0.01em;
+}
+
 .compact-main-result {
   grid-template-columns: 1fr 58px 1fr 56px;
 }
