@@ -7,11 +7,13 @@ from aiogram.fsm.state import State, StatesGroup
 from sqlalchemy import case, func, select
 
 from datetime import datetime, timedelta
+import os
 import re
 
 from app.config import load_admin_ids
 from app.db import SessionLocal
 from app.display import display_round_name, display_team_name, display_tournament_name
+from app.duels import respond_duel
 from app.league_table import build_active_stage_league_table, get_user_stage_scope
 from app.models import League, LeagueMovement, Match, Point, Prediction, Setting, Stage, Tournament, User, UserTournament
 from app.season_setup import is_enrollment_open
@@ -35,6 +37,7 @@ WC_TOURNAMENT_CODE = "WC2026"
 DEFAULT_WC_ROUND_MIN = 1
 DEFAULT_WC_ROUND_MAX = 64
 TOURNAMENT_SELECTED_KEY_PREFIX = "TOURNAMENT_SELECTED_U"
+MINIAPP_WEB_URL = os.getenv("MINIAPP_WEB_URL", "https://rpl-predictions-bot-mini-app.onrender.com").strip()
 
 
 def build_main_menu_keyboard(
@@ -3244,6 +3247,60 @@ def register_user_handlers(dp: Dispatcher):
         except Exception:
             # Тихий фейл для чатов, где бот не имеет права отправки.
             return
+
+    @dp.callback_query(F.data.startswith("duel_accept:"))
+    async def cb_duel_accept(callback: types.CallbackQuery):
+        raw = (callback.data or "").split(":", 1)
+        if len(raw) != 2:
+            await callback.answer("Некорректная кнопка.")
+            return
+        try:
+            duel_id = int(raw[1])
+        except ValueError:
+            await callback.answer("Некорректная дуэль.")
+            return
+
+        text = "Вызов отмечен. Открой 1х1 в Mini App и поставь свой прогноз, чтобы принять дуэль."
+        kb = None
+        if MINIAPP_WEB_URL:
+            kb = types.InlineKeyboardMarkup(
+                inline_keyboard=[[types.InlineKeyboardButton(text="Открыть 1х1", url=MINIAPP_WEB_URL)]]
+            )
+        await callback.message.answer(text, reply_markup=kb)
+        await callback.answer("Открой 1х1 и сохрани свой счёт.")
+
+    @dp.callback_query(F.data.startswith("duel_decline:"))
+    async def cb_duel_decline(callback: types.CallbackQuery):
+        raw = (callback.data or "").split(":", 1)
+        if len(raw) != 2:
+            await callback.answer("Некорректная кнопка.")
+            return
+        try:
+            duel_id = int(raw[1])
+        except ValueError:
+            await callback.answer("Некорректная дуэль.")
+            return
+
+        try:
+            async with SessionLocal() as session:
+                duel = await respond_duel(
+                    session,
+                    duel_id=int(duel_id),
+                    responder_tg_user_id=int(callback.from_user.id),
+                    accept=False,
+                )
+                await session.commit()
+            await callback.message.answer("Вызов отклонён.")
+            try:
+                await callback.bot.send_message(
+                    chat_id=int(duel.challenger_tg_user_id),
+                    text="Твой вызов в 1х1 отклонён соперником.",
+                )
+            except Exception:
+                pass
+            await callback.answer("Отклонено.")
+        except Exception:
+            await callback.answer("Не удалось отклонить вызов (возможно, он уже неактуален).", show_alert=True)
 
     @dp.callback_query()
     async def fallback_any_callback(callback: types.CallbackQuery):

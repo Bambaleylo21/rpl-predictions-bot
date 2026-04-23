@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import or_, select
 
 from app.models import Duel, DuelElo, Match, UserTournament
 from app.scoring import calculate_points
@@ -24,16 +24,16 @@ def risk_multiplier_bp(challenger_home: int, challenger_away: int, opponent_home
     """
     Multiplier in basis points:
     - same outcome: 100
-    - draw-vs-non-draw: 115
-    - opposite outcomes: 135
+    - draw-vs-non-draw: 120
+    - opposite outcomes: 140
     """
     c = outcome_sign(int(challenger_home), int(challenger_away))
     o = outcome_sign(int(opponent_home), int(opponent_away))
     if c == o:
         return 100
     if c == 0 or o == 0:
-        return 115
-    return 135
+        return 120
+    return 140
 
 
 async def ensure_duel_elo(session, tournament_id: int, tg_user_id: int) -> DuelElo:

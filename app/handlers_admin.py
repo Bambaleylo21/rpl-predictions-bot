@@ -15,6 +15,7 @@ from sqlalchemy import case, delete, select, func
 from app.config import load_admin_ids
 from app.db import SessionLocal
 from app.display import display_round_name, display_team_name, display_tournament_name
+from app.duel_notify import send_duel_finished_pushes
 from app.duels import finalize_duels_for_match
 from app.models import (
     League,
@@ -1696,6 +1697,8 @@ async def admin_set_result(message: types.Message):
 
         updates = await recalc_points_for_match_in_session(session, match_id)
         duel_events = await finalize_duels_for_match(session, int(match_id))
+        if duel_events:
+            await send_duel_finished_pushes(message.bot, session, events=duel_events)
         await session.commit()
 
     sent_exact_pushes = await _maybe_send_exact_hit_pushes(message.bot, match.id)
@@ -1913,6 +1916,8 @@ async def admin_set_result_score_input(message: types.Message, state: FSMContext
 
         updates = await recalc_points_for_match_in_session(session, match_id)
         duel_events = await finalize_duels_for_match(session, int(match_id))
+        if duel_events:
+            await send_duel_finished_pushes(message.bot, session, events=duel_events)
         await session.commit()
 
     await state.clear()

@@ -11,16 +11,18 @@ from typing import Any
 from urllib.parse import parse_qs
 
 from aiohttp import web
+from aiogram import Bot
 from sqlalchemy import case, false, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-from app.config import load_admin_ids
+from app.config import load_admin_ids, load_config
 from app.db import SessionLocal, init_db
+from app.duel_notify import send_duel_accepted_push, send_duel_finished_pushes, send_new_duel_challenge_push
 from app.display import display_round_name
 from app.duels import create_duel, finalize_duels_for_match, get_duel_hub, respond_duel
 from app.league_table import build_active_stage_league_table
-from app.models import Duel, League, LeagueParticipant, LongtermPrediction, Match, Point, Prediction, Setting, Stage, Tournament, User, UserTournament
+from app.models import League, LeagueParticipant, LongtermPrediction, Match, Point, Prediction, Setting, Stage, Tournament, User, UserTournament
 from app.scoring import calculate_points
 
 logger = logging.getLogger(__name__)
@@ -30,6 +32,7 @@ WC_TOURNAMENT_CODE = "WC2026"
 TOURNAMENT_SELECTED_KEY_PREFIX = "TOURNAMENT_SELECTED_U"
 LONGTERM_TYPES = ("winner", "scorer")
 ADMIN_IDS = load_admin_ids()
+_NOTIFY_BOT: Bot | None = None
 WC_TOP_SCORER_OPTIONS = [
     "Килиан Мбаппе",
     "Эрлинг Холанд",
@@ -113,6 +116,13 @@ def _parse_init_data(init_data: str) -> dict[str, Any]:
         except Exception:
             pass
     return out
+
+
+def _get_notify_bot() -> Bot:
+    global _NOTIFY_BOT
+    if _NOTIFY_BOT is None:
+        _NOTIFY_BOT = Bot(token=load_config())
+    return _NOTIFY_BOT
 
 
 def _selected_tournament_key(tg_user_id: int) -> str:
@@ -703,6 +713,11 @@ async def admin_result_set(request: web.Request) -> web.Response:
             match.away_score = int(away_score)
             updates = await _recalc_points_for_match_in_session(session, int(match.id))
             duel_events = await finalize_duels_for_match(session, int(match.id))
+            if duel_events:
+                try:
+                    await send_duel_finished_pushes(_get_notify_bot(), session, events=duel_events)
+                except Exception:
+                    logger.exception("miniapp admin_result_set duel notify failed")
             await session.commit()
 
         return web.json_response(
@@ -2706,6 +2721,10 @@ async def duels_challenge(request: web.Request) -> web.Response:
                 challenger_pred_home=int(pred_home),
                 challenger_pred_away=int(pred_away),
             )
+            try:
+                await send_new_duel_challenge_push(_get_notify_bot(), session, duel_id=int(duel.id))
+            except Exception:
+                logger.exception("miniapp duels_challenge notify failed")
             await session.commit()
 
         return web.json_response(
@@ -2752,6 +2771,11 @@ async def duels_respond(request: web.Request) -> web.Response:
                 pred_home=int(pred_home) if pred_home is not None else None,
                 pred_away=int(pred_away) if pred_away is not None else None,
             )
+            if action == "accept" and str(duel.status) == "accepted":
+                try:
+                    await send_duel_accepted_push(_get_notify_bot(), session, duel_id=int(duel.id))
+                except Exception:
+                    logger.exception("miniapp duels_respond notify failed")
             await session.commit()
         return web.json_response(
             {
