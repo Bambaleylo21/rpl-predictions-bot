@@ -44,6 +44,7 @@ type ProfileResponse = {
   outcome_hits?: number
   hit_rate?: number
   missed_matches?: number
+  duel_rating?: number
   place?: number | null
   participants?: number
   played_matches?: number
@@ -1844,8 +1845,8 @@ function App() {
                       <b>{(profileData.hit_rate ?? 0).toFixed(1)}%</b>
                     </div>
                     <div className="profile-kpi">
-                      <span>Пропуски</span>
-                      <b>{profileData.missed_matches ?? 0}</b>
+                      <span>Рейтинг</span>
+                      <b>{profileData.duel_rating ?? 1000}</b>
                     </div>
                   </div>
 
@@ -2285,13 +2286,6 @@ function App() {
                                 disabled={duelBusyId === d.duel_id}
                               >
                                 ✓
-                              </button>
-                              <button
-                                className="save-btn is-empty"
-                                onClick={() => respondDuel(d.duel_id, 'decline')}
-                                disabled={duelBusyId === d.duel_id}
-                              >
-                                ×
                               </button>
                             </div>
                           ) : null}

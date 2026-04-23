@@ -22,7 +22,7 @@ from app.duel_notify import send_duel_accepted_push, send_duel_finished_pushes, 
 from app.display import display_round_name
 from app.duels import create_duel, finalize_duels_for_match, get_duel_hub, respond_duel
 from app.league_table import build_active_stage_league_table
-from app.models import League, LeagueParticipant, LongtermPrediction, Match, Point, Prediction, Setting, Stage, Tournament, User, UserTournament
+from app.models import DuelElo, League, LeagueParticipant, LongtermPrediction, Match, Point, Prediction, Setting, Stage, Tournament, User, UserTournament
 from app.scoring import calculate_points
 
 logger = logging.getLogger(__name__)
@@ -1296,6 +1296,16 @@ async def profile(request: web.Request) -> web.Response:
                     }
                 )
 
+            duel_rating_row = (
+                await session.execute(
+                    select(DuelElo.rating).where(
+                        DuelElo.tournament_id == int(tournament.id),
+                        DuelElo.tg_user_id == int(target_tg_user_id),
+                    )
+                )
+            ).scalar_one_or_none()
+            duel_rating = int(duel_rating_row or 1000)
+
             stats_row = (
                 await session.execute(
                     select(
@@ -1754,6 +1764,7 @@ async def profile(request: web.Request) -> web.Response:
                     "outcome_hits": outcome_hits,
                     "hit_rate": hit_rate,
                     "missed_matches": int(missed_matches),
+                    "duel_rating": int(duel_rating),
                     "place": user_place,
                     "participants": int(participants),
                     "played_matches": played_matches,
