@@ -295,6 +295,15 @@ async def get_duel_hub(session, *, tournament_id: int, tg_user_id: int) -> dict[
 
     match_options = await list_duel_match_options(session, int(tournament_id), int(tg_user_id), limit=200)
 
+    elo_rows = (
+        await session.execute(
+            select(DuelElo.tg_user_id, DuelElo.rating).where(
+                DuelElo.tournament_id == int(tournament_id)
+            )
+        )
+    ).all()
+    elo_map: dict[int, int] = {int(uid): int(rating or ELO_DEFAULT_RATING) for uid, rating in elo_rows}
+
     active_rows = (
         await session.execute(
             select(Duel, Match)
@@ -357,6 +366,8 @@ async def get_duel_hub(session, *, tournament_id: int, tg_user_id: int) -> dict[
             "winner_tg_user_id": int(duel.winner_tg_user_id) if duel.winner_tg_user_id is not None else None,
             "elo_delta_challenger": int(duel.elo_delta_challenger or 0),
             "elo_delta_opponent": int(duel.elo_delta_opponent or 0),
+            "challenger_rating": int(elo_map.get(int(duel.challenger_tg_user_id), ELO_DEFAULT_RATING)),
+            "opponent_rating": int(elo_map.get(int(duel.opponent_tg_user_id), ELO_DEFAULT_RATING)),
         }
 
     return {

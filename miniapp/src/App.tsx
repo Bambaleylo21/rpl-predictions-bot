@@ -241,6 +241,8 @@ type DuelItem = {
   winner_tg_user_id?: number | null
   elo_delta_challenger: number
   elo_delta_opponent: number
+  challenger_rating?: number
+  opponent_rating?: number
 }
 
 type DuelsResponse = {
@@ -2029,11 +2031,10 @@ function App() {
                   <div className="card-text">{duelsData.message || 'Сначала вступи в турнир.'}</div>
                 ) : (
                   <>
-                    <div className="card-title">Рейтинг</div>
+                    <div className="card-title">{profileData?.display_name || (tgUsername ? `@${tgUsername}` : 'Участник')}</div>
                     <div className="profile-hits-line">
-                      Рейтинг: <b>{duelsData.elo?.rating ?? 1000}</b> · Победы <b>{duelsData.elo?.wins ?? 0}</b> · Поражения{' '}
-                      <b>{duelsData.elo?.losses ?? 0}</b> · Ничьи <b>{duelsData.elo?.draws ?? 0}</b> · всего{' '}
-                      <b>{duelsData.elo?.duels_total ?? 0}</b>
+                      Рейтинг: <b>{duelsData.elo?.rating ?? 1000}</b> · W <b>{duelsData.elo?.wins ?? 0}</b> · D <b>{duelsData.elo?.draws ?? 0}</b> · L{' '}
+                      <b>{duelsData.elo?.losses ?? 0}</b> · всего <b>{duelsData.elo?.duels_total ?? 0}</b>
                     </div>
 
                     <div className="card-title" style={{ marginTop: 10 }}>Бросить вызов</div>
@@ -2196,7 +2197,6 @@ function App() {
                     (duelsFilter === 'active' ? duelsData.active : duelsData.finished)!.map((d) => {
                       const isIncomingPending =
                         d.status === 'pending' && tgUserId != null && Number(d.opponent_tg_user_id) === Number(tgUserId)
-                      const isMine = tgUserId != null && Number(d.challenger_tg_user_id) === Number(tgUserId)
                       return (
                         <div
                           className={`compact-match ${duelFocusId === d.duel_id ? 'is-focused' : ''}`}
@@ -2224,27 +2224,39 @@ function App() {
 
                           <div className="duel-preds">
                             <div className="duel-pred-line">
-                              <span className="duel-pred-name">{d.challenger_name}</span>
-                              <span className="duel-pred-score">{d.challenger_pred}</span>
+                              <span className="duel-pred-text">
+                                {duelsFilter === 'finished' ? (
+                                  <>
+                                    <b>{d.challenger_rating || 1000}</b>{' '}
+                                    <span className={d.elo_delta_challenger >= 0 ? 'duel-delta-plus' : 'duel-delta-minus'}>
+                                      ({d.elo_delta_challenger >= 0 ? `+${d.elo_delta_challenger}` : d.elo_delta_challenger})
+                                    </span>{' '}
+                                  </>
+                                ) : (
+                                  <>
+                                    <b>{d.challenger_rating || 1000}</b>{' '}
+                                  </>
+                                )}
+                                {d.challenger_name} <b>{d.challenger_pred}</b>
+                              </span>
                             </div>
                             <div className="duel-pred-line">
-                              <span className="duel-pred-name">{d.opponent_name}</span>
-                              <span className="duel-pred-score">{d.opponent_pred || '—'}</span>
+                              <span className="duel-pred-text">
+                                {duelsFilter === 'finished' ? (
+                                  <>
+                                    <b>{d.opponent_rating || 1000}</b>{' '}
+                                    <span className={d.elo_delta_opponent >= 0 ? 'duel-delta-plus' : 'duel-delta-minus'}>
+                                      ({d.elo_delta_opponent >= 0 ? `+${d.elo_delta_opponent}` : d.elo_delta_opponent})
+                                    </span>{' '}
+                                  </>
+                                ) : (
+                                  <>
+                                    <b>{d.opponent_rating || 1000}</b>{' '}
+                                  </>
+                                )}
+                                {d.opponent_name} <b>{d.opponent_pred || '—'}</b>
+                              </span>
                             </div>
-                            {duelsFilter === 'finished' ? (
-                              <div className="compact-note">
-                                ΔРейтинг:{' '}
-                                <b>
-                                  {isMine
-                                    ? d.elo_delta_challenger >= 0
-                                      ? `+${d.elo_delta_challenger}`
-                                      : d.elo_delta_challenger
-                                    : d.elo_delta_opponent >= 0
-                                      ? `+${d.elo_delta_opponent}`
-                                      : d.elo_delta_opponent}
-                                </b>
-                              </div>
-                            ) : null}
                           </div>
 
                           {isIncomingPending ? (
