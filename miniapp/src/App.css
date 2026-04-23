@@ -395,6 +395,117 @@ body {
   width: 170px;
 }
 
+.duel-picker-wrap {
+  margin-top: 8px;
+}
+
+.duel-picker-btn {
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  background: var(--surface-2);
+  color: var(--text-main);
+  padding: 10px 12px;
+}
+
+.duel-picker-btn.is-open {
+  border-color: #5e89e4;
+  box-shadow: 0 0 0 1px rgba(94, 137, 228, 0.28) inset;
+}
+
+.duel-picker-label {
+  display: block;
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+
+.duel-picker-value {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.duel-picker-panel {
+  margin-top: 8px;
+  border: 1px solid var(--line-1);
+  border-radius: 12px;
+  background: #121f3d;
+  padding: 8px;
+}
+
+.duel-picker-search {
+  width: 100%;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: var(--surface-input);
+  color: var(--text-main);
+  padding: 8px 10px;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.duel-picker-list {
+  max-height: 260px;
+  overflow: auto;
+  display: grid;
+  gap: 6px;
+}
+
+.duel-picker-item {
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: #182a52;
+  color: var(--text-main);
+  text-align: left;
+  padding: 8px 10px;
+}
+
+.duel-picker-item.is-selected {
+  border-color: #6f98ed;
+  background: #23407a;
+}
+
+.duel-picker-item.is-disabled {
+  opacity: 0.55;
+}
+
+.duel-picker-item-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+
+.duel-picker-item-title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.duel-picker-item-note {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #9bb1dc;
+}
+
+.duel-picker-more {
+  margin-top: 8px;
+  width: 100%;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: #182a52;
+  color: var(--text-main);
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
 .compact-list-card {
   padding: 8px;
   background: transparent;

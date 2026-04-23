@@ -270,6 +270,7 @@ type DuelsResponse = {
   opponents?: Array<{
     tg_user_id: number
     display_name: string
+    elo_rating?: number
   }>
   active?: DuelItem[]
   finished?: DuelItem[]
@@ -501,6 +502,11 @@ function App() {
   const [duelBusyId, setDuelBusyId] = useState<number | null>(null)
   const [duelsFilter, setDuelsFilter] = useState<'active' | 'finished'>('active')
   const [duelAcceptInputs, setDuelAcceptInputs] = useState<Record<number, string>>({})
+  const [duelMatchPickerOpen, setDuelMatchPickerOpen] = useState<boolean>(false)
+  const [duelOpponentPickerOpen, setDuelOpponentPickerOpen] = useState<boolean>(false)
+  const [duelMatchSearch, setDuelMatchSearch] = useState<string>('')
+  const [duelOpponentSearch, setDuelOpponentSearch] = useState<string>('')
+  const [duelMatchVisibleCount, setDuelMatchVisibleCount] = useState<number>(20)
 
   const selectedRoundNumber =
     selectedTournamentCode === 'WC2026'
@@ -519,6 +525,13 @@ function App() {
     return `${Number(m[1])}:${Number(m[2])}`
   }
   const showDebugPanels = import.meta.env.DEV || import.meta.env.VITE_DEBUG_PANELS === '1'
+
+  useEffect(() => {
+    if (screen !== 'duels') {
+      setDuelMatchPickerOpen(false)
+      setDuelOpponentPickerOpen(false)
+    }
+  }, [screen])
 
   useEffect(() => {
     try {
@@ -649,12 +662,24 @@ function App() {
     }
     setDuelsData(data)
     setDuelsError(null)
+    setDuelMatchVisibleCount(20)
 
     if (!duelMatchId && (data.match_options || []).length > 0) {
       const firstOpen = (data.match_options || []).find((m) => !m.blocked_for_user)
       if (firstOpen) setDuelMatchId(firstOpen.match_id)
+    } else if (
+      duelMatchId &&
+      !(data.match_options || []).some((m) => Number(m.match_id) === Number(duelMatchId))
+    ) {
+      const firstOpen = (data.match_options || []).find((m) => !m.blocked_for_user)
+      setDuelMatchId(firstOpen ? firstOpen.match_id : 0)
     }
     if (!duelOpponentId && (data.opponents || []).length > 0) {
+      setDuelOpponentId(data.opponents?.[0]?.tg_user_id || 0)
+    } else if (
+      duelOpponentId &&
+      !(data.opponents || []).some((u) => Number(u.tg_user_id) === Number(duelOpponentId))
+    ) {
       setDuelOpponentId(data.opponents?.[0]?.tg_user_id || 0)
     }
 
@@ -1248,6 +1273,25 @@ function App() {
         : scorerCurrent
           ? 'is-saved'
           : 'is-empty'
+
+  const duelMatchOptions = duelsData?.match_options || []
+  const duelOpponents = duelsData?.opponents || []
+  const duelSelectedMatch = duelMatchOptions.find((m) => Number(m.match_id) === Number(duelMatchId)) || null
+  const duelSelectedOpponent =
+    duelOpponents.find((u) => Number(u.tg_user_id) === Number(duelOpponentId)) || null
+  const duelMatchSearchNorm = duelMatchSearch.trim().toLowerCase()
+  const duelOpponentSearchNorm = duelOpponentSearch.trim().toLowerCase()
+  const duelFilteredMatches = duelMatchOptions.filter((m) => {
+    if (!duelMatchSearchNorm) return true
+    const hay = `${m.home_team} ${m.away_team} ${m.group_label || ''} ${m.kickoff}`.toLowerCase()
+    return hay.includes(duelMatchSearchNorm)
+  })
+  const duelFilteredOpponents = duelOpponents.filter((u) => {
+    if (!duelOpponentSearchNorm) return true
+    return `${u.display_name} ${u.elo_rating || 1000}`.toLowerCase().includes(duelOpponentSearchNorm)
+  })
+  const duelVisibleMatches = duelFilteredMatches.slice(0, duelMatchVisibleCount)
+  const duelCanShowMoreMatches = duelFilteredMatches.length > duelVisibleMatches.length
 
   const wcTopTabsBase: Array<{ key: '1' | '2' | '3' | 'PO'; label: string }> = [
     { key: '1', label: 'Тур 1' },
@@ -1992,34 +2036,113 @@ function App() {
                     </div>
 
                     <div className="card-title" style={{ marginTop: 10 }}>Бросить вызов</div>
-                    <div className="predict-row">
-                      <select
-                        className="score-input select-input"
-                        value={duelMatchId ? String(duelMatchId) : ''}
-                        onChange={(e) => setDuelMatchId(Number(e.target.value || 0))}
+                    <div className="duel-picker-wrap">
+                      <button
+                        className={`duel-picker-btn ${duelMatchPickerOpen ? 'is-open' : ''}`}
+                        onClick={() => {
+                          setDuelMatchPickerOpen((v) => !v)
+                          setDuelOpponentPickerOpen(false)
+                        }}
                       >
-                        <option value="">Матч</option>
-                        {(duelsData.match_options || []).map((m) => (
-                          <option key={m.match_id} value={m.match_id} disabled={Boolean(m.blocked_for_user)}>
-                            {m.kickoff} · {m.home_team} — {m.away_team}{m.blocked_for_user ? ' (занят)' : ''}
-                          </option>
-                        ))}
-                      </select>
+                        <span className="duel-picker-label">Матч</span>
+                        <span className="duel-picker-value">
+                          {duelSelectedMatch
+                            ? `${duelSelectedMatch.kickoff} · ${duelSelectedMatch.home_team} — ${duelSelectedMatch.away_team}`
+                            : 'Выбрать матч'}
+                        </span>
+                      </button>
+                      {duelMatchPickerOpen ? (
+                        <div className="duel-picker-panel">
+                          <input
+                            className="duel-picker-search"
+                            value={duelMatchSearch}
+                            onChange={(e) => {
+                              setDuelMatchSearch(e.target.value)
+                              setDuelMatchVisibleCount(20)
+                            }}
+                            placeholder="Поиск матча"
+                          />
+                          <div className="duel-picker-list">
+                            {duelVisibleMatches.map((m) => (
+                              <button
+                                key={m.match_id}
+                                className={`duel-picker-item ${duelMatchId === m.match_id ? 'is-selected' : ''} ${
+                                  m.blocked_for_user ? 'is-disabled' : ''
+                                }`}
+                                onClick={() => {
+                                  if (m.blocked_for_user) return
+                                  setDuelMatchId(m.match_id)
+                                  setDuelMatchPickerOpen(false)
+                                }}
+                                disabled={Boolean(m.blocked_for_user)}
+                              >
+                                <div className="duel-picker-item-top">
+                                  <span>{m.kickoff} МСК</span>
+                                  {m.group_label ? <span>[{m.group_label}]</span> : null}
+                                </div>
+                                <div className="duel-picker-item-title">
+                                  {m.home_team} — {m.away_team}
+                                </div>
+                                {m.blocked_for_user ? (
+                                  <div className="duel-picker-item-note">Уже есть активная дуэль на этот матч</div>
+                                ) : null}
+                              </button>
+                            ))}
+                          </div>
+                          {duelCanShowMoreMatches ? (
+                            <button
+                              className="duel-picker-more"
+                              onClick={() => setDuelMatchVisibleCount((v) => v + 20)}
+                            >
+                              Показать ещё
+                            </button>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
-                    <div className="predict-row" style={{ marginTop: 8 }}>
-                      <select
-                        className="score-input select-input"
-                        value={duelOpponentId ? String(duelOpponentId) : ''}
-                        onChange={(e) => setDuelOpponentId(Number(e.target.value || 0))}
+
+                    <div className="duel-picker-wrap">
+                      <button
+                        className={`duel-picker-btn ${duelOpponentPickerOpen ? 'is-open' : ''}`}
+                        onClick={() => {
+                          setDuelOpponentPickerOpen((v) => !v)
+                          setDuelMatchPickerOpen(false)
+                        }}
                       >
-                        <option value="">Соперник</option>
-                        {(duelsData.opponents || []).map((u) => (
-                          <option key={u.tg_user_id} value={u.tg_user_id}>
-                            {u.display_name}
-                          </option>
-                        ))}
-                      </select>
+                        <span className="duel-picker-label">Соперник</span>
+                        <span className="duel-picker-value">
+                          {duelSelectedOpponent
+                            ? `${duelSelectedOpponent.display_name} · ${duelSelectedOpponent.elo_rating || 1000}`
+                            : 'Выбрать соперника'}
+                        </span>
+                      </button>
+                      {duelOpponentPickerOpen ? (
+                        <div className="duel-picker-panel">
+                          <input
+                            className="duel-picker-search"
+                            value={duelOpponentSearch}
+                            onChange={(e) => setDuelOpponentSearch(e.target.value)}
+                            placeholder="Поиск соперника"
+                          />
+                          <div className="duel-picker-list">
+                            {duelFilteredOpponents.map((u) => (
+                              <button
+                                key={u.tg_user_id}
+                                className={`duel-picker-item ${duelOpponentId === u.tg_user_id ? 'is-selected' : ''}`}
+                                onClick={() => {
+                                  setDuelOpponentId(u.tg_user_id)
+                                  setDuelOpponentPickerOpen(false)
+                                }}
+                              >
+                                <div className="duel-picker-item-title">{u.display_name}</div>
+                                <div className="duel-picker-item-note">Рейтинг: {u.elo_rating || 1000}</div>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
+
                     <div className="predict-row" style={{ marginTop: 8 }}>
                       <input
                         className="score-input"

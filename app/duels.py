@@ -86,7 +86,7 @@ async def _display_name_map(session, tournament_id: int) -> dict[int, str]:
     return out
 
 
-async def list_duel_match_options(session, tournament_id: int, tg_user_id: int, limit: int = 20) -> list[dict[str, Any]]:
+async def list_duel_match_options(session, tournament_id: int, tg_user_id: int, limit: int = 200) -> list[dict[str, Any]]:
     now = datetime.utcnow()
     matches = (
         await session.execute(
@@ -267,7 +267,16 @@ async def get_duel_hub(session, *, tournament_id: int, tg_user_id: int) -> dict[
 
     opponents_raw = (
         await session.execute(
-            select(UserTournament.tg_user_id, UserTournament.display_name)
+            select(
+                UserTournament.tg_user_id,
+                UserTournament.display_name,
+                DuelElo.rating,
+            )
+            .outerjoin(
+                DuelElo,
+                (DuelElo.tournament_id == UserTournament.tournament_id)
+                & (DuelElo.tg_user_id == UserTournament.tg_user_id),
+            )
             .where(
                 UserTournament.tournament_id == int(tournament_id),
                 UserTournament.tg_user_id != int(tg_user_id),
@@ -279,11 +288,12 @@ async def get_duel_hub(session, *, tournament_id: int, tg_user_id: int) -> dict[
         {
             "tg_user_id": int(uid),
             "display_name": str(dn or f"ID {int(uid)}"),
+            "elo_rating": int(rating or ELO_DEFAULT_RATING),
         }
-        for uid, dn in opponents_raw
+        for uid, dn, rating in opponents_raw
     ]
 
-    match_options = await list_duel_match_options(session, int(tournament_id), int(tg_user_id), limit=20)
+    match_options = await list_duel_match_options(session, int(tournament_id), int(tg_user_id), limit=200)
 
     active_rows = (
         await session.execute(
