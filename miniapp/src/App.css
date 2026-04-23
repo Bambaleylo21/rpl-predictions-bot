@@ -432,6 +432,12 @@ body {
   border-top: 1px solid rgba(79, 112, 174, 0.25);
 }
 
+.compact-match.is-focused {
+  border-radius: 12px;
+  background: rgba(77, 121, 216, 0.16);
+  box-shadow: 0 0 0 1px rgba(116, 157, 231, 0.55) inset;
+}
+
 .compact-meta {
   display: flex;
   justify-content: space-between;

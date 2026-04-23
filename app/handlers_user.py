@@ -9,6 +9,7 @@ from sqlalchemy import case, func, select
 from datetime import datetime, timedelta
 import os
 import re
+from urllib.parse import urlencode
 
 from app.config import load_admin_ids
 from app.db import SessionLocal
@@ -3263,8 +3264,11 @@ def register_user_handlers(dp: Dispatcher):
         text = "Вызов отмечен. Открой 1х1 в Mini App и поставь свой прогноз, чтобы принять дуэль."
         kb = None
         if MINIAPP_WEB_URL:
+            url = MINIAPP_WEB_URL
+            sep = "&" if "?" in url else "?"
+            url = f"{url}{sep}{urlencode({'screen': 'duels', 'duel_id': int(duel_id)})}"
             kb = types.InlineKeyboardMarkup(
-                inline_keyboard=[[types.InlineKeyboardButton(text="Открыть 1х1", url=MINIAPP_WEB_URL)]]
+                inline_keyboard=[[types.InlineKeyboardButton(text="Открыть 1х1", url=url)]]
             )
         await callback.message.answer(text, reply_markup=kb)
         await callback.answer("Открой 1х1 и сохрани свой счёт.")

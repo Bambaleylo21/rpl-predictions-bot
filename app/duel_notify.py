@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 from typing import Any
+from urllib.parse import urlencode
 
 from aiogram import Bot, types
 from sqlalchemy import select
@@ -15,11 +16,15 @@ logger = logging.getLogger(__name__)
 MINIAPP_WEB_URL = os.getenv("MINIAPP_WEB_URL", "https://rpl-predictions-bot-mini-app.onrender.com").strip()
 
 
-def _open_duels_keyboard(button_text: str = "Открыть 1х1") -> types.InlineKeyboardMarkup | None:
+def _open_duels_keyboard(button_text: str = "Открыть 1х1", duel_id: int | None = None) -> types.InlineKeyboardMarkup | None:
     if not MINIAPP_WEB_URL:
         return None
+    url = MINIAPP_WEB_URL
+    if duel_id is not None and int(duel_id) > 0:
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}{urlencode({'screen': 'duels', 'duel_id': int(duel_id)})}"
     return types.InlineKeyboardMarkup(
-        inline_keyboard=[[types.InlineKeyboardButton(text=button_text, url=MINIAPP_WEB_URL)]]
+        inline_keyboard=[[types.InlineKeyboardButton(text=button_text, url=url)]]
     )
 
 
@@ -138,7 +143,7 @@ async def send_duel_accepted_push(bot: Bot, session, *, duel_id: int) -> None:
         session,
         chat_id=int(duel.challenger_tg_user_id),
         text=text,
-        reply_markup=_open_duels_keyboard("Открыть 1х1"),
+        reply_markup=_open_duels_keyboard("Открыть 1х1", duel_id=int(duel.id)),
     )
 
 
@@ -181,7 +186,7 @@ async def send_duel_finished_pushes(bot: Bot, session, *, events: list[dict[str,
             f"{middle}\n"
             f"{challenger_name} {ch_new} ({ch_d_text}) · {opponent_name} {op_new} ({op_d_text})"
         )
-        kb = _open_duels_keyboard("Смотреть 1х1")
+        kb = _open_duels_keyboard("Смотреть 1х1", duel_id=int(duel.id))
 
         await _safe_send(
             bot,

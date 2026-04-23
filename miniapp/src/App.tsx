@@ -443,6 +443,7 @@ const crowdText = (item: {
 
 function App() {
   const [screen, setScreen] = useState<Screen>('predict')
+  const [duelFocusId, setDuelFocusId] = useState<number | null>(null)
   const [tgUserId, setTgUserId] = useState<number | null>(null)
   const [tgUsername, setTgUsername] = useState<string | null>(null)
   const [tgPhotoUrl, setTgPhotoUrl] = useState<string | null>(null)
@@ -518,6 +519,31 @@ function App() {
     return `${Number(m[1])}:${Number(m[2])}`
   }
   const showDebugPanels = import.meta.env.DEV || import.meta.env.VITE_DEBUG_PANELS === '1'
+
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search || '')
+      const screenParam = (params.get('screen') || '').toLowerCase()
+      if (screenParam === 'profile' || screenParam === 'matches' || screenParam === 'predict') {
+        setScreen('predict')
+      } else if (screenParam === 'table') {
+        setScreen('table')
+      } else if (screenParam === 'duels') {
+        setScreen('duels')
+      } else if (screenParam === 'admin') {
+        setScreen('admin')
+      }
+
+      const duelRaw = params.get('duel_id') || ''
+      const duelId = Number(duelRaw)
+      if (Number.isFinite(duelId) && duelId > 0) {
+        setDuelFocusId(Math.trunc(duelId))
+        setScreen('duels')
+      }
+    } catch {
+      // no-op
+    }
+  }, [])
 
   useEffect(() => {
     let attempts = 0
@@ -616,7 +642,27 @@ function App() {
     if (!duelOpponentId && (data.opponents || []).length > 0) {
       setDuelOpponentId(data.opponents?.[0]?.tg_user_id || 0)
     }
+
+    if (duelFocusId != null && duelFocusId > 0) {
+      const inActive = (data.active || []).some((d) => Number(d.duel_id) === Number(duelFocusId))
+      const inFinished = (data.finished || []).some((d) => Number(d.duel_id) === Number(duelFocusId))
+      if (inActive) {
+        setDuelsFilter('active')
+      } else if (inFinished) {
+        setDuelsFilter('finished')
+      }
+    }
   }
+
+  useEffect(() => {
+    if (screen !== 'duels' || duelFocusId == null || duelFocusId <= 0) return
+    const t = setTimeout(() => {
+      const el = document.getElementById(`duel-card-${duelFocusId}`)
+      if (!el) return
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    }, 80)
+    return () => clearTimeout(t)
+  }, [screen, duelFocusId, duelsFilter, duelsData])
 
   useEffect(() => {
     const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
@@ -2011,7 +2057,11 @@ function App() {
                         d.status === 'pending' && tgUserId != null && Number(d.opponent_tg_user_id) === Number(tgUserId)
                       const isMine = tgUserId != null && Number(d.challenger_tg_user_id) === Number(tgUserId)
                       return (
-                        <div className="compact-match" key={`duel-${d.duel_id}`}>
+                        <div
+                          className={`compact-match ${duelFocusId === d.duel_id ? 'is-focused' : ''}`}
+                          key={`duel-${d.duel_id}`}
+                          id={`duel-card-${d.duel_id}`}
+                        >
                           <div className="compact-meta">
                             {d.group_label ? <span className="group-small">[{d.group_label}]</span> : <span className="group-small">—</span>}
                             <span className="kickoff-small">{d.kickoff} МСК</span>
