@@ -243,6 +243,9 @@ type DuelItem = {
   elo_delta_opponent: number
   challenger_rating?: number
   opponent_rating?: number
+  h2h_wins?: number
+  h2h_draws?: number
+  h2h_losses?: number
 }
 
 type DuelsResponse = {
@@ -2256,6 +2259,9 @@ function App() {
                                 )}
                                 {d.opponent_name} <b>{d.opponent_pred || '—'}</b>
                               </span>
+                            </div>
+                            <div className="compact-note">
+                              Личные встречи: <b>{d.h2h_wins || 0}-{d.h2h_draws || 0}-{d.h2h_losses || 0}</b> (W-D-L)
                             </div>
                           </div>
 

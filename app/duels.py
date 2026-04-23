@@ -304,6 +304,36 @@ async def get_duel_hub(session, *, tournament_id: int, tg_user_id: int) -> dict[
     ).all()
     elo_map: dict[int, int] = {int(uid): int(rating or ELO_DEFAULT_RATING) for uid, rating in elo_rows}
 
+    # Head-to-head map from perspective of current user:
+    # key = opponent tg_user_id, value = (wins, draws, losses)
+    h2h_map: dict[int, tuple[int, int, int]] = {}
+    h2h_rows = (
+        await session.execute(
+            select(Duel).where(
+                Duel.tournament_id == int(tournament_id),
+                Duel.status == "finished",
+                or_(
+                    Duel.challenger_tg_user_id == int(tg_user_id),
+                    Duel.opponent_tg_user_id == int(tg_user_id),
+                ),
+            )
+        )
+    ).scalars().all()
+    for d in h2h_rows:
+        opp_id = (
+            int(d.opponent_tg_user_id)
+            if int(d.challenger_tg_user_id) == int(tg_user_id)
+            else int(d.challenger_tg_user_id)
+        )
+        w, dr, l = h2h_map.get(opp_id, (0, 0, 0))
+        if d.winner_tg_user_id is None:
+            dr += 1
+        elif int(d.winner_tg_user_id) == int(tg_user_id):
+            w += 1
+        else:
+            l += 1
+        h2h_map[opp_id] = (w, dr, l)
+
     active_rows = (
         await session.execute(
             select(Duel, Match)
@@ -326,7 +356,7 @@ async def get_duel_hub(session, *, tournament_id: int, tg_user_id: int) -> dict[
             .join(Match, Match.id == Duel.match_id)
             .where(
                 Duel.tournament_id == int(tournament_id),
-                Duel.status.in_(("finished", "declined", "expired")),
+                Duel.status == "finished",
                 or_(
                     Duel.challenger_tg_user_id == int(tg_user_id),
                     Duel.opponent_tg_user_id == int(tg_user_id),
@@ -338,6 +368,12 @@ async def get_duel_hub(session, *, tournament_id: int, tg_user_id: int) -> dict[
     ).all()
 
     def _duel_item(duel: Duel, match: Match) -> dict[str, Any]:
+        opp_id = (
+            int(duel.opponent_tg_user_id)
+            if int(duel.challenger_tg_user_id) == int(tg_user_id)
+            else int(duel.challenger_tg_user_id)
+        )
+        h2h_w, h2h_d, h2h_l = h2h_map.get(opp_id, (0, 0, 0))
         return {
             "duel_id": int(duel.id),
             "status": str(duel.status),
@@ -368,6 +404,9 @@ async def get_duel_hub(session, *, tournament_id: int, tg_user_id: int) -> dict[
             "elo_delta_opponent": int(duel.elo_delta_opponent or 0),
             "challenger_rating": int(elo_map.get(int(duel.challenger_tg_user_id), ELO_DEFAULT_RATING)),
             "opponent_rating": int(elo_map.get(int(duel.opponent_tg_user_id), ELO_DEFAULT_RATING)),
+            "h2h_wins": int(h2h_w),
+            "h2h_draws": int(h2h_d),
+            "h2h_losses": int(h2h_l),
         }
 
     return {
