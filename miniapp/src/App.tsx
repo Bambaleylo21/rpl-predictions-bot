@@ -523,7 +523,22 @@ function App() {
   useEffect(() => {
     try {
       const params = new URLSearchParams(window.location.search || '')
-      const screenParam = (params.get('screen') || '').toLowerCase()
+      const startParamRaw =
+        ((window as any).Telegram?.WebApp?.initDataUnsafe?.start_param as string | undefined) ||
+        ((WebApp as any)?.initDataUnsafe?.start_param as string | undefined) ||
+        ''
+      let startParams = new URLSearchParams()
+      if (startParamRaw) {
+        try {
+          // start_param expected like: "screen=duels&duel_id=12"
+          startParams = new URLSearchParams(startParamRaw)
+        } catch {
+          startParams = new URLSearchParams()
+        }
+      }
+      const getParam = (key: string): string =>
+        params.get(key) || startParams.get(key) || ''
+      const screenParam = getParam('screen').toLowerCase()
       if (screenParam === 'profile' || screenParam === 'matches' || screenParam === 'predict') {
         setScreen('predict')
       } else if (screenParam === 'table') {
@@ -534,7 +549,7 @@ function App() {
         setScreen('admin')
       }
 
-      const duelRaw = params.get('duel_id') || ''
+      const duelRaw = getParam('duel_id')
       const duelId = Number(duelRaw)
       if (Number.isFinite(duelId) && duelId > 0) {
         setDuelFocusId(Math.trunc(duelId))

@@ -9,7 +9,7 @@ from sqlalchemy import case, func, select
 from datetime import datetime, timedelta
 import os
 import re
-from urllib.parse import urlencode
+from urllib.parse import urlencode, quote_plus
 
 from app.config import load_admin_ids
 from app.db import SessionLocal
@@ -39,6 +39,18 @@ DEFAULT_WC_ROUND_MIN = 1
 DEFAULT_WC_ROUND_MAX = 64
 TOURNAMENT_SELECTED_KEY_PREFIX = "TOURNAMENT_SELECTED_U"
 MINIAPP_WEB_URL = os.getenv("MINIAPP_WEB_URL", "https://rpl-predictions-bot-mini-app.onrender.com").strip()
+BOT_USERNAME = os.getenv("BOT_USERNAME", "rpl_predictor_roman_bot").strip().lstrip("@")
+
+
+def _duels_entry_url(duel_id: int | None = None) -> str:
+    payload = "screen=duels"
+    if duel_id is not None and int(duel_id) > 0:
+        payload = f"{payload}&duel_id={int(duel_id)}"
+    if BOT_USERNAME:
+        return f"https://t.me/{BOT_USERNAME}?startapp={quote_plus(payload)}"
+    url = MINIAPP_WEB_URL
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}{urlencode({'screen': 'duels', 'duel_id': int(duel_id or 0)})}"
 
 
 def build_main_menu_keyboard(
@@ -3263,12 +3275,10 @@ def register_user_handlers(dp: Dispatcher):
 
         text = "Вызов отмечен. Открой 1х1 в Mini App и поставь свой прогноз, чтобы принять дуэль."
         kb = None
-        if MINIAPP_WEB_URL:
-            url = MINIAPP_WEB_URL
-            sep = "&" if "?" in url else "?"
-            url = f"{url}{sep}{urlencode({'screen': 'duels', 'duel_id': int(duel_id)})}"
+        if MINIAPP_WEB_URL or BOT_USERNAME:
+            url = _duels_entry_url(int(duel_id))
             kb = types.InlineKeyboardMarkup(
-                inline_keyboard=[[types.InlineKeyboardButton(text="Открыть 1х1", web_app=types.WebAppInfo(url=url))]]
+                inline_keyboard=[[types.InlineKeyboardButton(text="Открыть 1х1", url=url)]]
             )
         await callback.message.answer(text, reply_markup=kb)
         await callback.answer("Открой 1х1 и сохрани свой счёт.")
