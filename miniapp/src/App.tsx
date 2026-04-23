@@ -664,23 +664,17 @@ function App() {
     setDuelsError(null)
     setDuelMatchVisibleCount(20)
 
-    if (!duelMatchId && (data.match_options || []).length > 0) {
-      const firstOpen = (data.match_options || []).find((m) => !m.blocked_for_user)
-      if (firstOpen) setDuelMatchId(firstOpen.match_id)
-    } else if (
+    if (
       duelMatchId &&
       !(data.match_options || []).some((m) => Number(m.match_id) === Number(duelMatchId))
     ) {
-      const firstOpen = (data.match_options || []).find((m) => !m.blocked_for_user)
-      setDuelMatchId(firstOpen ? firstOpen.match_id : 0)
+      setDuelMatchId(0)
     }
-    if (!duelOpponentId && (data.opponents || []).length > 0) {
-      setDuelOpponentId(data.opponents?.[0]?.tg_user_id || 0)
-    } else if (
+    if (
       duelOpponentId &&
       !(data.opponents || []).some((u) => Number(u.tg_user_id) === Number(duelOpponentId))
     ) {
-      setDuelOpponentId(data.opponents?.[0]?.tg_user_id || 0)
+      setDuelOpponentId(0)
     }
 
     if (duelFocusId != null && duelFocusId > 0) {
@@ -1292,6 +1286,13 @@ function App() {
   })
   const duelVisibleMatches = duelFilteredMatches.slice(0, duelMatchVisibleCount)
   const duelCanShowMoreMatches = duelFilteredMatches.length > duelVisibleMatches.length
+  const duelStatusText: Record<string, string> = {
+    pending: 'Ожидает',
+    accepted: 'Принята',
+    finished: 'Завершена',
+    declined: 'Отклонена',
+    expired: 'Истекла',
+  }
 
   const wcTopTabsBase: Array<{ key: '1' | '2' | '3' | 'PO'; label: string }> = [
     { key: '1', label: 'Тур 1' },
@@ -2028,10 +2029,10 @@ function App() {
                   <div className="card-text">{duelsData.message || 'Сначала вступи в турнир.'}</div>
                 ) : (
                   <>
-                    <div className="card-title">Рейтинг Elo</div>
+                    <div className="card-title">Рейтинг</div>
                     <div className="profile-hits-line">
-                      Elo: <b>{duelsData.elo?.rating ?? 1000}</b> · W <b>{duelsData.elo?.wins ?? 0}</b> · L{' '}
-                      <b>{duelsData.elo?.losses ?? 0}</b> · D <b>{duelsData.elo?.draws ?? 0}</b> · всего{' '}
+                      Рейтинг: <b>{duelsData.elo?.rating ?? 1000}</b> · Победы <b>{duelsData.elo?.wins ?? 0}</b> · Поражения{' '}
+                      <b>{duelsData.elo?.losses ?? 0}</b> · Ничьи <b>{duelsData.elo?.draws ?? 0}</b> · всего{' '}
                       <b>{duelsData.elo?.duels_total ?? 0}</b>
                     </div>
 
@@ -2050,6 +2051,7 @@ function App() {
                             ? `${duelSelectedMatch.kickoff} · ${duelSelectedMatch.home_team} — ${duelSelectedMatch.away_team}`
                             : 'Выбрать матч'}
                         </span>
+                        <span className={`duel-picker-chevron ${duelMatchPickerOpen ? 'is-open' : ''}`}>⌄</span>
                       </button>
                       {duelMatchPickerOpen ? (
                         <div className="duel-picker-panel">
@@ -2115,6 +2117,7 @@ function App() {
                             ? `${duelSelectedOpponent.display_name} · ${duelSelectedOpponent.elo_rating || 1000}`
                             : 'Выбрать соперника'}
                         </span>
+                        <span className={`duel-picker-chevron ${duelOpponentPickerOpen ? 'is-open' : ''}`}>⌄</span>
                       </button>
                       {duelOpponentPickerOpen ? (
                         <div className="duel-picker-panel">
@@ -2204,20 +2207,43 @@ function App() {
                             {d.group_label ? <span className="group-small">[{d.group_label}]</span> : <span className="group-small">—</span>}
                             <span className="kickoff-small">{d.kickoff} МСК</span>
                           </div>
-                          <div className="compact-main compact-main-result">
-                            <span className="team-name team-left">{teamWithFlag(d.home_team)}</span>
-                            <span className="score-inline-pill">{isMine ? d.challenger_pred : (d.opponent_pred || '-:-')}</span>
-                            <span className="team-name team-right">{teamWithFlag(d.away_team)}</span>
-                            <span className="result-badge">{d.status}</span>
-                          </div>
-                          <div className="compact-note">
-                            {d.challenger_name} {d.challenger_pred} vs {d.opponent_name} {d.opponent_pred || '—'}
-                            {d.result ? <> · Итог: <b>{d.result}</b></> : null}
-                            {d.status === 'finished' ? (
-                              <>
-                                {' '}
-                                · ΔElo {isMine ? (d.elo_delta_challenger >= 0 ? `+${d.elo_delta_challenger}` : d.elo_delta_challenger) : (d.elo_delta_opponent >= 0 ? `+${d.elo_delta_opponent}` : d.elo_delta_opponent)}
-                              </>
+                          {duelsFilter === 'finished' ? (
+                            <div className="compact-main compact-main-result-only">
+                              <span className="team-name team-left">{teamWithFlag(d.home_team)}</span>
+                              <span className="score-inline-pill">{d.result || '-:-'}</span>
+                              <span className="team-name team-right">{teamWithFlag(d.away_team)}</span>
+                            </div>
+                          ) : (
+                            <div className="compact-main compact-main-duel">
+                              <span className="team-name team-left">{teamWithFlag(d.home_team)}</span>
+                              <span className="duel-vs-sep">—</span>
+                              <span className="team-name team-right">{teamWithFlag(d.away_team)}</span>
+                              <span className="result-badge duel-status-badge">{duelStatusText[d.status] || d.status}</span>
+                            </div>
+                          )}
+
+                          <div className="duel-preds">
+                            <div className="duel-pred-line">
+                              <span className="duel-pred-name">{d.challenger_name}</span>
+                              <span className="duel-pred-score">{d.challenger_pred}</span>
+                            </div>
+                            <div className="duel-pred-line">
+                              <span className="duel-pred-name">{d.opponent_name}</span>
+                              <span className="duel-pred-score">{d.opponent_pred || '—'}</span>
+                            </div>
+                            {duelsFilter === 'finished' ? (
+                              <div className="compact-note">
+                                ΔРейтинг:{' '}
+                                <b>
+                                  {isMine
+                                    ? d.elo_delta_challenger >= 0
+                                      ? `+${d.elo_delta_challenger}`
+                                      : d.elo_delta_challenger
+                                    : d.elo_delta_opponent >= 0
+                                      ? `+${d.elo_delta_opponent}`
+                                      : d.elo_delta_opponent}
+                                </b>
+                              </div>
                             ) : null}
                           </div>
 
