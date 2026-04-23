@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 from typing import Any
-from urllib.parse import urlencode, quote_plus
+from urllib.parse import urlencode
 
 from aiogram import Bot, types
 from sqlalchemy import select
@@ -14,31 +14,17 @@ from app.models import Duel, DuelElo, Match, UserTournament
 logger = logging.getLogger(__name__)
 
 MINIAPP_WEB_URL = os.getenv("MINIAPP_WEB_URL", "https://rpl-predictions-bot-mini-app.onrender.com").strip()
-BOT_USERNAME = os.getenv("BOT_USERNAME", "rpl_predictor_roman_bot").strip().lstrip("@")
-
-
-def _duels_entry_url(duel_id: int | None = None) -> str | None:
-    payload = "screen=duels"
-    if duel_id is not None and int(duel_id) > 0:
-        payload = f"{payload}&duel_id={int(duel_id)}"
-
-    # Prefer Telegram deep-link so Mini App opens inside Telegram instead of external browser.
-    if BOT_USERNAME:
-        return f"https://t.me/{BOT_USERNAME}?startapp={quote_plus(payload)}"
-
-    if not MINIAPP_WEB_URL:
-        return None
-    url = MINIAPP_WEB_URL
-    sep = "&" if "?" in url else "?"
-    return f"{url}{sep}{urlencode({'screen': 'duels', 'duel_id': int(duel_id or 0)})}"
 
 
 def _open_duels_keyboard(button_text: str = "Открыть 1х1", duel_id: int | None = None) -> types.InlineKeyboardMarkup | None:
-    url = _duels_entry_url(duel_id)
-    if not url:
+    if not MINIAPP_WEB_URL:
         return None
+    url = MINIAPP_WEB_URL
+    if duel_id is not None and int(duel_id) > 0:
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}{urlencode({'screen': 'duels', 'duel_id': int(duel_id)})}"
     return types.InlineKeyboardMarkup(
-        inline_keyboard=[[types.InlineKeyboardButton(text=button_text, url=url)]]
+        inline_keyboard=[[types.InlineKeyboardButton(text=button_text, web_app=types.WebAppInfo(url=url))]]
     )
 
 
