@@ -3268,7 +3268,7 @@ def register_user_handlers(dp: Dispatcher):
             sep = "&" if "?" in url else "?"
             url = f"{url}{sep}{urlencode({'screen': 'duels', 'duel_id': int(duel_id)})}"
             kb = types.InlineKeyboardMarkup(
-                inline_keyboard=[[types.InlineKeyboardButton(text="Открыть 1х1", url=url)]]
+                inline_keyboard=[[types.InlineKeyboardButton(text="Открыть 1х1", web_app=types.WebAppInfo(url=url))]]
             )
         await callback.message.answer(text, reply_markup=kb)
         await callback.answer("Открой 1х1 и сохрани свой счёт.")

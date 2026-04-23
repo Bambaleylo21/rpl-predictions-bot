@@ -24,7 +24,7 @@ def _open_duels_keyboard(button_text: str = "Открыть 1х1", duel_id: int 
         sep = "&" if "?" in url else "?"
         url = f"{url}{sep}{urlencode({'screen': 'duels', 'duel_id': int(duel_id)})}"
     return types.InlineKeyboardMarkup(
-        inline_keyboard=[[types.InlineKeyboardButton(text=button_text, url=url)]]
+        inline_keyboard=[[types.InlineKeyboardButton(text=button_text, web_app=types.WebAppInfo(url=url))]]
     )
 
 
