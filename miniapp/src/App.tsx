@@ -282,6 +282,16 @@ type DuelsResponse = {
   finished?: DuelItem[]
 }
 
+type AchievementItem = NonNullable<ProfileResponse['achievements']>[number]
+type AchievementLevel = 'bronze' | 'silver' | 'gold' | null
+type AchievementVisual = {
+  iconUrl: string | null
+  iconEmoji: string
+  isSecretLocked: boolean
+  displayTitle: string
+  displayDescription: string
+}
+
 type Screen = 'predict' | 'duels' | 'profile' | 'table' | 'admin'
 
 type AdminRound = {
@@ -448,6 +458,87 @@ const crowdText = (item: {
   return `${h}% · ${d}% · ${a}%`
 }
 
+const ACHIEVEMENT_ICON_MODULES = import.meta.glob('./assets/achievements/*.png', {
+  eager: true,
+  import: 'default',
+}) as Record<string, string>
+
+const SECRET_ACHIEVEMENT_KEYS = new Set<string>(['fergie_time_hit', 'high_scoring_exact', 'only_scorer_in_match'])
+
+const normalizeAchievementKey = (value: string): string =>
+  (value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\.png$/i, '')
+    .replace(/[^\w]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+
+const ACHIEVEMENT_ICON_BY_KEY: Record<string, string> = Object.entries(ACHIEVEMENT_ICON_MODULES).reduce(
+  (acc, [path, url]) => {
+    const fileName = path.split('/').pop() || ''
+    const normalized = normalizeAchievementKey(fileName)
+    if (normalized) acc[normalized] = url
+    return acc
+  },
+  {} as Record<string, string>
+)
+
+const parseAchievementLevel = (rawKey: string, title?: string): AchievementLevel => {
+  const key = normalizeAchievementKey(rawKey)
+  const titleNorm = normalizeAchievementKey(title || '')
+  const levelTokens: AchievementLevel[] = ['bronze', 'silver', 'gold']
+  for (const level of levelTokens) {
+    if (!level) continue
+    if (key.endsWith(`_${level}`) || titleNorm.includes(level)) {
+      return level
+    }
+  }
+  if (titleNorm.includes('бронз')) return 'bronze'
+  if (titleNorm.includes('серебр')) return 'silver'
+  if (titleNorm.includes('золот')) return 'gold'
+  return null
+}
+
+const stripAchievementLevel = (rawKey: string): string => normalizeAchievementKey(rawKey).replace(/_(bronze|silver|gold)$/i, '')
+
+const resolveAchievementIconUrl = (key: string, title: string | undefined, earned: boolean): string | null => {
+  const normalizedKey = normalizeAchievementKey(key)
+  const isSecret = SECRET_ACHIEVEMENT_KEYS.has(normalizedKey)
+  if (isSecret && !earned) {
+    return ACHIEVEMENT_ICON_BY_KEY['secret_locked'] || null
+  }
+
+  const level = parseAchievementLevel(normalizedKey, title)
+  const baseKey = stripAchievementLevel(normalizedKey)
+  const candidates = [
+    normalizedKey,
+    baseKey,
+    level ? `${baseKey}_${level}` : '',
+    level ? `${baseKey}${level}` : '',
+  ].filter(Boolean)
+
+  for (const candidate of candidates) {
+    const found = ACHIEVEMENT_ICON_BY_KEY[normalizeAchievementKey(candidate)]
+    if (found) return found
+  }
+  return null
+}
+
+const buildAchievementVisual = (achievement: AchievementItem): AchievementVisual => {
+  const keyNorm = normalizeAchievementKey(achievement.key)
+  const isSecretLocked = SECRET_ACHIEVEMENT_KEYS.has(keyNorm) && !achievement.earned
+  return {
+    iconUrl: resolveAchievementIconUrl(achievement.key, achievement.title, achievement.earned),
+    iconEmoji: isSecretLocked ? '🔒' : achievement.emoji,
+    isSecretLocked,
+    displayTitle: isSecretLocked ? 'Секретная ачивка' : achievement.title,
+    displayDescription: isSecretLocked
+      ? 'Откроется после выполнения скрытого условия.'
+      : achievement.description || achievement.title,
+  }
+}
+
 function App() {
   const [screen, setScreen] = useState<Screen>('predict')
   const [duelFocusId, setDuelFocusId] = useState<number | null>(null)
@@ -485,6 +576,7 @@ function App() {
   const [tableSortKey, setTableSortKey] = useState<'total' | 'exact' | 'diff' | 'outcome' | 'missed' | 'bonus'>('total')
   const [tableSortDir, setTableSortDir] = useState<'desc' | 'asc'>('desc')
   const [achievementsExpanded, setAchievementsExpanded] = useState<boolean>(false)
+  const [achievementPreview, setAchievementPreview] = useState<AchievementItem | null>(null)
   const [historyExpanded, setHistoryExpanded] = useState<boolean>(false)
   const [currentInsight, setCurrentInsight] = useState<string | null>(null)
   const [adminRounds, setAdminRounds] = useState<AdminRound[]>([])
@@ -793,7 +885,26 @@ function App() {
 
   useEffect(() => {
     setAchievementsExpanded(false)
+    setAchievementPreview(null)
   }, [selectedTournamentCode, profileTargetUserId, profileData?.viewed_tg_user_id])
+
+  useEffect(() => {
+    if (screen === 'profile') return
+    setAchievementPreview(null)
+  }, [screen])
+
+  useEffect(() => {
+    if (!achievementPreview) return
+    const onKeyDown = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape') {
+        setAchievementPreview(null)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [achievementPreview])
 
   useEffect(() => {
     if (screen !== 'profile') return
@@ -1403,9 +1514,11 @@ function App() {
   }
 
   const allAchievements = profileData?.achievements || []
-  const earnedAchievements = allAchievements.filter((a) => a.earned)
-  const lockedAchievements = allAchievements.filter((a) => !a.earned)
+  const achievementsWithVisuals = allAchievements.map((a) => ({ ...a, visual: buildAchievementVisual(a) }))
+  const earnedAchievements = achievementsWithVisuals.filter((a) => a.earned)
+  const lockedAchievements = achievementsWithVisuals.filter((a) => !a.earned)
   const visibleLockedAchievements = achievementsExpanded ? lockedAchievements : []
+  const achievementPreviewVisual = achievementPreview ? buildAchievementVisual(achievementPreview) : null
   const legacyTrophies = profileData?.legacy_trophies || []
   const tournamentHistory = profileData?.tournament_history || []
   const medalGold =
@@ -1916,24 +2029,42 @@ function App() {
                     {allAchievements.length > 0 ? (
                       <div className="profile-achievements-grid">
                         {earnedAchievements.map((a) => (
-                          <div
+                          <button
                             key={a.key}
-                            className="profile-achievement is-earned"
-                            title={a.description || a.title}
+                            type="button"
+                            className="profile-achievement profile-achievement-btn is-earned"
+                            title={a.visual.displayDescription}
+                            onClick={() => setAchievementPreview(a)}
                           >
-                            <span className="profile-achievement-emoji">{a.emoji}</span>
-                            <span className="profile-achievement-title">{a.title}</span>
-                          </div>
+                            <span className="profile-achievement-emoji">
+                              {a.visual.iconUrl ? (
+                                <img src={a.visual.iconUrl} alt={a.visual.displayTitle} className="profile-achievement-icon" />
+                              ) : (
+                                a.visual.iconEmoji
+                              )}
+                            </span>
+                            <span className="profile-achievement-title">{a.visual.displayTitle}</span>
+                          </button>
                         ))}
                         {visibleLockedAchievements.map((a) => (
-                          <div
+                          <button
                             key={a.key}
-                            className={`profile-achievement is-locked ${a.taken_by_other ? 'is-taken' : ''}`}
-                            title={a.description || a.title}
+                            type="button"
+                            className={`profile-achievement profile-achievement-btn is-locked ${
+                              a.taken_by_other ? 'is-taken' : ''
+                            } ${a.visual.isSecretLocked ? 'is-secret-locked' : ''}`}
+                            title={a.visual.displayDescription}
+                            onClick={() => setAchievementPreview(a)}
                           >
-                            <span className="profile-achievement-emoji">{a.emoji}</span>
-                            <span className="profile-achievement-title">{a.title}</span>
-                          </div>
+                            <span className="profile-achievement-emoji">
+                              {a.visual.iconUrl ? (
+                                <img src={a.visual.iconUrl} alt={a.visual.displayTitle} className="profile-achievement-icon" />
+                              ) : (
+                                a.visual.iconEmoji
+                              )}
+                            </span>
+                            <span className="profile-achievement-title">{a.visual.displayTitle}</span>
+                          </button>
                         ))}
                       </div>
                     ) : (
@@ -2634,6 +2765,35 @@ function App() {
               </div>
             </section>
           </>
+        ) : null}
+
+        {achievementPreview && achievementPreviewVisual ? (
+          <div className="achievement-modal-overlay" onClick={() => setAchievementPreview(null)}>
+            <div className="achievement-modal-card" onClick={(ev) => ev.stopPropagation()}>
+              <button
+                type="button"
+                className="achievement-modal-close"
+                onClick={() => setAchievementPreview(null)}
+                aria-label="Закрыть"
+              >
+                ✕
+              </button>
+              <div className="achievement-modal-icon-wrap">
+                {achievementPreviewVisual.iconUrl ? (
+                  <img
+                    src={achievementPreviewVisual.iconUrl}
+                    alt={achievementPreviewVisual.displayTitle}
+                    className="achievement-modal-icon"
+                  />
+                ) : (
+                  <span className="achievement-modal-emoji">{achievementPreviewVisual.iconEmoji}</span>
+                )}
+              </div>
+              <div className="achievement-modal-title">{achievementPreviewVisual.displayTitle}</div>
+              <div className="achievement-modal-meta">{achievementPreview.earned ? 'Получена' : 'Не получена'}</div>
+              <div className="achievement-modal-description">{achievementPreviewVisual.displayDescription}</div>
+            </div>
+          </div>
         ) : null}
 
         <footer className="footer-note">Статус: Mini App авторизован и получает профиль из API.</footer>
