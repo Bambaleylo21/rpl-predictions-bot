@@ -959,9 +959,19 @@ async def _build_profile_achievements(
     ).all()
     round_total_map = {int(r): int(c or 0) for r, c in round_totals_rows if r is not None}
     round_pred_map = {int(r): int(c or 0) for r, c in user_round_pred_rows if r is not None}
+    round_closed_count_map: dict[int, int] = {}
+    for m in closed_matches:
+        rnd = int(m["round_number"] or 0)
+        round_closed_count_map[rnd] = int(round_closed_count_map.get(rnd, 0)) + 1
+    round_is_completed: dict[int, bool] = {
+        int(rnd): int(total or 0) > 0 and int(round_closed_count_map.get(int(rnd), 0)) >= int(total or 0)
+        for rnd, total in round_total_map.items()
+    }
     sorted_rounds = sorted(round_total_map.keys())
     no_miss_round_count = 0
     for rnd in sorted_rounds:
+        if not bool(round_is_completed.get(int(rnd), False)):
+            continue
         total = int(round_total_map.get(rnd, 0))
         predicted = int(round_pred_map.get(rnd, 0))
         if total <= 0:
@@ -1054,39 +1064,8 @@ async def _build_profile_achievements(
             description=f"Выиграть {target} дуэлей 1х1.",
         )
 
-    # first / last achievements inside tournament.
-    first_specs = [
-        ("exact", "first_exact_tournament", "Первый точный счёт в турнире", "🎯"),
-    ]
-    for category, key, title, emoji in first_specs:
-        first_row = (
-            await session.execute(
-                select(Prediction.tg_user_id)
-                .select_from(Prediction)
-                .join(
-                    Point,
-                    (Point.match_id == Prediction.match_id) & (Point.tg_user_id == Prediction.tg_user_id),
-                )
-                .join(Match, Match.id == Prediction.match_id)
-                .where(
-                    Match.tournament_id == int(tournament_id),
-                    Match.is_placeholder == 0,
-                    Point.category == category,
-                )
-                .order_by(Prediction.created_at.asc(), Prediction.id.asc())
-                .limit(1)
-            )
-        ).first()
-        holders = {int(first_row[0])} if first_row and first_row[0] is not None else set()
-        _push_unique(
-            key=key,
-            title=title,
-            emoji=emoji,
-            holders=holders,
-            description="Ты первый в турнире угадал точный счёт",
-        )
-
-    last_exact_row = (
+    # first / last exact in tournament.
+    first_exact_row = (
         await session.execute(
             select(Prediction.tg_user_id)
             .select_from(Prediction)
@@ -1100,11 +1079,69 @@ async def _build_profile_achievements(
                 Match.is_placeholder == 0,
                 Point.category == "exact",
             )
-            .order_by(Prediction.created_at.desc(), Prediction.id.desc())
+            .order_by(
+                Point.created_at.asc(),
+                Match.kickoff_time.asc(),
+                Prediction.created_at.asc(),
+                Prediction.id.asc(),
+            )
             .limit(1)
         )
     ).first()
-    last_exact_holders = {int(last_exact_row[0])} if last_exact_row and last_exact_row[0] is not None else set()
+    first_exact_holders = {int(first_exact_row[0])} if first_exact_row and first_exact_row[0] is not None else set()
+    _push_unique(
+        key="first_exact_tournament",
+        title="Первый точный счёт в турнире",
+        emoji="🎯",
+        holders=first_exact_holders,
+        description="Ты первый в турнире угадал точный счёт",
+    )
+
+    last_exact_holders: set[int] = set()
+    if participant_ids:
+        exact_rows = (
+            await session.execute(
+                select(
+                    Point.tg_user_id,
+                    Point.created_at,
+                    Prediction.created_at,
+                    Prediction.id,
+                )
+                .select_from(Point)
+                .join(
+                    Prediction,
+                    (Prediction.match_id == Point.match_id) & (Prediction.tg_user_id == Point.tg_user_id),
+                )
+                .join(Match, Match.id == Point.match_id)
+                .where(
+                    Match.tournament_id == int(tournament_id),
+                    Match.is_placeholder == 0,
+                    Point.category == "exact",
+                    Point.tg_user_id.in_(participant_ids),
+                )
+                .order_by(
+                    Point.tg_user_id.asc(),
+                    Point.created_at.asc(),
+                    Prediction.created_at.asc(),
+                    Prediction.id.asc(),
+                )
+            )
+        ).all()
+        first_exact_by_user: dict[int, tuple[Any, Any, int]] = {}
+        for uid, point_created_at, pred_created_at, pred_id in exact_rows:
+            iuid = int(uid)
+            if iuid not in first_exact_by_user:
+                first_exact_by_user[iuid] = (point_created_at, pred_created_at, int(pred_id or 0))
+        if all(int(uid) in first_exact_by_user for uid in participant_ids):
+            latest_uid = max(
+                participant_ids,
+                key=lambda uid: (
+                    first_exact_by_user[int(uid)][0],
+                    first_exact_by_user[int(uid)][1],
+                    first_exact_by_user[int(uid)][2],
+                ),
+            )
+            last_exact_holders = {int(latest_uid)}
     _push_unique(
         key="last_exact_tournament",
         title="Последний точный счёт в турнире",
@@ -1114,9 +1151,10 @@ async def _build_profile_achievements(
     )
 
     # first_leader_after_round1: лидер(ы) таблицы после завершения 1-го тура.
-    round1_match_ids = [int(m["match_id"]) for m in closed_matches if int(m["round_number"]) <= 1]
+    round1_is_completed = bool(round_is_completed.get(1, False))
+    round1_match_ids = [int(m["match_id"]) for m in closed_matches if int(m["round_number"]) == 1]
     round1_leaders: set[int] = set()
-    if participant_ids and round1_match_ids:
+    if participant_ids and round1_match_ids and round1_is_completed:
         round1_points_rows = (
             await session.execute(
                 select(Point.tg_user_id, func.sum(Point.points))
@@ -1148,13 +1186,36 @@ async def _build_profile_achievements(
         points_by_pair: dict[tuple[int, int], int] = {
             (int(mid), int(uid)): int(pts or 0) for mid, uid, pts in all_points_rows
         }
+        pred_rows = (
+            await session.execute(
+                select(Prediction.match_id, Prediction.tg_user_id, Prediction.created_at, Prediction.id).where(
+                    Prediction.match_id.in_(closed_match_ids),
+                    Prediction.tg_user_id.in_(participant_ids),
+                )
+            )
+        ).all()
+        pred_order_map: dict[tuple[int, int], tuple[Any, int]] = {
+            (int(mid), int(uid)): (created_at, int(pred_id or 0)) for mid, uid, created_at, pred_id in pred_rows
+        }
         cumulative: dict[int, int] = {int(uid): 0 for uid in participant_ids}
         for mid in closed_match_ids:
+            reached_now: list[int] = []
             for uid in participant_ids:
+                prev = int(cumulative.get(int(uid), 0))
                 cumulative[int(uid)] = int(cumulative.get(int(uid), 0)) + int(points_by_pair.get((int(mid), int(uid)), 0))
-            reached = {int(uid) for uid in participant_ids if int(cumulative.get(int(uid), 0)) >= 100}
-            if reached:
-                first_101_holders = reached
+                now_val = int(cumulative.get(int(uid), 0))
+                if prev < 100 <= now_val:
+                    reached_now.append(int(uid))
+            if reached_now:
+                winner_uid = min(
+                    reached_now,
+                    key=lambda uid: (
+                        pred_order_map.get((int(mid), int(uid)), (None, 10**18))[0] is None,
+                        pred_order_map.get((int(mid), int(uid)), (None, 10**18))[0],
+                        pred_order_map.get((int(mid), int(uid)), (None, 10**18))[1],
+                    ),
+                )
+                first_101_holders = {int(winner_uid)}
                 break
     _push_unique(
         key="first_101_points",
@@ -1165,9 +1226,10 @@ async def _build_profile_achievements(
     )
 
     # group_stage_winner_after_round3: лидер(ы) после завершения 3-го тура.
+    round3_is_completed = bool(round_is_completed.get(3, False))
     round3_match_ids = [int(m["match_id"]) for m in closed_matches if int(m["round_number"]) <= 3]
     round3_leaders: set[int] = set()
-    if participant_ids and round3_match_ids:
+    if participant_ids and round3_match_ids and round3_is_completed:
         round3_points_rows = (
             await session.execute(
                 select(Point.tg_user_id, func.sum(Point.points))
