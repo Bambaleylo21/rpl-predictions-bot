@@ -1041,8 +1041,6 @@ async def _build_profile_achievements(
     # first / last achievements inside tournament.
     first_specs = [
         ("exact", "first_exact_tournament", "Первый точный в турнире", "🎯"),
-        ("diff", "first_diff_tournament", "Первая разница в турнире", "📏"),
-        ("outcome", "first_outcome_tournament", "Первый исход в турнире", "✅"),
     ]
     for category, key, title, emoji in first_specs:
         first_row = (

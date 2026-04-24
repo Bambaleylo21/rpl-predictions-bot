@@ -1276,17 +1276,17 @@ body {
 .profile-achievement-emoji {
   font-size: 15px;
   line-height: 1;
-  width: 82px;
-  height: 82px;
+  width: 92px;
+  height: 92px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex: 0 0 82px;
+  flex: 0 0 92px;
 }
 
 .profile-achievement-icon {
-  width: 82px;
-  height: 82px;
+  width: 92px;
+  height: 92px;
   object-fit: contain;
   display: block;
 }
@@ -1428,8 +1428,8 @@ body {
 }
 
 .achievement-modal-icon-wrap {
-  width: 116px;
-  height: 116px;
+  width: 132px;
+  height: 132px;
   margin: 6px auto 10px;
   border-radius: 0;
   border: none;
@@ -1440,8 +1440,8 @@ body {
 }
 
 .achievement-modal-icon {
-  width: 110px;
-  height: 110px;
+  width: 126px;
+  height: 126px;
   object-fit: contain;
   display: block;
 }
@@ -1498,17 +1498,17 @@ body {
 }
 
 .achievement-level-icon-wrap {
-  width: 72px;
-  height: 72px;
-  flex: 0 0 72px;
+  width: 80px;
+  height: 80px;
+  flex: 0 0 80px;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
 .achievement-level-icon {
-  width: 70px;
-  height: 70px;
+  width: 78px;
+  height: 78px;
   object-fit: contain;
   display: block;
 }
