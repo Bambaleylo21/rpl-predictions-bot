@@ -715,7 +715,7 @@ function App() {
 
   useEffect(() => {
     let attempts = 0
-    const maxAttempts = 8
+    const maxAttempts = 16
     let timerId: ReturnType<typeof setTimeout> | null = null
     const appBg = '#0b1220'
 
@@ -724,6 +724,16 @@ function App() {
         WebApp.expand()
       } catch {
         // no-op outside Telegram
+      }
+      try {
+        ;(WebApp as any).requestFullscreen?.()
+      } catch {
+        // no-op for clients without fullscreen support
+      }
+      try {
+        ;(WebApp as any).disableVerticalSwipes?.()
+      } catch {
+        // no-op for clients without this method
       }
     }
 
@@ -742,18 +752,30 @@ function App() {
         if (attempts >= maxAttempts) return
         attempts += 1
         expandNow()
-        timerId = setTimeout(loopExpand, 220)
+        timerId = setTimeout(loopExpand, 260)
       }
       timerId = setTimeout(loopExpand, 120)
 
       const onViewportChanged = () => {
         expandNow()
       }
+      const onFocus = () => {
+        expandNow()
+      }
+      const onVisibilityChange = () => {
+        if (document.visibilityState === 'visible') {
+          expandNow()
+        }
+      }
       ;(WebApp as any).onEvent?.('viewportChanged', onViewportChanged)
+      window.addEventListener('focus', onFocus)
+      document.addEventListener('visibilitychange', onVisibilityChange)
 
       return () => {
         if (timerId) clearTimeout(timerId)
         ;(WebApp as any).offEvent?.('viewportChanged', onViewportChanged)
+        window.removeEventListener('focus', onFocus)
+        document.removeEventListener('visibilitychange', onVisibilityChange)
       }
     } catch {
       // no-op outside Telegram
