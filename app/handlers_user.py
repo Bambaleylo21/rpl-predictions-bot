@@ -147,13 +147,25 @@ async def _ensure_tournament(
     name: str,
     round_min: int,
     round_max: int,
+    planned_matches_total: int = 0,
 ) -> Tournament:
     q = await session.execute(select(Tournament).where(Tournament.code == code))
     t = q.scalar_one_or_none()
     if t is None:
-        t = Tournament(code=code, name=name, round_min=round_min, round_max=round_max, is_active=1)
+        t = Tournament(
+            code=code,
+            name=name,
+            round_min=round_min,
+            round_max=round_max,
+            planned_matches_total=int(planned_matches_total or 0),
+            is_active=1,
+        )
         session.add(t)
         await session.flush()
+    else:
+        target_planned = int(planned_matches_total or 0)
+        if int(t.planned_matches_total or 0) != target_planned:
+            t.planned_matches_total = target_planned
     return t
 
 
@@ -164,6 +176,7 @@ async def ensure_default_tournaments(session) -> tuple[Tournament, Tournament]:
         name="РПЛ",
         round_min=DEFAULT_RPL_ROUND_MIN,
         round_max=DEFAULT_RPL_ROUND_MAX,
+        planned_matches_total=0,
     )
     wc = await _ensure_tournament(
         session=session,
@@ -171,6 +184,7 @@ async def ensure_default_tournaments(session) -> tuple[Tournament, Tournament]:
         name="ЧМ 2026",
         round_min=DEFAULT_WC_ROUND_MIN,
         round_max=DEFAULT_WC_ROUND_MAX,
+        planned_matches_total=104,
     )
     return rpl, wc
 
@@ -216,6 +230,7 @@ async def get_selected_tournament_for_user(session, tg_user_id: int) -> Tourname
                 name="РПЛ",
                 round_min=DEFAULT_RPL_ROUND_MIN,
                 round_max=DEFAULT_RPL_ROUND_MAX,
+                planned_matches_total=0,
             )
         await set_selected_tournament_for_user(session, tg_user_id, t.code)
 

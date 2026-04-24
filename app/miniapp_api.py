@@ -209,6 +209,7 @@ async def _ensure_tournament(
     name: str,
     round_min: int,
     round_max: int,
+    planned_matches_total: int = 0,
 ) -> Tournament:
     q = await session.execute(select(Tournament).where(Tournament.code == code).limit(1))
     row = q.scalar_one_or_none()
@@ -218,10 +219,15 @@ async def _ensure_tournament(
             name=name,
             round_min=round_min,
             round_max=round_max,
+            planned_matches_total=int(planned_matches_total or 0),
             is_active=1,
         )
         session.add(row)
         await session.flush()
+    else:
+        target_planned = int(planned_matches_total or 0)
+        if int(row.planned_matches_total or 0) != target_planned:
+            row.planned_matches_total = target_planned
     return row
 
 
@@ -232,6 +238,7 @@ async def _ensure_default_tournaments(session) -> None:
         name="РПЛ",
         round_min=1,
         round_max=30,
+        planned_matches_total=0,
     )
     await _ensure_tournament(
         session=session,
@@ -239,6 +246,7 @@ async def _ensure_default_tournaments(session) -> None:
         name="ЧМ 2026",
         round_min=1,
         round_max=64,
+        planned_matches_total=104,
     )
 
 
@@ -273,6 +281,7 @@ async def _resolve_tournament(session, tg_user_id: int, requested_code: str | No
             name="РПЛ",
             round_min=1,
             round_max=30,
+            planned_matches_total=0,
         )
     await _set_setting(session, _selected_tournament_key(tg_user_id), fallback.code)
     return fallback
@@ -1387,6 +1396,9 @@ async def _build_profile_tournament_history(
             )
         )
         total_matches = int(total_matches_q.scalar_one() or 0)
+        planned_total = int(getattr(tournament, "planned_matches_total", 0) or 0)
+        if planned_total > 0:
+            total_matches = planned_total
         if total_matches <= 0:
             continue
 
@@ -1588,6 +1600,9 @@ async def profile(request: web.Request) -> web.Response:
                 )
             )
             total_matches = int(total_matches_q.scalar_one() or 0)
+            planned_total = int(getattr(tournament, "planned_matches_total", 0) or 0)
+            if planned_total > 0:
+                total_matches = planned_total
 
             played_matches_q = await session.execute(
                 select(func.count(Match.id)).where(

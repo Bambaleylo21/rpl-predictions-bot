@@ -36,6 +36,7 @@ class Tournament(Base):
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     round_min: Mapped[int] = mapped_column(Integer, nullable=False)
     round_max: Mapped[int] = mapped_column(Integer, nullable=False)
+    planned_matches_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     is_active: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
 
     created_at: Mapped[datetime] = mapped_column(

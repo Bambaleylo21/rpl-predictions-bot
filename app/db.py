@@ -40,10 +40,12 @@ async def _apply_postgres_schema_fixes(conn) -> None:
 
     statements = [
         # tournaments
-        "CREATE TABLE IF NOT EXISTS tournaments (id SERIAL PRIMARY KEY, code VARCHAR(16) UNIQUE NOT NULL, name VARCHAR(64) NOT NULL, round_min INTEGER NOT NULL, round_max INTEGER NOT NULL, is_active INTEGER NOT NULL DEFAULT 1, created_at TIMESTAMP NOT NULL DEFAULT NOW())",
+        "CREATE TABLE IF NOT EXISTS tournaments (id SERIAL PRIMARY KEY, code VARCHAR(16) UNIQUE NOT NULL, name VARCHAR(64) NOT NULL, round_min INTEGER NOT NULL, round_max INTEGER NOT NULL, planned_matches_total INTEGER NOT NULL DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1, created_at TIMESTAMP NOT NULL DEFAULT NOW())",
         "CREATE INDEX IF NOT EXISTS ix_tournaments_code ON tournaments (code)",
+        "ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS planned_matches_total INTEGER NOT NULL DEFAULT 0",
         "INSERT INTO tournaments (code, name, round_min, round_max, is_active) VALUES ('RPL', 'РПЛ', 19, 30, 1) ON CONFLICT (code) DO NOTHING",
         "UPDATE tournaments SET name='РПЛ', round_min=19, round_max=30, is_active=1 WHERE code='RPL'",
+        "UPDATE tournaments SET planned_matches_total = 104 WHERE code='WC2026'",
         "DELETE FROM tournaments WHERE code='EPL'",
 
         # user_tournaments
@@ -134,10 +136,12 @@ async def _apply_sqlite_schema_fixes(conn) -> None:
 
     statements = [
         # tournaments
-        "CREATE TABLE IF NOT EXISTS tournaments (id INTEGER PRIMARY KEY AUTOINCREMENT, code VARCHAR(16) UNIQUE NOT NULL, name VARCHAR(64) NOT NULL, round_min INTEGER NOT NULL, round_max INTEGER NOT NULL, is_active INTEGER NOT NULL DEFAULT 1, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)",
+        "CREATE TABLE IF NOT EXISTS tournaments (id INTEGER PRIMARY KEY AUTOINCREMENT, code VARCHAR(16) UNIQUE NOT NULL, name VARCHAR(64) NOT NULL, round_min INTEGER NOT NULL, round_max INTEGER NOT NULL, planned_matches_total INTEGER NOT NULL DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)",
         "CREATE INDEX IF NOT EXISTS ix_tournaments_code ON tournaments (code)",
+        "ALTER TABLE tournaments ADD COLUMN planned_matches_total INTEGER NOT NULL DEFAULT 0",
         "INSERT OR IGNORE INTO tournaments (code, name, round_min, round_max, is_active) VALUES ('RPL', 'РПЛ', 19, 30, 1)",
         "UPDATE tournaments SET name='РПЛ', round_min=19, round_max=30, is_active=1 WHERE code='RPL'",
+        "UPDATE tournaments SET planned_matches_total = 104 WHERE code='WC2026'",
         "DELETE FROM tournaments WHERE code='EPL'",
 
         # user_tournaments

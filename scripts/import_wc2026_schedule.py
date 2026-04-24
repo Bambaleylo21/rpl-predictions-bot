@@ -327,6 +327,7 @@ async def run_import(xlsx_path: Path, clear_wc_matches: bool = False) -> None:
                 name=WC_NAME,
                 round_min=1,
                 round_max=9,
+                planned_matches_total=104,
                 is_active=1,
             )
             session.add(tournament)
@@ -335,6 +336,7 @@ async def run_import(xlsx_path: Path, clear_wc_matches: bool = False) -> None:
             tournament.name = WC_NAME
             tournament.round_min = 1
             tournament.round_max = 9
+            tournament.planned_matches_total = 104
             tournament.is_active = 1
 
         if clear_wc_matches:
