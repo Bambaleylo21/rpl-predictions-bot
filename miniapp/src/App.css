@@ -1226,25 +1226,25 @@ body {
 }
 
 .profile-achievements-grid {
-  margin-top: 8px;
+  margin-top: 10px;
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .profile-achievement {
   border: 1px solid #2f4777;
-  border-radius: 8px;
-  padding: 6px 8px;
+  border-radius: 14px;
+  padding: 8px;
   display: flex;
   align-items: center;
-  gap: 6px;
-  min-height: 34px;
+  justify-content: center;
+  min-height: 94px;
 }
 
 .profile-achievement-btn {
   width: 100%;
-  text-align: left;
+  aspect-ratio: 1 / 1;
   cursor: pointer;
   background: transparent;
   transition: transform 0.12s ease, border-color 0.16s ease, background-color 0.16s ease;
@@ -1255,18 +1255,18 @@ body {
 }
 
 .profile-achievement.is-earned {
-  background: rgba(31, 138, 76, 0.2);
-  border-color: #44bf75;
+  background: rgba(24, 47, 86, 0.6);
+  border-color: #4468a9;
 }
 
 .profile-achievement.is-locked {
-  background: rgba(16, 31, 56, 0.7);
-  opacity: 0.7;
+  background: rgba(16, 31, 56, 0.5);
+  border-color: rgba(87, 111, 154, 0.55);
 }
 
 .profile-achievement.is-locked.is-taken {
-  border-color: rgba(194, 66, 66, 0.6);
-  background: rgba(77, 22, 30, 0.65);
+  border-color: rgba(128, 140, 161, 0.6);
+  background: rgba(31, 41, 62, 0.6);
 }
 
 .profile-achievement.is-locked.is-secret-locked {
@@ -1276,25 +1276,19 @@ body {
 .profile-achievement-emoji {
   font-size: 15px;
   line-height: 1;
-  width: 24px;
-  height: 24px;
+  width: 70px;
+  height: 70px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex: 0 0 24px;
+  flex: 0 0 70px;
 }
 
 .profile-achievement-icon {
-  width: 22px;
-  height: 22px;
+  width: 70px;
+  height: 70px;
   object-fit: contain;
   display: block;
-}
-
-.profile-achievement-title {
-  font-size: 11px;
-  color: #dbe8ff;
-  line-height: 1.2;
 }
 
 .profile-achievements-toggle {
@@ -1407,9 +1401,9 @@ body {
 .achievement-modal-card {
   width: min(340px, calc(100vw - 24px));
   border-radius: 16px;
-  border: 1px solid #37548a;
-  background: linear-gradient(180deg, #162a52 0%, #0f1f3d 100%);
-  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.42);
+  border: 1px solid #ccd6ea;
+  background: #f8fbff;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.3);
   padding: 14px 14px 16px;
   position: relative;
 }
@@ -1420,10 +1414,10 @@ body {
   right: 8px;
   width: 28px;
   height: 28px;
-  border: 1px solid #3d5f99;
+  border: 1px solid #cad4e8;
   border-radius: 999px;
-  background: rgba(14, 28, 56, 0.88);
-  color: #dbe8ff;
+  background: #ffffff;
+  color: #4f5a70;
   font-size: 14px;
   line-height: 1;
   cursor: pointer;
@@ -1434,8 +1428,8 @@ body {
   height: 72px;
   margin: 6px auto 10px;
   border-radius: 14px;
-  border: 1px solid #35568f;
-  background: rgba(11, 22, 42, 0.74);
+  border: 1px solid #d6dff0;
+  background: #ffffff;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1454,7 +1448,7 @@ body {
 }
 
 .achievement-modal-title {
-  color: #f2f7ff;
+  color: #1c2432;
   text-align: center;
   font-size: 16px;
   font-weight: 700;
@@ -1464,17 +1458,76 @@ body {
 .achievement-modal-meta {
   text-align: center;
   margin-top: 6px;
-  color: #9eb5e6;
+  color: #6a768f;
   font-size: 12px;
   font-weight: 600;
 }
 
 .achievement-modal-description {
   margin-top: 10px;
-  color: #d6e4ff;
+  color: #2d374b;
   font-size: 13px;
   line-height: 1.45;
   text-align: center;
+}
+
+.achievement-levels {
+  margin-top: 12px;
+  border-top: 1px solid #dce4f2;
+  padding-top: 10px;
+  display: grid;
+  gap: 10px;
+}
+
+.achievement-level-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: 12px;
+  border: 1px solid #dbe4f2;
+  background: #ffffff;
+  padding: 8px;
+}
+
+.achievement-level-item.is-locked {
+  opacity: 0.45;
+}
+
+.achievement-level-icon-wrap {
+  width: 56px;
+  height: 56px;
+  flex: 0 0 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.achievement-level-icon {
+  width: 54px;
+  height: 54px;
+  object-fit: contain;
+  display: block;
+}
+
+.achievement-level-emoji {
+  font-size: 30px;
+  line-height: 1;
+}
+
+.achievement-level-meta {
+  display: grid;
+  gap: 2px;
+}
+
+.achievement-level-title {
+  color: #263247;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.achievement-level-state {
+  color: #6b7891;
+  font-size: 12px;
 }
 
 .footer-note {

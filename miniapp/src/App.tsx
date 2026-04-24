@@ -291,6 +291,7 @@ type AchievementVisual = {
   displayTitle: string
   displayDescription: string
 }
+type AchievementWithVisual = AchievementItem & { visual: AchievementVisual }
 
 type Screen = 'predict' | 'duels' | 'profile' | 'table' | 'admin'
 
@@ -501,6 +502,22 @@ const parseAchievementLevel = (rawKey: string, title?: string): AchievementLevel
 }
 
 const stripAchievementLevel = (rawKey: string): string => normalizeAchievementKey(rawKey).replace(/_(bronze|silver|gold)$/i, '')
+const LEVEL_ACHIEVEMENT_BASES = new Set<string>(['no_miss_tour_streak', 'scoring_match_streak', 'duel_wins_total'])
+const LEVEL_ORDER: Array<'bronze' | 'silver' | 'gold'> = ['bronze', 'silver', 'gold']
+
+const getAchievementLevelGroupBase = (rawKey: string): string | null => {
+  const key = normalizeAchievementKey(rawKey)
+  const match = key.match(/^(.*)_(bronze|silver|gold)$/)
+  if (!match) return null
+  const base = stripAchievementLevel(key)
+  return LEVEL_ACHIEVEMENT_BASES.has(base) ? base : null
+}
+
+const levelLabel = (level: 'bronze' | 'silver' | 'gold'): string => {
+  if (level === 'bronze') return 'Уровень 1'
+  if (level === 'silver') return 'Уровень 2'
+  return 'Уровень 3'
+}
 
 const resolveAchievementIconUrl = (key: string, title: string | undefined, earned: boolean): string | null => {
   const normalizedKey = normalizeAchievementKey(key)
@@ -576,7 +593,7 @@ function App() {
   const [tableSortKey, setTableSortKey] = useState<'total' | 'exact' | 'diff' | 'outcome' | 'missed' | 'bonus'>('total')
   const [tableSortDir, setTableSortDir] = useState<'desc' | 'asc'>('desc')
   const [achievementsExpanded, setAchievementsExpanded] = useState<boolean>(false)
-  const [achievementPreview, setAchievementPreview] = useState<AchievementItem | null>(null)
+  const [achievementPreview, setAchievementPreview] = useState<AchievementWithVisual | null>(null)
   const [historyExpanded, setHistoryExpanded] = useState<boolean>(false)
   const [currentInsight, setCurrentInsight] = useState<string | null>(null)
   const [adminRounds, setAdminRounds] = useState<AdminRound[]>([])
@@ -1514,11 +1531,34 @@ function App() {
   }
 
   const allAchievements = profileData?.achievements || []
-  const achievementsWithVisuals = allAchievements.map((a) => ({ ...a, visual: buildAchievementVisual(a) }))
-  const earnedAchievements = achievementsWithVisuals.filter((a) => a.earned)
-  const lockedAchievements = achievementsWithVisuals.filter((a) => !a.earned)
-  const visibleLockedAchievements = achievementsExpanded ? lockedAchievements : []
-  const achievementPreviewVisual = achievementPreview ? buildAchievementVisual(achievementPreview) : null
+  const achievementsWithVisuals: AchievementWithVisual[] = allAchievements.map((a) => ({
+    ...a,
+    visual: buildAchievementVisual(a),
+  }))
+  const hasHiddenAchievements = achievementsWithVisuals.length > 3
+  const visibleAchievements = achievementsExpanded ? achievementsWithVisuals : achievementsWithVisuals.slice(0, 3)
+  const achievementPreviewVisual = achievementPreview?.visual || null
+  const achievementPreviewGroupBase = achievementPreview ? getAchievementLevelGroupBase(achievementPreview.key) : null
+  const achievementPreviewGroup: AchievementWithVisual[] | null =
+    achievementPreviewGroupBase && achievementPreview
+      ? LEVEL_ORDER.map((level) => {
+          const key = `${achievementPreviewGroupBase}_${level}`
+          const found = achievementsWithVisuals.find((a) => normalizeAchievementKey(a.key) === key)
+          if (found) return found
+          const fallback: AchievementItem = {
+            key,
+            title: levelLabel(level),
+            emoji: achievementPreview.emoji,
+            earned: false,
+            taken_by_other: false,
+            description: achievementPreview.description,
+          }
+          return {
+            ...fallback,
+            visual: buildAchievementVisual(fallback),
+          }
+        })
+      : null
   const legacyTrophies = profileData?.legacy_trophies || []
   const tournamentHistory = profileData?.tournament_history || []
   const medalGold =
@@ -2017,22 +2057,24 @@ function App() {
                           {profileData.achievements_earned ?? 0}/{profileData.achievements_total ?? 0}
                         </b>
                       </div>
-                      {lockedAchievements.length > 0 ? (
+                      {hasHiddenAchievements ? (
                         <button
                           className="profile-history-toggle"
                           onClick={() => setAchievementsExpanded((v) => !v)}
                         >
-                          {achievementsExpanded ? 'Скрыть' : 'Показать'}
+                          {achievementsExpanded ? 'Скрыть' : 'Показать больше'}
                         </button>
                       ) : null}
                     </div>
                     {allAchievements.length > 0 ? (
                       <div className="profile-achievements-grid">
-                        {earnedAchievements.map((a) => (
+                        {visibleAchievements.map((a) => (
                           <button
                             key={a.key}
                             type="button"
-                            className="profile-achievement profile-achievement-btn is-earned"
+                            className={`profile-achievement profile-achievement-btn ${
+                              a.earned ? 'is-earned' : 'is-locked'
+                            } ${a.taken_by_other ? 'is-taken' : ''} ${a.visual.isSecretLocked ? 'is-secret-locked' : ''}`}
                             title={a.visual.displayDescription}
                             onClick={() => setAchievementPreview(a)}
                           >
@@ -2043,27 +2085,6 @@ function App() {
                                 a.visual.iconEmoji
                               )}
                             </span>
-                            <span className="profile-achievement-title">{a.visual.displayTitle}</span>
-                          </button>
-                        ))}
-                        {visibleLockedAchievements.map((a) => (
-                          <button
-                            key={a.key}
-                            type="button"
-                            className={`profile-achievement profile-achievement-btn is-locked ${
-                              a.taken_by_other ? 'is-taken' : ''
-                            } ${a.visual.isSecretLocked ? 'is-secret-locked' : ''}`}
-                            title={a.visual.displayDescription}
-                            onClick={() => setAchievementPreview(a)}
-                          >
-                            <span className="profile-achievement-emoji">
-                              {a.visual.iconUrl ? (
-                                <img src={a.visual.iconUrl} alt={a.visual.displayTitle} className="profile-achievement-icon" />
-                              ) : (
-                                a.visual.iconEmoji
-                              )}
-                            </span>
-                            <span className="profile-achievement-title">{a.visual.displayTitle}</span>
                           </button>
                         ))}
                       </div>
@@ -2790,8 +2811,28 @@ function App() {
                 )}
               </div>
               <div className="achievement-modal-title">{achievementPreviewVisual.displayTitle}</div>
-              <div className="achievement-modal-meta">{achievementPreview.earned ? 'Получена' : 'Не получена'}</div>
               <div className="achievement-modal-description">{achievementPreviewVisual.displayDescription}</div>
+              {achievementPreviewGroup ? (
+                <div className="achievement-levels">
+                  {achievementPreviewGroup.map((item, idx) => (
+                    <div className={`achievement-level-item ${item.earned ? 'is-earned' : 'is-locked'}`} key={item.key}>
+                      <div className="achievement-level-icon-wrap">
+                        {item.visual.iconUrl ? (
+                          <img src={item.visual.iconUrl} alt={item.visual.displayTitle} className="achievement-level-icon" />
+                        ) : (
+                          <span className="achievement-level-emoji">{item.visual.iconEmoji}</span>
+                        )}
+                      </div>
+                      <div className="achievement-level-meta">
+                        <div className="achievement-level-title">{levelLabel(LEVEL_ORDER[idx]!)}</div>
+                        <div className="achievement-level-state">{item.earned ? 'Получена' : 'Не получена'}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="achievement-modal-meta">{achievementPreview.earned ? 'Получена' : 'Не получена'}</div>
+              )}
             </div>
           </div>
         ) : null}
