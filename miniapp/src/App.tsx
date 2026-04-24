@@ -719,20 +719,6 @@ function App() {
     let timerId: ReturnType<typeof setTimeout> | null = null
     const appBg = '#0b1220'
 
-    const syncViewportVars = () => {
-      try {
-        const stable = Number((WebApp as any).viewportStableHeight || 0)
-        const current = Number((WebApp as any).viewportHeight || 0)
-        const fallback = Math.max(0, window.innerHeight || 0)
-        const stablePx = `${Math.max(stable || 0, fallback || 0)}px`
-        const currentPx = `${Math.max(current || 0, fallback || 0)}px`
-        document.documentElement.style.setProperty('--tg-viewport-stable-height', stablePx)
-        document.documentElement.style.setProperty('--tg-viewport-height', currentPx)
-      } catch {
-        // no-op outside browser env
-      }
-    }
-
     const expandNow = () => {
       try {
         WebApp.expand()
@@ -749,7 +735,6 @@ function App() {
       } catch {
         // no-op for clients without this method
       }
-      syncViewportVars()
     }
 
     try {
@@ -782,20 +767,15 @@ function App() {
           expandNow()
         }
       }
-      const onResize = () => {
-        syncViewportVars()
-      }
       ;(WebApp as any).onEvent?.('viewportChanged', onViewportChanged)
       window.addEventListener('focus', onFocus)
       document.addEventListener('visibilitychange', onVisibilityChange)
-      window.addEventListener('resize', onResize)
 
       return () => {
         if (timerId) clearTimeout(timerId)
         ;(WebApp as any).offEvent?.('viewportChanged', onViewportChanged)
         window.removeEventListener('focus', onFocus)
         document.removeEventListener('visibilitychange', onVisibilityChange)
-        window.removeEventListener('resize', onResize)
       }
     } catch {
       // no-op outside Telegram
