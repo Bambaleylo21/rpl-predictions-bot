@@ -961,16 +961,13 @@ async def _build_profile_achievements(
     round_pred_map = {int(r): int(c or 0) for r, c in user_round_pred_rows if r is not None}
     sorted_rounds = sorted(round_total_map.keys())
     no_miss_round_count = 0
-    total_rounds_with_matches = 0
     for rnd in sorted_rounds:
         total = int(round_total_map.get(rnd, 0))
         predicted = int(round_pred_map.get(rnd, 0))
         if total <= 0:
             continue
-        total_rounds_with_matches += 1
         if predicted >= total:
             no_miss_round_count += 1
-    no_miss_all_tournament = total_rounds_with_matches > 0 and no_miss_round_count >= total_rounds_with_matches
 
     no_miss_specs = [
         (
@@ -984,15 +981,15 @@ async def _build_profile_achievements(
             "no_miss_tour_streak_silver",
             "Без пропусков",
             "🧱",
-            bool(no_miss_round_count >= 3),
-            "Проставил на все матчи в 3-х турах.",
+            bool(no_miss_round_count >= 2),
+            "Проставил на все матчи в 2-х турах.",
         ),
         (
             "no_miss_tour_streak_gold",
             "Без пропусков",
             "🧱",
-            bool(no_miss_all_tournament),
-            "Проставил на все матчи турнира.",
+            bool(no_miss_round_count >= 3),
+            "Проставил на все матчи в 3-х турах.",
         ),
     ]
     for key, title, emoji, earned, description in no_miss_specs:
@@ -1283,7 +1280,6 @@ async def _build_profile_achievements(
 
     progress_meta: dict[str, Any] = {
         "no_miss_tour_count": int(no_miss_round_count),
-        "no_miss_tour_total": int(total_rounds_with_matches),
         "scoring_match_streak": int(max_scoring_match_streak),
         "duel_wins_total": int(duel_wins_total),
         "missed_matches": int(missed_matches),
@@ -1626,7 +1622,7 @@ async def profile(request: web.Request) -> web.Response:
                     title="Без пропусков",
                     emoji="🧱",
                     current=int(ach_meta.get("no_miss_tour_count", 0)),
-                    target=3,
+                    target=2,
                     positive_only=True,
                 )
                 _add_progress_candidate(
@@ -1634,7 +1630,7 @@ async def profile(request: web.Request) -> web.Response:
                     title="Без пропусков",
                     emoji="🧱",
                     current=int(ach_meta.get("no_miss_tour_count", 0)),
-                    target=max(1, int(ach_meta.get("no_miss_tour_total", 0))),
+                    target=3,
                     positive_only=True,
                 )
                 _add_progress_candidate(
@@ -1936,6 +1932,11 @@ async def profile(request: web.Request) -> web.Response:
                     "achievements": achievements,
                     "achievements_earned": int(achievements_earned),
                     "achievements_total": int(len(achievements)),
+                    "achievement_progress": {
+                        "no_miss_tour_streak": int(ach_meta.get("no_miss_tour_count", 0)),
+                        "scoring_match_streak": int(ach_meta.get("scoring_match_streak", 0)),
+                        "duel_wins_total": int(ach_meta.get("duel_wins_total", 0)),
+                    },
                     "next_achievement": next_achievement,
                     "insights": insights,
                     "recent_form": recent_form,

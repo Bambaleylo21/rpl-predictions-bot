@@ -52,6 +52,11 @@ type ProfileResponse = {
   tournament_progress_pct?: number
   achievements_earned?: number
   achievements_total?: number
+  achievement_progress?: {
+    no_miss_tour_streak?: number
+    scoring_match_streak?: number
+    duel_wins_total?: number
+  }
   achievements?: Array<{
     key: string
     title: string
@@ -459,6 +464,12 @@ const crowdText = (item: {
   return `${h}% · ${d}% · ${a}%`
 }
 
+const intOrZero = (value: unknown): number => {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return 0
+  return Math.max(0, Math.trunc(n))
+}
+
 const ACHIEVEMENT_ICON_MODULES = import.meta.glob('./assets/achievements/*.png', {
   eager: true,
   import: 'default',
@@ -504,6 +515,11 @@ const parseAchievementLevel = (rawKey: string, title?: string): AchievementLevel
 const stripAchievementLevel = (rawKey: string): string => normalizeAchievementKey(rawKey).replace(/_(bronze|silver|gold)$/i, '')
 const LEVEL_ACHIEVEMENT_BASES = new Set<string>(['no_miss_tour_streak', 'scoring_match_streak', 'duel_wins_total'])
 const LEVEL_ORDER: Array<'bronze' | 'silver' | 'gold'> = ['bronze', 'silver', 'gold']
+const LEVEL_TARGETS_BY_BASE: Record<string, number[]> = {
+  no_miss_tour_streak: [1, 2, 3],
+  scoring_match_streak: [3, 5, 10],
+  duel_wins_total: [5, 10, 20],
+}
 
 const getAchievementLevelGroupBase = (rawKey: string): string | null => {
   const key = normalizeAchievementKey(rawKey)
@@ -1543,6 +1559,13 @@ function App() {
     : (earnedAchievements.length > 0 ? earnedAchievements.slice(0, 3) : achievementsWithVisuals.slice(0, 3))
   const achievementPreviewVisual = achievementPreview?.visual || null
   const achievementPreviewGroupBase = achievementPreview ? getAchievementLevelGroupBase(achievementPreview.key) : null
+  const achievementProgressByBase: Record<string, number> = {
+    no_miss_tour_streak: intOrZero(profileData?.achievement_progress?.no_miss_tour_streak),
+    scoring_match_streak: intOrZero(profileData?.achievement_progress?.scoring_match_streak),
+    duel_wins_total: intOrZero(profileData?.achievement_progress?.duel_wins_total),
+  }
+  const achievementPreviewGroupCurrent =
+    achievementPreviewGroupBase != null ? intOrZero(achievementProgressByBase[achievementPreviewGroupBase]) : 0
   const achievementPreviewGroup: AchievementWithVisual[] | null =
     achievementPreviewGroupBase && achievementPreview
       ? LEVEL_ORDER.map((level) => {
@@ -1557,11 +1580,11 @@ function App() {
             taken_by_other: false,
             description: achievementPreview.description,
           }
-          return {
-            ...fallback,
-            visual: buildAchievementVisual(fallback),
-          }
-        })
+        return {
+          ...fallback,
+          visual: buildAchievementVisual(fallback),
+        }
+      })
       : null
   const legacyTrophies = profileData?.legacy_trophies || []
   const tournamentHistory = profileData?.tournament_history || []
@@ -2815,7 +2838,12 @@ function App() {
                       </div>
                       <div className="achievement-level-meta">
                         <div className="achievement-level-title">{levelLabel(LEVEL_ORDER[idx]!)}</div>
-                        <div className="achievement-level-state">{item.earned ? 'Получена' : 'Не получена'}</div>
+                        <div className="achievement-level-counter">
+                          {`${Math.min(
+                            achievementPreviewGroupCurrent,
+                            LEVEL_TARGETS_BY_BASE[achievementPreviewGroupBase || '']?.[idx] || 0
+                          )}/${LEVEL_TARGETS_BY_BASE[achievementPreviewGroupBase || '']?.[idx] || 0}`}
+                        </div>
                       </div>
                     </div>
                   ))}

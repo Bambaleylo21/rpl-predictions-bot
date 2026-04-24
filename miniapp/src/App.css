@@ -1529,9 +1529,10 @@ body {
   font-weight: 700;
 }
 
-.achievement-level-state {
+.achievement-level-counter {
   color: #6b7891;
-  font-size: 12px;
+  font-size: 14px;
+  font-weight: 700;
 }
 
 .footer-note {
