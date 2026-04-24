@@ -933,7 +933,7 @@ async def _build_profile_achievements(
     user_category_by_match = {int(mid): str(cat or "") for mid, cat, _pts in user_point_rows}
     user_points_by_match = {int(mid): int(pts or 0) for mid, _cat, pts in user_point_rows}
 
-    # no_miss_tour_streak: максимальная серия туров, где пользователь закрыл все матчи тура.
+    # no_miss_tour: количество туров без пропусков.
     round_totals_rows = (
         await session.execute(
             select(Match.round_number, func.count(Match.id))
@@ -960,29 +960,48 @@ async def _build_profile_achievements(
     round_total_map = {int(r): int(c or 0) for r, c in round_totals_rows if r is not None}
     round_pred_map = {int(r): int(c or 0) for r, c in user_round_pred_rows if r is not None}
     sorted_rounds = sorted(round_total_map.keys())
-    current_no_miss_streak = 0
-    max_no_miss_tour_streak = 0
+    no_miss_round_count = 0
+    total_rounds_with_matches = 0
     for rnd in sorted_rounds:
         total = int(round_total_map.get(rnd, 0))
         predicted = int(round_pred_map.get(rnd, 0))
-        if total > 0 and predicted >= total:
-            current_no_miss_streak += 1
-            max_no_miss_tour_streak = max(max_no_miss_tour_streak, current_no_miss_streak)
-        else:
-            current_no_miss_streak = 0
+        if total <= 0:
+            continue
+        total_rounds_with_matches += 1
+        if predicted >= total:
+            no_miss_round_count += 1
+    no_miss_all_tournament = total_rounds_with_matches > 0 and no_miss_round_count >= total_rounds_with_matches
 
     no_miss_specs = [
-        ("no_miss_tour_streak_bronze", "Без пропусков I", "🧱", 1),
-        ("no_miss_tour_streak_silver", "Без пропусков II", "🧱", 2),
-        ("no_miss_tour_streak_gold", "Без пропусков III", "🧱", 3),
+        (
+            "no_miss_tour_streak_bronze",
+            "Без пропусков",
+            "🧱",
+            bool(no_miss_round_count >= 1),
+            "Проставил на все матчи в туре.",
+        ),
+        (
+            "no_miss_tour_streak_silver",
+            "Без пропусков",
+            "🧱",
+            bool(no_miss_round_count >= 3),
+            "Проставил на все матчи в 3-х турах.",
+        ),
+        (
+            "no_miss_tour_streak_gold",
+            "Без пропусков",
+            "🧱",
+            bool(no_miss_all_tournament),
+            "Проставил на все матчи турнира.",
+        ),
     ]
-    for key, title, emoji, target in no_miss_specs:
+    for key, title, emoji, earned, description in no_miss_specs:
         _push(
             key=key,
             title=title,
             emoji=emoji,
-            earned=int(max_no_miss_tour_streak) >= int(target),
-            description=f"Серия туров без пропусков: {target}+.",
+            earned=earned,
+            description=description,
         )
 
     # scoring_match_streak: серия матчей подряд с очками > 0.
@@ -997,9 +1016,9 @@ async def _build_profile_achievements(
             current_scoring_streak = 0
 
     scoring_specs = [
-        ("scoring_match_streak_bronze", "Серия с очками I", "⚡", 3),
-        ("scoring_match_streak_silver", "Серия с очками II", "⚡", 5),
-        ("scoring_match_streak_gold", "Серия с очками III", "⚡", 8),
+        ("scoring_match_streak_bronze", "Серия с очками", "⚡", 3),
+        ("scoring_match_streak_silver", "Серия с очками", "⚡", 5),
+        ("scoring_match_streak_gold", "Серия с очками", "⚡", 10),
     ]
     for key, title, emoji, target in scoring_specs:
         _push(
@@ -1007,7 +1026,7 @@ async def _build_profile_achievements(
             title=title,
             emoji=emoji,
             earned=int(max_scoring_match_streak) >= int(target),
-            description=f"Набрать очки в {target}+ матчах подряд.",
+            description=f"Набрать очки в {target} матчах подряд.",
         )
 
     # duel_wins_total: всего побед в завершённых дуэлях 1x1.
@@ -1025,9 +1044,9 @@ async def _build_profile_achievements(
         or 0
     )
     duel_specs = [
-        ("duel_wins_total_bronze", "Дуэлянт I", "⚔️", 3),
-        ("duel_wins_total_silver", "Дуэлянт II", "⚔️", 7),
-        ("duel_wins_total_gold", "Дуэлянт III", "⚔️", 12),
+        ("duel_wins_total_bronze", "Мастер дуэли", "⚔️", 5),
+        ("duel_wins_total_silver", "Мастер дуэли", "⚔️", 10),
+        ("duel_wins_total_gold", "Мастер дуэли", "⚔️", 20),
     ]
     for key, title, emoji, target in duel_specs:
         _push(
@@ -1035,12 +1054,12 @@ async def _build_profile_achievements(
             title=title,
             emoji=emoji,
             earned=int(duel_wins_total) >= int(target),
-            description=f"Выиграть {target}+ дуэлей 1x1.",
+            description=f"Выиграть {target} дуэлей 1х1.",
         )
 
     # first / last achievements inside tournament.
     first_specs = [
-        ("exact", "first_exact_tournament", "Первый точный в турнире", "🎯"),
+        ("exact", "first_exact_tournament", "Первый точный счёт в турнире", "🎯"),
     ]
     for category, key, title, emoji in first_specs:
         first_row = (
@@ -1067,7 +1086,7 @@ async def _build_profile_achievements(
             title=title,
             emoji=emoji,
             holders=holders,
-            description=f"Самый ранний прогноз в турнире, который дал {emoji}.",
+            description="Ты первый в турнире угадал точный счёт",
         )
 
     last_exact_row = (
@@ -1091,10 +1110,10 @@ async def _build_profile_achievements(
     last_exact_holders = {int(last_exact_row[0])} if last_exact_row and last_exact_row[0] is not None else set()
     _push_unique(
         key="last_exact_tournament",
-        title="Последний точный в турнире",
+        title="Последний точный счёт в турнире",
         emoji="🕐",
         holders=last_exact_holders,
-        description="Самый поздний точный прогноз в турнире.",
+        description="Ты последним угадал точный счёт",
     )
 
     # first_leader_after_round1: лидер(ы) таблицы после завершения 1-го тура.
@@ -1118,10 +1137,10 @@ async def _build_profile_achievements(
         title="Лидер после 1 тура",
         emoji="👑",
         holders=round1_leaders,
-        description="Лидировать в таблице после завершения 1 тура.",
+        description="Борис Николаевич одобряет победу в первом туре. Наливай",
     )
 
-    # first_101_points: первый(е), кто достиг 101+ очков за турнир.
+    # first_101_points: первый(е), кто достиг 100+ очков за турнир.
     first_101_holders: set[int] = set()
     if participant_ids and closed_match_ids:
         all_points_rows = (
@@ -1136,16 +1155,16 @@ async def _build_profile_achievements(
         for mid in closed_match_ids:
             for uid in participant_ids:
                 cumulative[int(uid)] = int(cumulative.get(int(uid), 0)) + int(points_by_pair.get((int(mid), int(uid)), 0))
-            reached = {int(uid) for uid in participant_ids if int(cumulative.get(int(uid), 0)) >= 101}
+            reached = {int(uid) for uid in participant_ids if int(cumulative.get(int(uid), 0)) >= 100}
             if reached:
                 first_101_holders = reached
                 break
     _push_unique(
         key="first_101_points",
-        title="Первый до 101 очка",
+        title="Поздравляем с юбилеем!",
         emoji="💯",
         holders=first_101_holders,
-        description="Первым(и) набрать 101+ очков в турнире.",
+        description="Ты первым набрал 100 очков. Или 101...",
     )
 
     # group_stage_winner_after_round3: лидер(ы) после завершения 3-го тура.
@@ -1166,24 +1185,24 @@ async def _build_profile_achievements(
             round3_leaders = {int(uid) for uid in participant_ids if int(round3_points_map.get(int(uid), 0)) == int(max_points)}
     _push_unique(
         key="group_stage_winner_after_round3",
-        title="Победитель после 3 тура",
+        title="Победитель группового этапа",
         emoji="🏆",
         holders=round3_leaders,
-        description="Лидировать после завершения 3-го тура группового этапа.",
+        description="Ты выиграл групповой этап. Тед Лассо гордится тобой",
     )
 
     # Секретные ачивки.
     high_scoring_exact = any(
         int(user_category_by_match.get(int(m["match_id"]), "") == "exact")
-        and (int(m["home_score"]) + int(m["away_score"]) >= 5)
+        and (int(m["home_score"]) + int(m["away_score"]) >= 4)
         for m in closed_matches
     )
     _push(
         key="high_scoring_exact",
-        title="Голевой снайпер",
+        title="Мастер многомяча",
         emoji="🔥",
         earned=bool(high_scoring_exact),
-        description="Угадать точный счёт в матче с 5+ голами.",
+        description="Угадал точный счет в матче, где было забито 4+ гола",
     )
 
     only_scorer_rows = (
@@ -1219,13 +1238,13 @@ async def _build_profile_achievements(
         title="Единственный с очками",
         emoji="🧠",
         earned=only_scorer_rows is not None,
-        description="Быть единственным участником, набравшим очки в матче.",
+        description="Ты набрал очки в матче, в котором остальные получили 0",
     )
 
-    # Fergie-time hit: точный счёт, поставленный в последние 15 минут до старта матча.
+    # Fergie-time hit: прогноз за 5 минут до старта, который принес очки.
     fergie_rows = (
         await session.execute(
-            select(Prediction.created_at, Prediction.updated_at, Match.kickoff_time)
+            select(Prediction.created_at, Prediction.updated_at, Match.kickoff_time, Point.points)
             .select_from(Prediction)
             .join(
                 Point,
@@ -1238,30 +1257,33 @@ async def _build_profile_achievements(
                 Match.is_placeholder == 0,
                 Match.home_score.is_not(None),
                 Match.away_score.is_not(None),
-                Point.category == "exact",
+                Point.points > 0,
             )
             .order_by(Prediction.updated_at.desc(), Prediction.id.desc())
         )
     ).all()
     fergie_time_hit = False
-    for created_at, updated_at, kickoff_time in fergie_rows:
+    for created_at, updated_at, kickoff_time, points in fergie_rows:
+        if int(points or 0) <= 0:
+            continue
         ref_time = updated_at or created_at
         if ref_time is None or kickoff_time is None:
             continue
         delta_sec = (kickoff_time - ref_time).total_seconds()
-        if 0 <= delta_sec <= 15 * 60:
+        if 0 <= delta_sec <= 5 * 60:
             fergie_time_hit = True
             break
     _push(
         key="fergie_time_hit",
-        title="Ферги-тайм",
+        title="Ферги тайм",
         emoji="⏱️",
         earned=fergie_time_hit,
-        description="Угадать точный счёт, обновив прогноз за 15 минут до старта.",
+        description="Ты сделал прогноз за 5 минут до начала матча и заработал очки",
     )
 
     progress_meta: dict[str, Any] = {
-        "no_miss_tour_streak": int(max_no_miss_tour_streak),
+        "no_miss_tour_count": int(no_miss_round_count),
+        "no_miss_tour_total": int(total_rounds_with_matches),
         "scoring_match_streak": int(max_scoring_match_streak),
         "duel_wins_total": int(duel_wins_total),
         "missed_matches": int(missed_matches),
@@ -1593,31 +1615,31 @@ async def profile(request: web.Request) -> web.Response:
 
                 _add_progress_candidate(
                     key="no_miss_tour_streak_bronze",
-                    title="Без пропусков I",
+                    title="Без пропусков",
                     emoji="🧱",
-                    current=int(ach_meta.get("no_miss_tour_streak", 0)),
+                    current=int(ach_meta.get("no_miss_tour_count", 0)),
                     target=1,
                     positive_only=True,
                 )
                 _add_progress_candidate(
                     key="no_miss_tour_streak_silver",
-                    title="Без пропусков II",
+                    title="Без пропусков",
                     emoji="🧱",
-                    current=int(ach_meta.get("no_miss_tour_streak", 0)),
-                    target=2,
-                    positive_only=True,
-                )
-                _add_progress_candidate(
-                    key="no_miss_tour_streak_gold",
-                    title="Без пропусков III",
-                    emoji="🧱",
-                    current=int(ach_meta.get("no_miss_tour_streak", 0)),
+                    current=int(ach_meta.get("no_miss_tour_count", 0)),
                     target=3,
                     positive_only=True,
                 )
                 _add_progress_candidate(
+                    key="no_miss_tour_streak_gold",
+                    title="Без пропусков",
+                    emoji="🧱",
+                    current=int(ach_meta.get("no_miss_tour_count", 0)),
+                    target=max(1, int(ach_meta.get("no_miss_tour_total", 0))),
+                    positive_only=True,
+                )
+                _add_progress_candidate(
                     key="scoring_match_streak_bronze",
-                    title="Серия с очками I",
+                    title="Серия с очками",
                     emoji="⚡",
                     current=int(ach_meta.get("scoring_match_streak", 0)),
                     target=3,
@@ -1625,7 +1647,7 @@ async def profile(request: web.Request) -> web.Response:
                 )
                 _add_progress_candidate(
                     key="scoring_match_streak_silver",
-                    title="Серия с очками II",
+                    title="Серия с очками",
                     emoji="⚡",
                     current=int(ach_meta.get("scoring_match_streak", 0)),
                     target=5,
@@ -1633,34 +1655,34 @@ async def profile(request: web.Request) -> web.Response:
                 )
                 _add_progress_candidate(
                     key="scoring_match_streak_gold",
-                    title="Серия с очками III",
+                    title="Серия с очками",
                     emoji="⚡",
                     current=int(ach_meta.get("scoring_match_streak", 0)),
-                    target=8,
+                    target=10,
                     positive_only=True,
                 )
                 _add_progress_candidate(
                     key="duel_wins_total_bronze",
-                    title="Дуэлянт I",
+                    title="Мастер дуэли",
                     emoji="⚔️",
                     current=int(ach_meta.get("duel_wins_total", 0)),
-                    target=3,
+                    target=5,
                     positive_only=False,
                 )
                 _add_progress_candidate(
                     key="duel_wins_total_silver",
-                    title="Дуэлянт II",
+                    title="Мастер дуэли",
                     emoji="⚔️",
                     current=int(ach_meta.get("duel_wins_total", 0)),
-                    target=7,
+                    target=10,
                     positive_only=False,
                 )
                 _add_progress_candidate(
                     key="duel_wins_total_gold",
-                    title="Дуэлянт III",
+                    title="Мастер дуэли",
                     emoji="⚔️",
                     current=int(ach_meta.get("duel_wins_total", 0)),
-                    target=12,
+                    target=20,
                     positive_only=False,
                 )
 
