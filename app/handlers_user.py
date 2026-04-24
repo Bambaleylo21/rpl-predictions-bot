@@ -14,6 +14,7 @@ from urllib.parse import urlencode
 from app.config import load_admin_ids
 from app.db import SessionLocal
 from app.display import display_round_name, display_team_name, display_tournament_name
+from app.duel_notify import send_duel_declined_push
 from app.duels import respond_duel
 from app.league_table import build_active_stage_league_table, get_user_stage_scope
 from app.models import League, LeagueMovement, Match, Point, Prediction, Setting, Stage, Tournament, User, UserTournament
@@ -3293,15 +3294,12 @@ def register_user_handlers(dp: Dispatcher):
                     responder_tg_user_id=int(callback.from_user.id),
                     accept=False,
                 )
+                try:
+                    await send_duel_declined_push(callback.bot, session, duel_id=int(duel.id))
+                except Exception:
+                    pass
                 await session.commit()
             await callback.message.answer("Вызов отклонён.")
-            try:
-                await callback.bot.send_message(
-                    chat_id=int(duel.challenger_tg_user_id),
-                    text="Твой вызов в 1х1 отклонён соперником.",
-                )
-            except Exception:
-                pass
             await callback.answer("Отклонено.")
         except Exception:
             await callback.answer("Не удалось отклонить вызов (возможно, он уже неактуален).", show_alert=True)

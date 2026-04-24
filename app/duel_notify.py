@@ -104,7 +104,7 @@ async def send_new_duel_challenge_push(bot: Bot, session, *, duel_id: int) -> No
     challenger_rating = int(challenger_elo or 1000)
 
     text = (
-        f"Тебе бросил вызов {ctx['challenger_name']} ({challenger_rating})\n"
+        f"⚔️ Тебе бросил вызов {ctx['challenger_name']} ({challenger_rating})\n"
         f"Матч: {match.home_team} — {match.away_team}\n"
         f"Его прогноз: {int(duel.challenger_pred_home)}:{int(duel.challenger_pred_away)}"
     )
@@ -135,7 +135,33 @@ async def send_duel_accepted_push(bot: Bot, session, *, duel_id: int) -> None:
     opponent_rating = int(opponent_elo or 1000)
 
     text = (
-        f"{ctx['opponent_name']} ({opponent_rating}) принял твой вызов\n"
+        f"✅ {ctx['opponent_name']} ({opponent_rating}) принял твой вызов\n"
+        f"Матч: {match.home_team} — {match.away_team}"
+    )
+    await _safe_send(
+        bot,
+        session,
+        chat_id=int(duel.challenger_tg_user_id),
+        text=text,
+        reply_markup=_open_duels_keyboard("Открыть 1х1", duel_id=int(duel.id)),
+    )
+    await _safe_send(
+        bot,
+        session,
+        chat_id=int(duel.opponent_tg_user_id),
+        text="✅ Вызов принят\nОткрой 1х1 в Mini App и поставь свой прогноз.",
+        reply_markup=_open_duels_keyboard("Открыть 1х1", duel_id=int(duel.id)),
+    )
+
+
+async def send_duel_declined_push(bot: Bot, session, *, duel_id: int) -> None:
+    ctx = await _duel_context(session, int(duel_id))
+    if ctx is None:
+        return
+    duel: Duel = ctx["duel"]
+    match: Match = ctx["match"]
+    text = (
+        f"❌ {ctx['opponent_name']} отклонил твой вызов\n"
         f"Матч: {match.home_team} — {match.away_team}"
     )
     await _safe_send(
@@ -169,22 +195,27 @@ async def send_duel_finished_pushes(bot: Bot, session, *, events: list[dict[str,
         op_new = int(ev.get("opponent_new_elo") or 1000)
         ch_d = int(ev.get("challenger_delta") or 0)
         op_d = int(ev.get("opponent_delta") or 0)
+        ch_old = int(ch_new - ch_d)
+        op_old = int(op_new - op_d)
 
-        ch_d_text = f"+{ch_d}" if ch_d > 0 else str(ch_d)
-        op_d_text = f"+{op_d}" if op_d > 0 else str(op_d)
+        ch_emoji = "📈" if ch_d > 0 else ("📉" if ch_d < 0 else "")
+        op_emoji = "📈" if op_d > 0 else ("📉" if op_d < 0 else "")
 
         outcome = str(ev.get("outcome") or "")
         if outcome == "challenger_win":
-            middle = f"{challenger_name} обыграл {opponent_name}"
+            middle = f"{challenger_name} победил {opponent_name}"
         elif outcome == "opponent_win":
-            middle = f"{opponent_name} обыграл {challenger_name}"
+            middle = f"{opponent_name} победил {challenger_name}"
         else:
             middle = f"{challenger_name} и {opponent_name} сыграли вничью"
 
         text = (
-            f"Матч завершён: {match.home_team} {int(match.home_score)}:{int(match.away_score)} {match.away_team}\n"
-            f"{middle}\n"
-            f"{challenger_name} {ch_new} ({ch_d_text}) · {opponent_name} {op_new} ({op_d_text})"
+            "🏁 Дуэль завершилась!\n"
+            f"Матч: {match.home_team} {int(match.home_score)}:{int(match.away_score)} {match.away_team}\n"
+            f"Итог: {middle}\n\n"
+            "Рейтинг:\n"
+            f"{challenger_name}: {ch_old} → {ch_new}" + (f" {ch_emoji}" if ch_emoji else "") + "\n"
+            f"{opponent_name}: {op_old} → {op_new}" + (f" {op_emoji}" if op_emoji else "")
         )
         kb = _open_duels_keyboard("Смотреть 1х1", duel_id=int(duel.id))
 

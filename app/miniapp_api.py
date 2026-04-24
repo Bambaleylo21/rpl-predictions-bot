@@ -18,7 +18,12 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.config import load_admin_ids, load_config
 from app.db import SessionLocal, init_db
-from app.duel_notify import send_duel_accepted_push, send_duel_finished_pushes, send_new_duel_challenge_push
+from app.duel_notify import (
+    send_duel_accepted_push,
+    send_duel_declined_push,
+    send_duel_finished_pushes,
+    send_new_duel_challenge_push,
+)
 from app.display import display_round_name
 from app.duels import create_duel, finalize_duels_for_match, get_duel_hub, respond_duel
 from app.league_table import build_active_stage_league_table
@@ -3013,6 +3018,11 @@ async def duels_respond(request: web.Request) -> web.Response:
                     await send_duel_accepted_push(_get_notify_bot(), session, duel_id=int(duel.id))
                 except Exception:
                     logger.exception("miniapp duels_respond notify failed")
+            if action == "decline" and str(duel.status) == "declined":
+                try:
+                    await send_duel_declined_push(_get_notify_bot(), session, duel_id=int(duel.id))
+                except Exception:
+                    logger.exception("miniapp duels_respond decline notify failed")
             await session.commit()
         return web.json_response(
             {
