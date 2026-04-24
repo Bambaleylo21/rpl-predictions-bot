@@ -22,7 +22,7 @@ from app.duel_notify import send_duel_accepted_push, send_duel_finished_pushes, 
 from app.display import display_round_name
 from app.duels import create_duel, finalize_duels_for_match, get_duel_hub, respond_duel
 from app.league_table import build_active_stage_league_table
-from app.models import DuelElo, League, LeagueParticipant, LongtermPrediction, Match, Point, Prediction, Setting, Stage, Tournament, User, UserTournament
+from app.models import Duel, DuelElo, League, LeagueParticipant, LongtermPrediction, Match, Point, Prediction, Setting, Stage, Tournament, User, UserTournament
 from app.scoring import calculate_points
 
 logger = logging.getLogger(__name__)
@@ -879,46 +879,28 @@ async def _build_profile_achievements(
             }
         )
 
-    # "Первые" ачивки: самый ранний по времени прогноз, который в итоге дал нужную категорию.
-    first_specs = [
-        ("exact", "first_exact", "Первый точный", "🎯"),
-        ("diff", "first_diff", "Первая разница", "📏"),
-        ("outcome", "first_outcome", "Первый исход", "✅"),
-    ]
-    for category, key, title, emoji in first_specs:
-        first_row = (
-            await session.execute(
-                select(Prediction.tg_user_id)
-                .select_from(Prediction)
-                .join(
-                    Point,
-                    (Point.match_id == Prediction.match_id) & (Point.tg_user_id == Prediction.tg_user_id),
-                )
-                .join(Match, Match.id == Prediction.match_id)
-                .where(
-                    Match.tournament_id == int(tournament_id),
-                    Match.is_placeholder == 0,
-                    Point.category == category,
-                )
-                .order_by(Prediction.created_at.asc(), Prediction.id.asc())
-                .limit(1)
-            )
-        ).first()
-        holder_id = int(first_row[0]) if first_row else None
+    def _push_unique(key: str, title: str, emoji: str, holders: set[int], description: str) -> None:
+        earned = int(tg_user_id) in holders
         _push(
             key=key,
             title=title,
             emoji=emoji,
-            earned=(holder_id is not None and holder_id == int(tg_user_id)),
-            description=f"Самый ранний прогноз, который дал категорию {emoji}.",
+            earned=earned,
+            description=description,
         )
-        if holder_id is not None and holder_id != int(tg_user_id):
+        if holders and not earned:
             achievements[-1]["taken_by_other"] = True
 
-    # Серии: считаем по завершённым матчам турнира; пропуск или другая категория рвут серию.
+    participant_rows = (
+        await session.execute(
+            select(UserTournament.tg_user_id).where(UserTournament.tournament_id == int(tournament_id))
+        )
+    ).all()
+    participant_ids = [int(r[0]) for r in participant_rows if r[0] is not None]
+
     closed_match_rows = (
         await session.execute(
-            select(Match.id)
+            select(Match.id, Match.round_number, Match.home_score, Match.away_score, Match.kickoff_time)
             .where(
                 Match.tournament_id == int(tournament_id),
                 Match.is_placeholder == 0,
@@ -928,62 +910,30 @@ async def _build_profile_achievements(
             .order_by(Match.kickoff_time.asc(), Match.id.asc())
         )
     ).all()
-    closed_match_ids = [int(r[0]) for r in closed_match_rows]
-
-    max_streak = {"exact": 0, "diff": 0, "outcome": 0}
-    if closed_match_ids:
-        user_pred_rows = (
-            await session.execute(
-                select(Prediction.match_id).where(
-                    Prediction.tg_user_id == int(tg_user_id),
-                    Prediction.match_id.in_(closed_match_ids),
-                )
-            )
-        ).all()
-        user_pred_match_ids = {int(r[0]) for r in user_pred_rows}
-
-        point_rows = (
-            await session.execute(
-                select(Point.match_id, Point.category).where(
-                    Point.tg_user_id == int(tg_user_id),
-                    Point.match_id.in_(closed_match_ids),
-                )
-            )
-        ).all()
-        user_cat_by_match = {int(mid): str(cat or "") for mid, cat in point_rows}
-
-        current = {"exact": 0, "diff": 0, "outcome": 0}
-        for mid in closed_match_ids:
-            has_pred = mid in user_pred_match_ids
-            cat = user_cat_by_match.get(mid, "") if has_pred else ""
-            for key in ("exact", "diff", "outcome"):
-                if cat == key:
-                    current[key] += 1
-                else:
-                    current[key] = 0
-                if current[key] > max_streak[key]:
-                    max_streak[key] = current[key]
-
-    streak_specs = [
-        ("exact", 3, "streak_exact_3", "3 счёта подряд", "🎯"),
-        ("exact", 5, "streak_exact_5", "5 счётов подряд", "🎯"),
-        ("diff", 3, "streak_diff_3", "3 разницы подряд", "📏"),
-        ("diff", 5, "streak_diff_5", "5 разниц подряд", "📏"),
-        ("diff", 10, "streak_diff_10", "10 разниц подряд", "📏"),
-        ("outcome", 3, "streak_outcome_3", "3 исхода подряд", "✅"),
-        ("outcome", 5, "streak_outcome_5", "5 исходов подряд", "✅"),
-        ("outcome", 10, "streak_outcome_10", "10 исходов подряд", "✅"),
+    closed_matches: list[dict[str, Any]] = [
+        {
+            "match_id": int(mid),
+            "round_number": int(round_number or 0),
+            "home_score": int(home_score or 0),
+            "away_score": int(away_score or 0),
+            "kickoff_time": kickoff_time,
+        }
+        for mid, round_number, home_score, away_score, kickoff_time in closed_match_rows
     ]
-    for cat, threshold, key, title, emoji in streak_specs:
-        _push(
-            key=key,
-            title=title,
-            emoji=emoji,
-            earned=max_streak.get(cat, 0) >= threshold,
-            description=f"Серия {emoji} не менее {threshold} матчей подряд.",
-        )
+    closed_match_ids = [m["match_id"] for m in closed_matches]
 
-    # Тур без пропусков.
+    user_point_rows = (
+        await session.execute(
+            select(Point.match_id, Point.category, Point.points).where(
+                Point.tg_user_id == int(tg_user_id),
+                Point.match_id.in_(closed_match_ids) if closed_match_ids else false(),
+            )
+        )
+    ).all()
+    user_category_by_match = {int(mid): str(cat or "") for mid, cat, _pts in user_point_rows}
+    user_points_by_match = {int(mid): int(pts or 0) for mid, _cat, pts in user_point_rows}
+
+    # no_miss_tour_streak: максимальная серия туров, где пользователь закрыл все матчи тура.
     round_totals_rows = (
         await session.execute(
             select(Match.round_number, func.count(Match.id))
@@ -1007,130 +957,315 @@ async def _build_profile_achievements(
             .group_by(Match.round_number)
         )
     ).all()
-    round_total_map = {int(r): int(c or 0) for r, c in round_totals_rows}
-    round_pred_map = {int(r): int(c or 0) for r, c in user_round_pred_rows}
-    no_miss_round_earned = any(
-        total > 0 and round_pred_map.get(round_number, 0) >= total
-        for round_number, total in round_total_map.items()
+    round_total_map = {int(r): int(c or 0) for r, c in round_totals_rows if r is not None}
+    round_pred_map = {int(r): int(c or 0) for r, c in user_round_pred_rows if r is not None}
+    sorted_rounds = sorted(round_total_map.keys())
+    current_no_miss_streak = 0
+    max_no_miss_tour_streak = 0
+    for rnd in sorted_rounds:
+        total = int(round_total_map.get(rnd, 0))
+        predicted = int(round_pred_map.get(rnd, 0))
+        if total > 0 and predicted >= total:
+            current_no_miss_streak += 1
+            max_no_miss_tour_streak = max(max_no_miss_tour_streak, current_no_miss_streak)
+        else:
+            current_no_miss_streak = 0
+
+    no_miss_specs = [
+        ("no_miss_tour_streak_bronze", "Без пропусков I", "🧱", 1),
+        ("no_miss_tour_streak_silver", "Без пропусков II", "🧱", 2),
+        ("no_miss_tour_streak_gold", "Без пропусков III", "🧱", 3),
+    ]
+    for key, title, emoji, target in no_miss_specs:
+        _push(
+            key=key,
+            title=title,
+            emoji=emoji,
+            earned=int(max_no_miss_tour_streak) >= int(target),
+            description=f"Серия туров без пропусков: {target}+.",
+        )
+
+    # scoring_match_streak: серия матчей подряд с очками > 0.
+    current_scoring_streak = 0
+    max_scoring_match_streak = 0
+    for match in closed_matches:
+        mid = int(match["match_id"])
+        if int(user_points_by_match.get(mid, 0)) > 0:
+            current_scoring_streak += 1
+            max_scoring_match_streak = max(max_scoring_match_streak, current_scoring_streak)
+        else:
+            current_scoring_streak = 0
+
+    scoring_specs = [
+        ("scoring_match_streak_bronze", "Серия с очками I", "⚡", 3),
+        ("scoring_match_streak_silver", "Серия с очками II", "⚡", 5),
+        ("scoring_match_streak_gold", "Серия с очками III", "⚡", 8),
+    ]
+    for key, title, emoji, target in scoring_specs:
+        _push(
+            key=key,
+            title=title,
+            emoji=emoji,
+            earned=int(max_scoring_match_streak) >= int(target),
+            description=f"Набрать очки в {target}+ матчах подряд.",
+        )
+
+    # duel_wins_total: всего побед в завершённых дуэлях 1x1.
+    duel_wins_total = int(
+        (
+            await session.execute(
+                select(func.count(Duel.id))
+                .where(
+                    Duel.tournament_id == int(tournament_id),
+                    Duel.status == "finished",
+                    Duel.winner_tg_user_id == int(tg_user_id),
+                )
+            )
+        ).scalar_one()
+        or 0
     )
-    _push(
-        key="round_no_miss",
-        title="Тур без пропусков",
-        emoji="🧱",
-        earned=no_miss_round_earned,
-        description="Сделать прогнозы на все матчи хотя бы одного тура.",
+    duel_specs = [
+        ("duel_wins_total_bronze", "Дуэлянт I", "⚔️", 3),
+        ("duel_wins_total_silver", "Дуэлянт II", "⚔️", 7),
+        ("duel_wins_total_gold", "Дуэлянт III", "⚔️", 12),
+    ]
+    for key, title, emoji, target in duel_specs:
+        _push(
+            key=key,
+            title=title,
+            emoji=emoji,
+            earned=int(duel_wins_total) >= int(target),
+            description=f"Выиграть {target}+ дуэлей 1x1.",
+        )
+
+    # first / last achievements inside tournament.
+    first_specs = [
+        ("exact", "first_exact_tournament", "Первый точный в турнире", "🎯"),
+        ("diff", "first_diff_tournament", "Первая разница в турнире", "📏"),
+        ("outcome", "first_outcome_tournament", "Первый исход в турнире", "✅"),
+    ]
+    for category, key, title, emoji in first_specs:
+        first_row = (
+            await session.execute(
+                select(Prediction.tg_user_id)
+                .select_from(Prediction)
+                .join(
+                    Point,
+                    (Point.match_id == Prediction.match_id) & (Point.tg_user_id == Prediction.tg_user_id),
+                )
+                .join(Match, Match.id == Prediction.match_id)
+                .where(
+                    Match.tournament_id == int(tournament_id),
+                    Match.is_placeholder == 0,
+                    Point.category == category,
+                )
+                .order_by(Prediction.created_at.asc(), Prediction.id.asc())
+                .limit(1)
+            )
+        ).first()
+        holders = {int(first_row[0])} if first_row and first_row[0] is not None else set()
+        _push_unique(
+            key=key,
+            title=title,
+            emoji=emoji,
+            holders=holders,
+            description=f"Самый ранний прогноз в турнире, который дал {emoji}.",
+        )
+
+    last_exact_row = (
+        await session.execute(
+            select(Prediction.tg_user_id)
+            .select_from(Prediction)
+            .join(
+                Point,
+                (Point.match_id == Prediction.match_id) & (Point.tg_user_id == Prediction.tg_user_id),
+            )
+            .join(Match, Match.id == Prediction.match_id)
+            .where(
+                Match.tournament_id == int(tournament_id),
+                Match.is_placeholder == 0,
+                Point.category == "exact",
+            )
+            .order_by(Prediction.created_at.desc(), Prediction.id.desc())
+            .limit(1)
+        )
+    ).first()
+    last_exact_holders = {int(last_exact_row[0])} if last_exact_row and last_exact_row[0] is not None else set()
+    _push_unique(
+        key="last_exact_tournament",
+        title="Последний точный в турнире",
+        emoji="🕐",
+        holders=last_exact_holders,
+        description="Самый поздний точный прогноз в турнире.",
     )
 
-    # Лучший/худший тур среди участников турнира (по очкам тура, с учетом равенств).
-    participant_rows = (
+    # first_leader_after_round1: лидер(ы) таблицы после завершения 1-го тура.
+    round1_match_ids = [int(m["match_id"]) for m in closed_matches if int(m["round_number"]) <= 1]
+    round1_leaders: set[int] = set()
+    if participant_ids and round1_match_ids:
+        round1_points_rows = (
+            await session.execute(
+                select(Point.tg_user_id, func.sum(Point.points))
+                .where(Point.match_id.in_(round1_match_ids))
+                .group_by(Point.tg_user_id)
+            )
+        ).all()
+        round1_points_map = {int(uid): int(pts or 0) for uid, pts in round1_points_rows}
+        values = [int(round1_points_map.get(int(uid), 0)) for uid in participant_ids]
+        if values:
+            max_points = max(values)
+            round1_leaders = {int(uid) for uid in participant_ids if int(round1_points_map.get(int(uid), 0)) == int(max_points)}
+    _push_unique(
+        key="first_leader_after_round1",
+        title="Лидер после 1 тура",
+        emoji="👑",
+        holders=round1_leaders,
+        description="Лидировать в таблице после завершения 1 тура.",
+    )
+
+    # first_101_points: первый(е), кто достиг 101+ очков за турнир.
+    first_101_holders: set[int] = set()
+    if participant_ids and closed_match_ids:
+        all_points_rows = (
+            await session.execute(
+                select(Point.match_id, Point.tg_user_id, Point.points).where(Point.match_id.in_(closed_match_ids))
+            )
+        ).all()
+        points_by_pair: dict[tuple[int, int], int] = {
+            (int(mid), int(uid)): int(pts or 0) for mid, uid, pts in all_points_rows
+        }
+        cumulative: dict[int, int] = {int(uid): 0 for uid in participant_ids}
+        for mid in closed_match_ids:
+            for uid in participant_ids:
+                cumulative[int(uid)] = int(cumulative.get(int(uid), 0)) + int(points_by_pair.get((int(mid), int(uid)), 0))
+            reached = {int(uid) for uid in participant_ids if int(cumulative.get(int(uid), 0)) >= 101}
+            if reached:
+                first_101_holders = reached
+                break
+    _push_unique(
+        key="first_101_points",
+        title="Первый до 101 очка",
+        emoji="💯",
+        holders=first_101_holders,
+        description="Первым(и) набрать 101+ очков в турнире.",
+    )
+
+    # group_stage_winner_after_round3: лидер(ы) после завершения 3-го тура.
+    round3_match_ids = [int(m["match_id"]) for m in closed_matches if int(m["round_number"]) <= 3]
+    round3_leaders: set[int] = set()
+    if participant_ids and round3_match_ids:
+        round3_points_rows = (
+            await session.execute(
+                select(Point.tg_user_id, func.sum(Point.points))
+                .where(Point.match_id.in_(round3_match_ids))
+                .group_by(Point.tg_user_id)
+            )
+        ).all()
+        round3_points_map = {int(uid): int(pts or 0) for uid, pts in round3_points_rows}
+        values = [int(round3_points_map.get(int(uid), 0)) for uid in participant_ids]
+        if values:
+            max_points = max(values)
+            round3_leaders = {int(uid) for uid in participant_ids if int(round3_points_map.get(int(uid), 0)) == int(max_points)}
+    _push_unique(
+        key="group_stage_winner_after_round3",
+        title="Победитель после 3 тура",
+        emoji="🏆",
+        holders=round3_leaders,
+        description="Лидировать после завершения 3-го тура группового этапа.",
+    )
+
+    # Секретные ачивки.
+    high_scoring_exact = any(
+        int(user_category_by_match.get(int(m["match_id"]), "") == "exact")
+        and (int(m["home_score"]) + int(m["away_score"]) >= 5)
+        for m in closed_matches
+    )
+    _push(
+        key="high_scoring_exact",
+        title="Голевой снайпер",
+        emoji="🔥",
+        earned=bool(high_scoring_exact),
+        description="Угадать точный счёт в матче с 5+ голами.",
+    )
+
+    only_scorer_rows = (
         await session.execute(
-            select(UserTournament.tg_user_id).where(UserTournament.tournament_id == int(tournament_id))
+            select(
+                Point.match_id,
+                func.sum(case((Point.points > 0, 1), else_=0)).label("positive_count"),
+                func.max(
+                    case(
+                        ((Point.tg_user_id == int(tg_user_id)) & (Point.points > 0), 1),
+                        else_=0,
+                    )
+                ).label("my_positive"),
+            )
+            .select_from(Point)
+            .join(Match, Match.id == Point.match_id)
+            .where(
+                Match.tournament_id == int(tournament_id),
+                Match.is_placeholder == 0,
+                Match.home_score.is_not(None),
+                Match.away_score.is_not(None),
+            )
+            .group_by(Point.match_id)
+            .having(
+                func.sum(case((Point.points > 0, 1), else_=0)) == 1,
+                func.max(case(((Point.tg_user_id == int(tg_user_id)) & (Point.points > 0), 1), else_=0)) == 1,
+            )
+            .limit(1)
+        )
+    ).first()
+    _push(
+        key="only_scorer_in_match",
+        title="Единственный с очками",
+        emoji="🧠",
+        earned=only_scorer_rows is not None,
+        description="Быть единственным участником, набравшим очки в матче.",
+    )
+
+    # Fergie-time hit: точный счёт, поставленный в последние 15 минут до старта матча.
+    fergie_rows = (
+        await session.execute(
+            select(Prediction.created_at, Prediction.updated_at, Match.kickoff_time)
+            .select_from(Prediction)
+            .join(
+                Point,
+                (Point.match_id == Prediction.match_id) & (Point.tg_user_id == Prediction.tg_user_id),
+            )
+            .join(Match, Match.id == Prediction.match_id)
+            .where(
+                Prediction.tg_user_id == int(tg_user_id),
+                Match.tournament_id == int(tournament_id),
+                Match.is_placeholder == 0,
+                Match.home_score.is_not(None),
+                Match.away_score.is_not(None),
+                Point.category == "exact",
+            )
+            .order_by(Prediction.updated_at.desc(), Prediction.id.desc())
         )
     ).all()
-    participant_ids = [int(r[0]) for r in participant_rows]
-    won_round = False
-    lost_round = False
-    if participant_ids:
-        complete_rounds_rows = (
-            await session.execute(
-                select(
-                    Match.round_number,
-                    func.count(Match.id).label("total_cnt"),
-                    func.sum(
-                        case(
-                            (
-                                (Match.home_score.is_not(None)) & (Match.away_score.is_not(None)),
-                                1,
-                            ),
-                            else_=0,
-                        )
-                    ).label("played_cnt"),
-                )
-                .where(
-                    Match.tournament_id == int(tournament_id),
-                    Match.is_placeholder == 0,
-                )
-                .group_by(Match.round_number)
-                .order_by(Match.round_number.asc())
-            )
-        ).all()
-        complete_rounds = [
-            int(r.round_number)
-            for r in complete_rounds_rows
-            if int(r.total_cnt or 0) > 0 and int(r.played_cnt or 0) >= int(r.total_cnt or 0)
-        ]
-        round_points_rows = (
-            await session.execute(
-                select(Match.round_number, Point.tg_user_id, func.sum(Point.points))
-                .select_from(Point)
-                .join(Match, Match.id == Point.match_id)
-                .where(
-                    Match.tournament_id == int(tournament_id),
-                    Match.is_placeholder == 0,
-                    Match.home_score.is_not(None),
-                    Match.away_score.is_not(None),
-                    Match.round_number.in_(complete_rounds) if complete_rounds else false(),
-                )
-                .group_by(Match.round_number, Point.tg_user_id)
-            )
-        ).all()
-        round_points_map: dict[tuple[int, int], int] = {
-            (int(rnd), int(uid)): int(pts or 0) for rnd, uid, pts in round_points_rows
-        }
-        for rnd in complete_rounds:
-            values = [int(round_points_map.get((int(rnd), int(uid)), 0)) for uid in participant_ids]
-            if not values:
-                continue
-            my_value = int(round_points_map.get((int(rnd), int(tg_user_id)), 0))
-            if my_value == max(values):
-                won_round = True
-            if my_value == min(values):
-                lost_round = True
-            if won_round and lost_round:
-                break
-
+    fergie_time_hit = False
+    for created_at, updated_at, kickoff_time in fergie_rows:
+        ref_time = updated_at or created_at
+        if ref_time is None or kickoff_time is None:
+            continue
+        delta_sec = (kickoff_time - ref_time).total_seconds()
+        if 0 <= delta_sec <= 15 * 60:
+            fergie_time_hit = True
+            break
     _push(
-        key="round_winner",
-        title="Вдул всем",
-        emoji="👑",
-        earned=won_round,
-        description="Занять 1-е место по итогам любого тура (включая дележ).",
-    )
-    _push(
-        key="round_loser",
-        title="Лох тура",
-        emoji="🫠",
-        earned=lost_round,
-        description="Оказаться на последнем месте по итогам любого тура (включая дележ).",
-    )
-
-    # Пропуски.
-    _push(
-        key="missed_5",
-        title="Проёба",
-        emoji="🚫",
-        earned=int(missed_matches) >= 5,
-        description="Пропустить 5 матчей.",
-    )
-    _push(
-        key="missed_10",
-        title="Заядлый проёба",
-        emoji="⛔",
-        earned=int(missed_matches) >= 10,
-        description="Пропустить 10 матчей.",
-    )
-    _push(
-        key="missed_15",
-        title="Легендарный проёба",
-        emoji="💀",
-        earned=int(missed_matches) >= 15,
-        description="Пропустить 15 матчей.",
+        key="fergie_time_hit",
+        title="Ферги-тайм",
+        emoji="⏱️",
+        earned=fergie_time_hit,
+        description="Угадать точный счёт, обновив прогноз за 15 минут до старта.",
     )
 
     progress_meta: dict[str, Any] = {
-        "max_streak_exact": int(max_streak.get("exact", 0)),
-        "max_streak_diff": int(max_streak.get("diff", 0)),
-        "max_streak_outcome": int(max_streak.get("outcome", 0)),
+        "no_miss_tour_streak": int(max_no_miss_tour_streak),
+        "scoring_match_streak": int(max_scoring_match_streak),
+        "duel_wins_total": int(duel_wins_total),
         "missed_matches": int(missed_matches),
     }
     return achievements, progress_meta
@@ -1459,68 +1594,76 @@ async def profile(request: web.Request) -> web.Response:
                     )
 
                 _add_progress_candidate(
-                    key="streak_exact_3",
-                    title="3 счёта подряд",
-                    emoji="🎯",
-                    current=int(ach_meta.get("max_streak_exact", 0)),
+                    key="no_miss_tour_streak_bronze",
+                    title="Без пропусков I",
+                    emoji="🧱",
+                    current=int(ach_meta.get("no_miss_tour_streak", 0)),
+                    target=1,
+                    positive_only=True,
+                )
+                _add_progress_candidate(
+                    key="no_miss_tour_streak_silver",
+                    title="Без пропусков II",
+                    emoji="🧱",
+                    current=int(ach_meta.get("no_miss_tour_streak", 0)),
+                    target=2,
+                    positive_only=True,
+                )
+                _add_progress_candidate(
+                    key="no_miss_tour_streak_gold",
+                    title="Без пропусков III",
+                    emoji="🧱",
+                    current=int(ach_meta.get("no_miss_tour_streak", 0)),
                     target=3,
                     positive_only=True,
                 )
                 _add_progress_candidate(
-                    key="streak_exact_5",
-                    title="5 счётов подряд",
-                    emoji="🎯",
-                    current=int(ach_meta.get("max_streak_exact", 0)),
-                    target=5,
-                    positive_only=True,
-                )
-                _add_progress_candidate(
-                    key="streak_diff_3",
-                    title="3 разницы подряд",
-                    emoji="📏",
-                    current=int(ach_meta.get("max_streak_diff", 0)),
+                    key="scoring_match_streak_bronze",
+                    title="Серия с очками I",
+                    emoji="⚡",
+                    current=int(ach_meta.get("scoring_match_streak", 0)),
                     target=3,
                     positive_only=True,
                 )
                 _add_progress_candidate(
-                    key="streak_diff_5",
-                    title="5 разниц подряд",
-                    emoji="📏",
-                    current=int(ach_meta.get("max_streak_diff", 0)),
+                    key="scoring_match_streak_silver",
+                    title="Серия с очками II",
+                    emoji="⚡",
+                    current=int(ach_meta.get("scoring_match_streak", 0)),
                     target=5,
                     positive_only=True,
                 )
                 _add_progress_candidate(
-                    key="streak_diff_10",
-                    title="10 разниц подряд",
-                    emoji="📏",
-                    current=int(ach_meta.get("max_streak_diff", 0)),
-                    target=10,
+                    key="scoring_match_streak_gold",
+                    title="Серия с очками III",
+                    emoji="⚡",
+                    current=int(ach_meta.get("scoring_match_streak", 0)),
+                    target=8,
                     positive_only=True,
                 )
                 _add_progress_candidate(
-                    key="streak_outcome_3",
-                    title="3 исхода подряд",
-                    emoji="✅",
-                    current=int(ach_meta.get("max_streak_outcome", 0)),
+                    key="duel_wins_total_bronze",
+                    title="Дуэлянт I",
+                    emoji="⚔️",
+                    current=int(ach_meta.get("duel_wins_total", 0)),
                     target=3,
-                    positive_only=True,
+                    positive_only=False,
                 )
                 _add_progress_candidate(
-                    key="streak_outcome_5",
-                    title="5 исходов подряд",
-                    emoji="✅",
-                    current=int(ach_meta.get("max_streak_outcome", 0)),
-                    target=5,
-                    positive_only=True,
+                    key="duel_wins_total_silver",
+                    title="Дуэлянт II",
+                    emoji="⚔️",
+                    current=int(ach_meta.get("duel_wins_total", 0)),
+                    target=7,
+                    positive_only=False,
                 )
                 _add_progress_candidate(
-                    key="streak_outcome_10",
-                    title="10 исходов подряд",
-                    emoji="✅",
-                    current=int(ach_meta.get("max_streak_outcome", 0)),
-                    target=10,
-                    positive_only=True,
+                    key="duel_wins_total_gold",
+                    title="Дуэлянт III",
+                    emoji="⚔️",
+                    current=int(ach_meta.get("duel_wins_total", 0)),
+                    target=12,
+                    positive_only=False,
                 )
 
                 progress_candidates.sort(key=lambda x: (int(x["left"]), int(x["target"])))
