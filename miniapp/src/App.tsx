@@ -1535,8 +1535,12 @@ function App() {
     ...a,
     visual: buildAchievementVisual(a),
   }))
-  const hasHiddenAchievements = achievementsWithVisuals.length > 3
-  const visibleAchievements = achievementsExpanded ? achievementsWithVisuals : achievementsWithVisuals.slice(0, 3)
+  const earnedAchievements = achievementsWithVisuals.filter((a) => a.earned)
+  const lockedAchievements = achievementsWithVisuals.filter((a) => !a.earned)
+  const hasHiddenAchievements = earnedAchievements.length > 3 || lockedAchievements.length > 0
+  const visibleAchievements = achievementsExpanded
+    ? [...earnedAchievements, ...lockedAchievements]
+    : (earnedAchievements.length > 0 ? earnedAchievements.slice(0, 3) : achievementsWithVisuals.slice(0, 3))
   const achievementPreviewVisual = achievementPreview?.visual || null
   const achievementPreviewGroupBase = achievementPreview ? getAchievementLevelGroupBase(achievementPreview.key) : null
   const achievementPreviewGroup: AchievementWithVisual[] | null =
@@ -2092,20 +2096,6 @@ function App() {
                       <div className="card-text">Пока нет доступных ачивок.</div>
                     )}
                   </div>
-
-                  {profileData.next_achievement ? (
-                    <div className="profile-next-achievement">
-                      <div className="profile-next-head">
-                        <span>До следующей ачивки</span>
-                      </div>
-                      <div className="profile-next-title">
-                        {profileData.next_achievement.emoji} {profileData.next_achievement.title}
-                      </div>
-                      <div className="profile-next-meta">
-                        Прогресс: {profileData.next_achievement.current}/{profileData.next_achievement.target} · осталось {profileData.next_achievement.left}
-                      </div>
-                    </div>
-                  ) : null}
 
                   <div className="profile-history">
                     <div className="profile-history-head-row">
