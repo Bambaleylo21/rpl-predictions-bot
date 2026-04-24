@@ -476,6 +476,13 @@ const ACHIEVEMENT_ICON_MODULES = import.meta.glob('./assets/achievements/*.png',
 }) as Record<string, string>
 
 const SECRET_ACHIEVEMENT_KEYS = new Set<string>(['fergie_time_hit', 'high_scoring_exact', 'only_scorer_in_match'])
+const UNIQUE_ACHIEVEMENT_KEYS = new Set<string>([
+  'first_exact_tournament',
+  'last_exact_tournament',
+  'first_leader_after_round1',
+  'first_101_points',
+  'group_stage_winner_after_round3',
+])
 
 const normalizeAchievementKey = (value: string): string =>
   (value || '')
@@ -571,6 +578,8 @@ const buildAchievementVisual = (achievement: AchievementItem): AchievementVisual
       : achievement.description || achievement.title,
   }
 }
+
+const isUniqueAchievement = (key: string): boolean => UNIQUE_ACHIEVEMENT_KEYS.has(normalizeAchievementKey(key))
 
 function App() {
   const [screen, setScreen] = useState<Screen>('predict')
@@ -1558,6 +1567,7 @@ function App() {
     ? [...earnedAchievements, ...lockedAchievements]
     : (earnedAchievements.length > 0 ? earnedAchievements.slice(0, 3) : achievementsWithVisuals.slice(0, 3))
   const achievementPreviewVisual = achievementPreview?.visual || null
+  const achievementPreviewIsUnique = achievementPreview ? isUniqueAchievement(achievementPreview.key) : false
   const achievementPreviewGroupBase = achievementPreview ? getAchievementLevelGroupBase(achievementPreview.key) : null
   const achievementProgressByBase: Record<string, number> = {
     no_miss_tour_streak: intOrZero(profileData?.achievement_progress?.no_miss_tour_streak),
@@ -2103,7 +2113,9 @@ function App() {
                               a.earned ? 'is-earned' : 'is-locked'
                             } ${a.taken_by_other ? 'is-taken' : ''} ${a.visual.isSecretLocked ? 'is-secret-locked' : ''}`}
                             title={a.visual.displayDescription}
-                            onClick={() => setAchievementPreview(a)}
+                            onClick={a.earned ? () => setAchievementPreview(a) : undefined}
+                            disabled={!a.earned}
+                            aria-disabled={!a.earned}
                           >
                             <span className="profile-achievement-emoji">
                               {a.visual.iconUrl ? (
@@ -2824,6 +2836,9 @@ function App() {
                 )}
               </div>
               <div className="achievement-modal-title">{achievementPreviewVisual.displayTitle}</div>
+              {achievementPreviewIsUnique ? (
+                <div className="achievement-modal-unique">Уникальная ачивка</div>
+              ) : null}
               <div className="achievement-modal-description">{achievementPreviewVisual.displayDescription}</div>
               {achievementPreviewGroup ? (
                 <div className="achievement-levels">

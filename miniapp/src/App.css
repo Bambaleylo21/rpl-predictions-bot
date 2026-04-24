@@ -1257,6 +1257,10 @@ body {
   transform: scale(0.985);
 }
 
+.profile-achievement-btn:disabled {
+  cursor: default;
+}
+
 .profile-achievement.is-earned {
   opacity: 1;
 }
@@ -1473,6 +1477,18 @@ body {
   font-size: 13px;
   line-height: 1.45;
   text-align: center;
+}
+
+.achievement-modal-unique {
+  margin: 8px auto 0;
+  width: fit-content;
+  border: 1px solid #c5d7a8;
+  background: #eef8db;
+  color: #536c2b;
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 4px 10px;
 }
 
 .achievement-levels {
