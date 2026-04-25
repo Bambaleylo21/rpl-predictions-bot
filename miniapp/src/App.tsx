@@ -1145,8 +1145,8 @@ function App() {
       setSelectedTournamentCode(nextCode)
       setProfileTargetUserId(null)
       setTournamentNotice(`Выбран турнир: ${nextCode}`)
-    } catch (err) {
-      setTournamentNotice(`Ошибка выбора турнира: ${String(err)}`)
+    } catch (_err) {
+      setTournamentNotice('Не удалось переключить турнир. Попробуй ещё раз.')
     }
   }
 
@@ -1181,8 +1181,8 @@ function App() {
       }
       setTournamentNotice(`Ты вступил в ${data.selected_tournament_name || data.selected_tournament_code || joinTournamentCode}.`)
       setRefreshTick((v) => v + 1)
-    } catch (err) {
-      setTournamentNotice(`Не удалось вступить в турнир: ${String(err)}`)
+    } catch (_err) {
+      setTournamentNotice('Не удалось вступить в турнир. Попробуй ещё раз.')
     } finally {
       setJoinBusy(false)
     }
@@ -1221,8 +1221,8 @@ function App() {
       }
       setPredictNotice(`Ставка сохранена: ${data.prediction}`)
       await loadPredictCurrent(apiBase, initData, selectedTournamentCode, selectedRoundNumber)
-    } catch (err) {
-      setPredictNotice(`Ошибка сохранения: ${String(err)}`)
+    } catch (_err) {
+      setPredictNotice('Не удалось сохранить прогноз. Попробуй ещё раз.')
     } finally {
       setSavingMatchId(null)
     }
@@ -1266,8 +1266,8 @@ function App() {
         setWinnerPickInput(reloadData.picks?.winner || '')
         setScorerPickInput(reloadData.picks?.scorer || '')
       }
-    } catch (err) {
-      setLongtermNotice(`Ошибка сохранения: ${String(err)}`)
+    } catch (_err) {
+      setLongtermNotice('Не удалось сохранить доп. прогноз. Попробуй ещё раз.')
     } finally {
       setSavingLongtermType(null)
     }
@@ -1309,8 +1309,8 @@ function App() {
       setDuelsNotice('Вызов отправлен.')
       setDuelScoreInput('')
       await loadDuelsCurrent(apiBase, initData, selectedTournamentCode)
-    } catch (err) {
-      setDuelsNotice(`Ошибка 1x1: ${String(err)}`)
+    } catch (_err) {
+      setDuelsNotice('Не удалось отправить вызов. Попробуй ещё раз.')
     } finally {
       setDuelBusyId(null)
     }
@@ -1348,8 +1348,8 @@ function App() {
       }
       setDuelsNotice(action === 'accept' ? 'Вызов принят.' : 'Вызов отклонён.')
       await loadDuelsCurrent(apiBase, initData, selectedTournamentCode)
-    } catch (err) {
-      setDuelsNotice(`Ошибка 1x1: ${String(err)}`)
+    } catch (_err) {
+      setDuelsNotice('Не удалось выполнить действие в 1x1. Попробуй ещё раз.')
     } finally {
       setDuelBusyId(null)
     }
@@ -1826,12 +1826,12 @@ function App() {
             <div className="card join-onboarding-card">
               <div className="card-title">Привет, дорогой друг</div>
               <div className="card-text">
-                Это турнир прогнозов Чемпионата Мира по футболу. Тут всё как ты любишь - чтение открытых книг, збс тур 0 очков и наверняка тебя будет корёжить.
+                Это турнир прогнозов Чемпионата мира по футболу. Тут всё как ты любишь: чтение открытых книг, туры на 0 очков и эмоциональные качели.
                 <br />
-                Поменялось лишь одно - место. Теперь это мини-приложение в телеге сделает твою (а особенно Ромину) жизнь проще и лучше.
+                Поменялось лишь одно - место. Теперь мини-приложение в Telegram сделает твою (а особенно Ромину) жизнь проще и удобнее.
                 <br />
                 <br />
-                Тебя ждут - быстрые и автоматичекие расчеты матчей, подробная статистика, получение различных ачивок, а так же битвы 1х1. Что это? Вступай в турнир скорее и ознакамливайся со всем. Удачи тебе, а главное не живи прошлым!
+                Тебя ждут быстрые автоматические расчёты матчей, подробная статистика, ачивки и битвы 1x1. Вступай в турнир и знакомься со всеми разделами. Удачи!
               </div>
               <button
                 className="save-btn join-onboarding-btn is-dirty"
@@ -1909,7 +1909,7 @@ function App() {
                     </div>
                     <div className="card-text">
                       {longtermError ? (
-                        <>Ошибка: {longtermError}</>
+                        <>Не удалось загрузить доп. прогнозы. Попробуй обновить экран.</>
                       ) : !longtermData ? (
                         'Загружаю...'
                       ) : longtermLocked ? (
@@ -2006,9 +2006,14 @@ function App() {
                       <div className="card-text">
                         {predictError || predictionsError ? (
                           <>
-                            {predictError ? `Ошибка активных матчей: ${predictError}` : null}
-                            {predictError && predictionsError ? <br /> : null}
-                            {predictionsError ? `Ошибка завершённых матчей: ${predictionsError}` : null}
+                            Не удалось загрузить матчи. Попробуй обновить экран.
+                            {showDebugPanels ? (
+                              <>
+                                <br />
+                                <br />
+                                Debug: {predictError || predictionsError}
+                              </>
+                            ) : null}
                           </>
                         ) : !predictData || !predictionsData ? (
                           'Загружаю матчи...'
@@ -2408,7 +2413,16 @@ function App() {
             <section className="cards">
               <div className="card">
                 {duelsError ? (
-                  <div className="card-text">Ошибка загрузки 1x1: {duelsError}</div>
+                  <div className="card-text">
+                    Не удалось загрузить раздел 1x1. Попробуй обновить экран.
+                    {showDebugPanels ? (
+                      <>
+                        <br />
+                        <br />
+                        Debug: {duelsError}
+                      </>
+                    ) : null}
+                  </div>
                 ) : !duelsData ? (
                   <div className="card-text">Загружаю блок 1x1...</div>
                 ) : duelsData.joined === false ? (
@@ -2768,7 +2782,16 @@ function App() {
             <section className="cards space-top">
               {tableError ? (
                 <div className="card">
-                  <div className="card-text">Ошибка загрузки таблицы: {tableError}</div>
+                  <div className="card-text">
+                    Не удалось загрузить таблицу. Попробуй обновить экран.
+                    {showDebugPanels ? (
+                      <>
+                        <br />
+                        <br />
+                        Debug: {tableError}
+                      </>
+                    ) : null}
+                  </div>
                 </div>
               ) : !tableData ? (
                 <div className="card">
@@ -3112,7 +3135,7 @@ function App() {
           </div>
         ) : null}
 
-        <footer className="footer-note">Статус: Mini App авторизован и получает профиль из API.</footer>
+        <footer className="footer-note">Удачи в прогнозах.</footer>
       </main>
 
       <nav
