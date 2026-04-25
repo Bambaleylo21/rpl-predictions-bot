@@ -116,7 +116,6 @@ async def _apply_postgres_schema_fixes(conn) -> None:
         "CREATE INDEX IF NOT EXISTS ix_duel_elo_tournament_id ON duel_elo (tournament_id)",
         "CREATE INDEX IF NOT EXISTS ix_duel_elo_tg_user_id ON duel_elo (tg_user_id)",
 
-        "INSERT INTO user_tournaments (tg_user_id, tournament_id) SELECT u.tg_user_id, t.id FROM users u CROSS JOIN tournaments t WHERE t.code = 'RPL' ON CONFLICT (tg_user_id, tournament_id) DO NOTHING",
         # manual-only режим: удаляем API-матчи
         "DELETE FROM points WHERE match_id IN (SELECT id FROM matches WHERE source <> 'manual' OR api_fixture_id IS NOT NULL)",
         "DELETE FROM predictions WHERE match_id IN (SELECT id FROM matches WHERE source <> 'manual' OR api_fixture_id IS NOT NULL)",
@@ -165,8 +164,6 @@ async def _apply_sqlite_schema_fixes(conn) -> None:
         "CREATE INDEX IF NOT EXISTS ix_matches_group_label ON matches (group_label)",
         "CREATE INDEX IF NOT EXISTS ix_matches_is_placeholder ON matches (is_placeholder)",
 
-        # backfill memberships for existing users into RPL
-        "INSERT OR IGNORE INTO user_tournaments (tg_user_id, tournament_id) SELECT u.tg_user_id, t.id FROM users u CROSS JOIN tournaments t WHERE t.code = 'RPL'",
         # duels
         "CREATE TABLE IF NOT EXISTS duels (id INTEGER PRIMARY KEY AUTOINCREMENT, tournament_id INTEGER NOT NULL, match_id INTEGER NOT NULL, challenger_tg_user_id BIGINT NOT NULL, opponent_tg_user_id BIGINT NOT NULL, pair_low_tg_user_id BIGINT NOT NULL, pair_high_tg_user_id BIGINT NOT NULL, challenger_pred_home INTEGER NOT NULL, challenger_pred_away INTEGER NOT NULL, opponent_pred_home INTEGER, opponent_pred_away INTEGER, status VARCHAR(16) NOT NULL DEFAULT 'pending', winner_tg_user_id BIGINT, outcome VARCHAR(16), risk_multiplier_bp INTEGER NOT NULL DEFAULT 100, elo_delta_challenger INTEGER NOT NULL DEFAULT 0, elo_delta_opponent INTEGER NOT NULL DEFAULT 0, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, responded_at TIMESTAMP NULL, resolved_at TIMESTAMP NULL, CONSTRAINT uq_duels_match_pair UNIQUE (match_id, pair_low_tg_user_id, pair_high_tg_user_id))",
         "CREATE INDEX IF NOT EXISTS ix_duels_tournament_id ON duels (tournament_id)",
