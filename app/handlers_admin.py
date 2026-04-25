@@ -1712,15 +1712,12 @@ async def admin_set_result(message: types.Message):
         )
         await session.commit()
 
-    sent_exact_pushes = await _maybe_send_exact_hit_pushes(message.bot, match.id)
     await message.answer(
         f"✅ Результат сохранён: {display_team_name(match.home_team)} — {display_team_name(match.away_team)} | {home_score}:{away_score}. "
         f"Пересчитано очков: {updates}"
     )
     if duel_events:
         await message.answer(f"⚔️ Дуэлей 1x1 рассчитано: {len(duel_events)}")
-    if sent_exact_pushes > 0:
-        await message.answer(f"📬 Пуш «точный счёт» отправлен: {sent_exact_pushes}")
     live_text, round_closed = await _build_admin_match_result_live_update(match.id)
     if live_text:
         await message.answer(live_text)
@@ -1733,7 +1730,7 @@ async def admin_set_result(message: types.Message):
             f"• /tops_round {match.round_number}\n"
             f"• /round_digest {match.round_number}"
         )
-    await _maybe_send_round_closed_summary(message.bot, tournament_id=match.tournament_id, round_number=match.round_number)
+    # Пуш-дайджест закрытия тура отключен.
 
 
 async def _admin_set_result_open_tournament_picker(message: types.Message) -> None:
@@ -1937,15 +1934,12 @@ async def admin_set_result_score_input(message: types.Message, state: FSMContext
         await session.commit()
 
     await state.clear()
-    sent_exact_pushes = await _maybe_send_exact_hit_pushes(message.bot, match.id)
     await message.answer(
         f"✅ Результат сохранён: {display_team_name(match.home_team)} — {display_team_name(match.away_team)} | {home_score}:{away_score}. "
         f"Пересчитано очков: {updates}"
     )
     if duel_events:
         await message.answer(f"⚔️ Дуэлей 1x1 рассчитано: {len(duel_events)}")
-    if sent_exact_pushes > 0:
-        await message.answer(f"📬 Пуш «точный счёт» отправлен: {sent_exact_pushes}")
     live_text, round_closed = await _build_admin_match_result_live_update(match.id)
     if live_text:
         await message.answer(live_text)
@@ -1958,7 +1952,7 @@ async def admin_set_result_score_input(message: types.Message, state: FSMContext
             f"• /tops_round {match.round_number}\n"
             f"• /round_digest {match.round_number}"
         )
-    await _maybe_send_round_closed_summary(message.bot, tournament_id=match.tournament_id, round_number=match.round_number)
+    # Пуш-дайджест закрытия тура отключен.
 
 
 async def admin_recalc(message: types.Message):
