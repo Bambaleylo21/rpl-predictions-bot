@@ -2351,7 +2351,7 @@ async def admin_test_reminder(message: types.Message):
             return
 
         text = _build_reminder_text(first_kickoff, kickoff_matches)
-        kb = _build_reminder_keyboard(kickoff_matches)
+        kb = _build_reminder_keyboard(tournament_code=tournament.code)
 
         try:
             await message.bot.send_message(chat_id=target_tg_user_id, text=text, reply_markup=kb)
