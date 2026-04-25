@@ -21,6 +21,11 @@
   --radius-control: 12px;
   --radius-pill: 999px;
   --shadow-soft: 0 10px 30px rgba(4, 10, 20, 0.24);
+  --vr-xs: 4px;
+  --vr-sm: 8px;
+  --vr-md: 10px;
+  --vr-lg: 12px;
+  --vr-xl: 16px;
 }
 
 html,
@@ -207,11 +212,11 @@ body {
 .cards {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 12px;
+  gap: var(--vr-lg);
 }
 
 .space-top {
-  margin-top: 10px;
+  margin-top: var(--vr-lg);
 }
 
 .card {
@@ -342,7 +347,7 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 10px;
+  margin-top: var(--vr-md);
 }
 
 .tournament-chip {
@@ -376,7 +381,7 @@ body {
   display: flex;
   gap: 8px;
   align-items: center;
-  margin: 8px 0;
+  margin: var(--vr-sm) 0;
 }
 
 .score-input {
@@ -396,7 +401,7 @@ body {
 }
 
 .duel-picker-wrap {
-  margin-top: 8px;
+  margin-top: var(--vr-sm);
 }
 
 .duel-head-row {
@@ -481,7 +486,7 @@ body {
 }
 
 .duel-picker-panel {
-  margin-top: 8px;
+  margin-top: var(--vr-sm);
   border: 1px solid var(--line-1);
   border-radius: 12px;
   background: #121f3d;
@@ -496,7 +501,7 @@ body {
   color: var(--text-main);
   padding: 8px 10px;
   font-size: 13px;
-  margin-bottom: 8px;
+  margin-bottom: var(--vr-sm);
 }
 
 .duel-picker-list {
@@ -547,7 +552,7 @@ body {
 }
 
 .duel-picker-more {
-  margin-top: 8px;
+  margin-top: var(--vr-sm);
   width: 100%;
   border: 1px solid var(--line-2);
   border-radius: 10px;
@@ -565,7 +570,7 @@ body {
 }
 
 .day-group + .day-group {
-  margin-top: 10px;
+  margin-top: var(--vr-lg);
 }
 
 .day-title {
@@ -589,7 +594,7 @@ body {
 }
 
 .compact-match + .compact-match {
-  margin-top: 8px;
+  margin-top: var(--vr-sm);
   padding-top: 10px;
   border-top: 1px solid rgba(79, 112, 174, 0.25);
 }
@@ -726,13 +731,13 @@ body {
 }
 
 .compact-note {
-  margin-top: 6px;
+  margin-top: var(--vr-xs);
   font-size: 12px;
   color: var(--text-dim);
 }
 
 .duel-preds {
-  margin-top: 7px;
+  margin-top: var(--vr-sm);
   display: grid;
   gap: 4px;
 }
@@ -851,7 +856,7 @@ body {
 }
 
 .admin-top-row {
-  margin-top: 10px;
+  margin-top: var(--vr-md);
   display: flex;
   justify-content: space-between;
   gap: 8px;
@@ -880,7 +885,7 @@ body {
 }
 
 .card-text {
-  margin-top: 4px;
+  margin-top: var(--vr-xs);
   color: var(--text-muted);
   font-size: 14px;
   line-height: 1.35;
@@ -891,7 +896,7 @@ body {
 }
 
 .segment-hint {
-  margin-top: 4px;
+  margin-top: var(--vr-xs);
   margin-bottom: 8px;
   color: #8fa7d3;
   font-size: 11px;
@@ -1025,7 +1030,7 @@ body {
 }
 
 .profile-subline {
-  margin-top: 4px;
+  margin-top: var(--vr-xs);
   color: #9fb2da;
   font-size: 13px;
   line-height: 1.2;
@@ -1055,7 +1060,7 @@ body {
 }
 
 .profile-kpi-grid {
-  margin-top: 12px;
+  margin-top: var(--vr-lg);
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
@@ -1086,13 +1091,13 @@ body {
 }
 
 .profile-hits-line {
-  margin-top: 10px;
+  margin-top: var(--vr-md);
   font-size: 14px;
   color: #c5d4f2;
 }
 
 .profile-progress {
-  margin-top: 12px;
+  margin-top: var(--vr-lg);
   border: 1px solid #2f4777;
   background: linear-gradient(180deg, rgba(18, 35, 69, 0.92), rgba(15, 31, 60, 0.92));
   border-radius: 10px;
@@ -1114,7 +1119,7 @@ body {
 }
 
 .profile-progress-bar {
-  margin-top: 8px;
+  margin-top: var(--vr-sm);
   height: 8px;
   border-radius: 999px;
   background: #0e1a31;
@@ -1128,13 +1133,13 @@ body {
 }
 
 .profile-progress-meta {
-  margin-top: 8px;
+  margin-top: var(--vr-sm);
   color: #9fb2da;
   font-size: 12px;
 }
 
 .profile-insight {
-  margin-top: 12px;
+  margin-top: var(--vr-lg);
   border: 1px solid #2f4777;
   background: linear-gradient(180deg, rgba(18, 35, 69, 0.98), rgba(15, 31, 60, 0.98));
   border-radius: 10px;
@@ -1148,14 +1153,14 @@ body {
 }
 
 .profile-insight-text {
-  margin-top: 6px;
+  margin-top: var(--vr-xs);
   color: #ecf2ff;
   font-size: 14px;
   line-height: 1.45;
 }
 
 .profile-next-achievement {
-  margin-top: 12px;
+  margin-top: var(--vr-lg);
   border: 1px solid #3a5f9e;
   background: linear-gradient(180deg, rgba(19, 42, 79, 0.95), rgba(18, 35, 69, 0.95));
   border-radius: 10px;
@@ -1183,7 +1188,7 @@ body {
 }
 
 .profile-form {
-  margin-top: 12px;
+  margin-top: var(--vr-lg);
   border: 1px solid #2f4777;
   background: #122345;
   border-radius: 10px;
@@ -1197,7 +1202,7 @@ body {
 }
 
 .profile-form-list {
-  margin-top: 8px;
+  margin-top: var(--vr-sm);
   display: flex;
   gap: 6px;
   overflow-x: auto;
@@ -1231,7 +1236,7 @@ body {
 }
 
 .profile-achievements {
-  margin-top: 12px;
+  margin-top: var(--vr-lg);
   border: 1px solid #2f4777;
   background: #122345;
   border-radius: 10px;
@@ -1260,7 +1265,7 @@ body {
 }
 
 .profile-achievements-grid {
-  margin-top: 10px;
+  margin-top: var(--vr-md);
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
@@ -1334,7 +1339,7 @@ body {
 }
 
 .profile-achievements-toggle {
-  margin-top: 8px;
+  margin-top: var(--vr-sm);
   margin-bottom: 8px;
   width: 100%;
   border: 1px solid #2f4777;
@@ -1359,7 +1364,7 @@ body {
 }
 
 .profile-history {
-  margin-top: 12px;
+  margin-top: var(--vr-lg);
   border: 1px solid #2f4777;
   background: #122345;
   border-radius: 10px;
@@ -1396,13 +1401,13 @@ body {
 }
 
 .profile-trophy-summary {
-  margin-top: 7px;
+  margin-top: var(--vr-sm);
   color: #bcd0f5;
   font-size: 12px;
 }
 
 .profile-history-list {
-  margin-top: 8px;
+  margin-top: var(--vr-sm);
   display: grid;
   gap: 8px;
 }
@@ -1422,10 +1427,22 @@ body {
 }
 
 .profile-history-meta {
-  margin-top: 4px;
+  margin-top: var(--vr-xs);
   color: #b9c8e6;
   font-size: 12px;
   line-height: 1.25;
+}
+
+.duel-challenge-title {
+  margin-top: var(--vr-md);
+}
+
+.duel-predict-row {
+  margin-top: var(--vr-sm);
+}
+
+.duel-notice {
+  margin-top: var(--vr-md);
 }
 
 .achievement-modal-overlay {

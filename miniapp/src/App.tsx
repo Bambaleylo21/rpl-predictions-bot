@@ -2293,7 +2293,7 @@ function App() {
                       <b>{duelsData.elo?.losses ?? 0}</b> · всего <b>{duelsData.elo?.duels_total ?? 0}</b>
                     </div>
 
-                    <div className="card-title" style={{ marginTop: 10 }}>Бросить вызов</div>
+                    <div className="card-title duel-challenge-title">Бросить вызов</div>
                     <div className="duel-picker-wrap">
                       <button
                         className={`duel-picker-btn ${duelMatchPickerOpen ? 'is-open' : ''}`}
@@ -2403,7 +2403,7 @@ function App() {
                       ) : null}
                     </div>
 
-                    <div className="predict-row" style={{ marginTop: 8 }}>
+                    <div className="predict-row duel-predict-row">
                       <input
                         className="score-input"
                         value={duelScoreInput}
@@ -2419,7 +2419,7 @@ function App() {
                         {duelBusyId === -1 ? '…' : normalizeScore(duelScoreInput) ? '✓' : ''}
                       </button>
                     </div>
-                    {duelsNotice ? <div className="card-text" style={{ marginTop: 10 }}>{duelsNotice}</div> : null}
+                    {duelsNotice ? <div className="card-text duel-notice">{duelsNotice}</div> : null}
                   </>
                 )}
               </div>
@@ -2519,7 +2519,7 @@ function App() {
                           </div>
 
                           {isIncomingPending ? (
-                            <div className="predict-row" style={{ marginTop: 8 }}>
+                            <div className="predict-row duel-predict-row">
                               <input
                                 className="score-input"
                                 value={duelAcceptInputs[d.duel_id] || ''}
