@@ -11,11 +11,88 @@ from aiogram import types
 from sqlalchemy import select
 
 from app.audience import is_blocked_send_error, mark_user_blocked
-from app.display import display_team_name
 from app.models import Match, Prediction, Setting, Tournament, UserTournament
 
 logger = logging.getLogger(__name__)
 MINIAPP_WEB_URL = os.getenv("MINIAPP_WEB_URL", "https://rpl-predictions-bot-mini-app.onrender.com").strip()
+ENGLAND_FLAG = "".join(chr(cp) for cp in (0x1F3F4, 0xE0067, 0xE0062, 0xE0065, 0xE006E, 0xE0067, 0xE007F))
+SCOTLAND_FLAG = "".join(chr(cp) for cp in (0x1F3F4, 0xE0067, 0xE0062, 0xE0073, 0xE0063, 0xE0074, 0xE007F))
+TEAM_FLAGS: dict[str, str] = {
+    "Мексика": "🇲🇽",
+    "ЮАР": "🇿🇦",
+    "Южная Корея": "🇰🇷",
+    "Чехия": "🇨🇿",
+    "Канада": "🇨🇦",
+    "Босния и Герцеговина": "🇧🇦",
+    "США": "🇺🇸",
+    "Парагвай": "🇵🇾",
+    "Катар": "🇶🇦",
+    "Швейцария": "🇨🇭",
+    "Гаити": "🇭🇹",
+    "Шотландия": SCOTLAND_FLAG,
+    "Австралия": "🇦🇺",
+    "Турция": "🇹🇷",
+    "Германия": "🇩🇪",
+    "Кюрасао": "🇨🇼",
+    "Кабо-Верде": "🇨🇻",
+    "Новая Зеландия": "🇳🇿",
+    "Иордания": "🇯🇴",
+    "ДР Конго": "🇨🇩",
+    "ДРК": "🇨🇩",
+    "Конго ДР": "🇨🇩",
+    "Нидерланды": "🇳🇱",
+    "Япония": "🇯🇵",
+    "Кот-д'Ивуар": "🇨🇮",
+    "Кот д'Ивуар": "🇨🇮",
+    "Эквадор": "🇪🇨",
+    "Швеция": "🇸🇪",
+    "Тунис": "🇹🇳",
+    "Аргентина": "🇦🇷",
+    "Бразилия": "🇧🇷",
+    "Англия": ENGLAND_FLAG,
+    "Испания": "🇪🇸",
+    "Франция": "🇫🇷",
+    "Португалия": "🇵🇹",
+    "Италия": "🇮🇹",
+    "Бельгия": "🇧🇪",
+    "Хорватия": "🇭🇷",
+    "Сербия": "🇷🇸",
+    "Польша": "🇵🇱",
+    "Дания": "🇩🇰",
+    "Норвегия": "🇳🇴",
+    "Украина": "🇺🇦",
+    "Марокко": "🇲🇦",
+    "Алжир": "🇩🇿",
+    "Египет": "🇪🇬",
+    "Нигерия": "🇳🇬",
+    "Камерун": "🇨🇲",
+    "Сенегал": "🇸🇳",
+    "Гана": "🇬🇭",
+    "Ямайка": "🇯🇲",
+    "Колумбия": "🇨🇴",
+    "Уругвай": "🇺🇾",
+    "Перу": "🇵🇪",
+    "Чили": "🇨🇱",
+    "Венесуэла": "🇻🇪",
+    "Боливия": "🇧🇴",
+    "Коста-Рика": "🇨🇷",
+    "Панама": "🇵🇦",
+    "Гондурас": "🇭🇳",
+    "Сальвадор": "🇸🇻",
+    "Иран": "🇮🇷",
+    "Ирак": "🇮🇶",
+    "Саудовская Аравия": "🇸🇦",
+    "ОАЭ": "🇦🇪",
+    "Узбекистан": "🇺🇿",
+    "Казахстан": "🇰🇿",
+    "Грузия": "🇬🇪",
+    "Греция": "🇬🇷",
+    "Румыния": "🇷🇴",
+    "Венгрия": "🇭🇺",
+    "Австрия": "🇦🇹",
+    "Словакия": "🇸🇰",
+    "Словения": "🇸🇮",
+}
 
 
 def _now_msk_naive() -> datetime:
@@ -40,20 +117,35 @@ async def _mark_setting(session, key: str, value: str = "1") -> None:
         row.value = value
 
 
+def _normalize_team_name(name: str) -> str:
+    return (
+        (name or "")
+        .strip()
+        .replace("’", "'")
+        .replace("`", "'")
+        .replace("‐", "-")
+        .replace("‑", "-")
+        .replace("–", "-")
+        .replace("—", "-")
+    )
+
+
+def _team_with_flag(name: str) -> str:
+    clean_name = (name or "").strip()
+    normalized = _normalize_team_name(clean_name)
+    flag = TEAM_FLAGS.get(clean_name) or TEAM_FLAGS.get(normalized)
+    return f"{flag} {clean_name}" if flag else clean_name
+
+
 def _build_reminder_text(kickoff: datetime, matches: list[Match]) -> str:
-    lines = [
-        "⏰ До начала матчей 30 минут",
-        f"Старт: {kickoff.strftime('%d.%m %H:%M')} МСК",
-        "",
-    ]
+    lines = ["⏰ До начала уже 30 минут", ""]
     for m in matches:
-        lines.append(f"• {m.home_team} — {m.away_team}")
-    lines.append("")
-    lines.append("Ставка: нажми «🎯 Поставить прогноз»")
+        lines.append(f"{_team_with_flag(m.home_team)} — {_team_with_flag(m.away_team)}")
+    lines.extend(["", "Жми «Сделать прогноз» и набирай очки"])
     return "\n".join(lines)
 
 
-def _build_reminder_keyboard(matches: list[Match], tournament_code: str | None = None) -> types.InlineKeyboardMarkup:
+def _build_reminder_keyboard(tournament_code: str | None = None) -> types.InlineKeyboardMarkup:
     params = {"screen": "matches"}
     code = (tournament_code or "").strip().upper()
     if code:
@@ -61,14 +153,11 @@ def _build_reminder_keyboard(matches: list[Match], tournament_code: str | None =
     sep = "&" if "?" in MINIAPP_WEB_URL else "?"
     miniapp_url = f"{MINIAPP_WEB_URL}{sep}{urlencode(params)}"
 
-    rows: list[list[types.InlineKeyboardButton]] = []
-    for m in matches:
-        label = (
-            f"{display_team_name(m.home_team)} — {display_team_name(m.away_team)}"
-            f" | {m.kickoff_time.strftime('%d.%m %H:%M')}"
-        )
-        rows.append([types.InlineKeyboardButton(text=label[:64], web_app=types.WebAppInfo(url=miniapp_url))])
-    return types.InlineKeyboardMarkup(inline_keyboard=rows)
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [types.InlineKeyboardButton(text="Сделать прогноз", web_app=types.WebAppInfo(url=miniapp_url))]
+        ]
+    )
 
 
 async def _process_reminders_once(bot, session_factory) -> int:
@@ -135,7 +224,7 @@ async def _process_reminders_once(bot, session_factory) -> int:
                     continue
 
                 text = _build_reminder_text(kickoff, missing_matches)
-                kb = _build_reminder_keyboard(missing_matches, tournament_code=tournament_code)
+                kb = _build_reminder_keyboard(tournament_code=tournament_code)
                 try:
                     await bot.send_message(chat_id=tg_user_id, text=text, reply_markup=kb)
                 except Exception as e:
