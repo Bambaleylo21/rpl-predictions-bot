@@ -1131,6 +1131,7 @@ function App() {
   }
 
   const joinSelectedTournament = async () => {
+    const joinTournamentCode = 'WC2026'
     const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
     const initData = getInitData()
     const headers = {
@@ -1143,7 +1144,7 @@ function App() {
       const res = await fetch(`${apiBase}/api/miniapp/tournament/join`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ tournament_code: selectedTournamentCode || 'RPL' }),
+        body: JSON.stringify({ tournament_code: joinTournamentCode }),
       })
       const data = (await res.json()) as {
         ok?: boolean
@@ -1158,7 +1159,7 @@ function App() {
       if (data.selected_tournament_code && data.selected_tournament_code !== selectedTournamentCode) {
         setSelectedTournamentCode(data.selected_tournament_code)
       }
-      setTournamentNotice(`Ты вступил в ${data.selected_tournament_name || data.selected_tournament_code || selectedTournamentCode}.`)
+      setTournamentNotice(`Ты вступил в ${data.selected_tournament_name || data.selected_tournament_code || joinTournamentCode}.`)
       setRefreshTick((v) => v + 1)
     } catch (err) {
       setTournamentNotice(`Не удалось вступить в турнир: ${String(err)}`)
@@ -1798,28 +1799,21 @@ function App() {
         {showJoinOnboarding ? (
           <section className="cards">
             <div className="card join-onboarding-card">
-              <div className="card-title">Добро пожаловать</div>
+              <div className="card-title">Привет, дорогой друг</div>
               <div className="card-text">
-                Чтобы открыть Профиль, Матчи, 1x1 и личную активность, вступи в турнир.
-              </div>
-              <div className="join-onboarding-label">Выбери турнир</div>
-              <div className="tournament-row join-onboarding-row">
-                {tournamentButtons.map((t) => (
-                  <button
-                    key={`join-${t.code}`}
-                    className={`tournament-chip ${selectedTournamentCode === t.code ? 'is-active' : ''}`}
-                    onClick={() => selectTournament(t.code)}
-                  >
-                    {t.label}
-                  </button>
-                ))}
+                Это турнир прогнозов Чемпионата Мира по футболу. Тут всё как ты любишь - чтение открытых книг, збс тур 0 очков и наверняка тебя будет корёжить.
+                <br />
+                Поменялось лишь одно - место. Теперь это мини-приложение в телеге сделает твою (а особенно Ромину) жизнь проще и лучше.
+                <br />
+                <br />
+                Тебя ждут - быстрые и автоматичекие расчеты матчей, подробная статистика, получение различных ачивок, а так же битвы 1х1. Что это? Вступай в турнир скорее и ознакамливайся со всем. Удачи тебе, а главное не живи прошлым!
               </div>
               <button
                 className="save-btn join-onboarding-btn is-dirty"
                 onClick={joinSelectedTournament}
                 disabled={joinBusy}
               >
-                {joinBusy ? 'Вступаю…' : `Вступить в ${selectedTournamentCode === 'WC2026' ? 'WC' : 'RPL'}`}
+                {joinBusy ? 'Вступаю…' : 'Вступить в турнир WC'}
               </button>
             </div>
           </section>
