@@ -581,6 +581,49 @@ const buildAchievementVisual = (achievement: AchievementItem): AchievementVisual
 
 const isUniqueAchievement = (key: string): boolean => UNIQUE_ACHIEVEMENT_KEYS.has(normalizeAchievementKey(key))
 
+const DUEL_RULES_SECTIONS: Array<{ title: string; lines: string[] }> = [
+  {
+    title: 'Что это',
+    lines: ['1x1 - дуэль двух участников на одном матче. Это личное противостояние с отдельным рейтингом Elo.'],
+  },
+  {
+    title: 'Как играть',
+    lines: [
+      '1. Выбери матч, соперника и свой прогноз.',
+      '2. Соперник получает вызов и принимает или отклоняет его.',
+      '3. Если вызов принят, соперник ставит прогноз на тот же матч.',
+      '4. После расчёта счёта дуэль закрывается автоматически.',
+    ],
+  },
+  {
+    title: 'Как определяется победитель',
+    lines: [
+      'Очки за прогноз: 4 - точный счёт, 2 - исход + разница, 1 - только исход, 0 - мимо.',
+      'Больше очков - победа. Равенство очков - ничья.',
+    ],
+  },
+  {
+    title: 'Как начисляется Elo',
+    lines: [
+      'База: 1000.',
+      'После каждой завершённой дуэли рейтинг обновляется у обоих.',
+      'Победа над более сильным соперником даёт больше рейтинга.',
+      'При ничьей андердог может получить плюс, фаворит - небольшой минус.',
+      'За поражение рейтинг снижается.',
+      'Чем сильнее отличаются прогнозы, тем заметнее изменение рейтинга.',
+    ],
+  },
+  {
+    title: 'Ограничения',
+    lines: [
+      'На один матч у одной пары участников возможна только одна дуэль.',
+      'Нельзя вызвать самого себя.',
+      'Нельзя принять дуэль после старта матча.',
+      'Просроченные/непринятые дуэли не попадают в завершённые.',
+    ],
+  },
+]
+
 function App() {
   const [screen, setScreen] = useState<Screen>('predict')
   const [duelFocusId, setDuelFocusId] = useState<number | null>(null)
@@ -647,6 +690,7 @@ function App() {
   const [duelMatchSearch, setDuelMatchSearch] = useState<string>('')
   const [duelOpponentSearch, setDuelOpponentSearch] = useState<string>('')
   const [duelMatchVisibleCount, setDuelMatchVisibleCount] = useState<number>(20)
+  const [duelRulesOpen, setDuelRulesOpen] = useState<boolean>(false)
 
   const selectedRoundNumber =
     selectedTournamentCode === 'WC2026'
@@ -2239,6 +2283,15 @@ function App() {
                       Рейтинг: <b>{duelsData.elo?.rating ?? 1000}</b> · W <b>{duelsData.elo?.wins ?? 0}</b> · D <b>{duelsData.elo?.draws ?? 0}</b> · L{' '}
                       <b>{duelsData.elo?.losses ?? 0}</b> · всего <b>{duelsData.elo?.duels_total ?? 0}</b>
                     </div>
+                    <div className="duel-rules-row">
+                      <button
+                        type="button"
+                        className="duel-rules-btn"
+                        onClick={() => setDuelRulesOpen(true)}
+                      >
+                        Правила
+                      </button>
+                    </div>
 
                     <div className="card-title" style={{ marginTop: 10 }}>Бросить вызов</div>
                     <div className="duel-picker-wrap">
@@ -2888,6 +2941,32 @@ function App() {
               ) : (
                 <div className="achievement-modal-meta">{achievementPreview.earned ? 'Получена' : 'Не получена'}</div>
               )}
+            </div>
+          </div>
+        ) : null}
+
+        {duelRulesOpen ? (
+          <div className="duel-rules-modal-overlay" onClick={() => setDuelRulesOpen(false)}>
+            <div className="duel-rules-modal-card" onClick={(ev) => ev.stopPropagation()}>
+              <button
+                type="button"
+                className="duel-rules-modal-close"
+                onClick={() => setDuelRulesOpen(false)}
+                aria-label="Закрыть"
+              >
+                ✕
+              </button>
+              <div className="duel-rules-modal-title">Правила 1x1</div>
+              <div className="duel-rules-modal-content">
+                {DUEL_RULES_SECTIONS.map((section) => (
+                  <div className="duel-rules-section" key={section.title}>
+                    <div className="duel-rules-section-title">{section.title}</div>
+                    {section.lines.map((line) => (
+                      <div className="duel-rules-section-line" key={`${section.title}-${line}`}>{line}</div>
+                    ))}
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         ) : null}

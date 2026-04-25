@@ -399,6 +399,33 @@ body {
   margin-top: 8px;
 }
 
+.duel-rules-row {
+  margin-top: 8px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.duel-rules-btn {
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: #162b54;
+  color: #dce9ff;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.12s ease, border-color 0.16s ease, background-color 0.16s ease;
+}
+
+.duel-rules-btn:hover {
+  border-color: #5f88df;
+  background: #1d3b73;
+}
+
+.duel-rules-btn:active {
+  transform: translateY(1px);
+}
+
 .duel-picker-btn {
   width: 100%;
   text-align: left;
@@ -1549,6 +1576,79 @@ body {
   color: #6b7891;
   font-size: 14px;
   font-weight: 700;
+}
+
+.duel-rules-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(7, 13, 24, 0.66);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 75;
+  padding: 14px;
+}
+
+.duel-rules-modal-card {
+  width: min(680px, 100%);
+  max-height: min(82vh, 760px);
+  border: 1px solid var(--line-2);
+  border-radius: 18px;
+  background: linear-gradient(180deg, #12254a 0%, #0f1f3b 100%);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.42);
+  padding: 16px 14px 14px;
+  position: relative;
+  color: #edf3ff;
+}
+
+.duel-rules-modal-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  border: 1px solid rgba(172, 196, 245, 0.36);
+  background: rgba(10, 18, 34, 0.3);
+  color: #dce7ff;
+  border-radius: 10px;
+  width: 32px;
+  height: 32px;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.duel-rules-modal-title {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  margin-bottom: 10px;
+  padding-right: 36px;
+}
+
+.duel-rules-modal-content {
+  max-height: calc(min(82vh, 760px) - 84px);
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.duel-rules-section + .duel-rules-section {
+  margin-top: 10px;
+}
+
+.duel-rules-section-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #cfe0ff;
+  margin-bottom: 5px;
+}
+
+.duel-rules-section-line {
+  font-size: 13px;
+  line-height: 1.35;
+  color: #e8eefb;
+}
+
+.duel-rules-section-line + .duel-rules-section-line {
+  margin-top: 4px;
 }
 
 .footer-note {
