@@ -1712,7 +1712,10 @@ function App() {
   const medalBronze =
     legacyTrophies.filter((h) => h.place === 3).length +
     tournamentHistory.filter((h) => h.place === 3).length
-  const showJoinOnboarding = screen !== 'admin' && !profileTargetUserId && Boolean(profileData && profileData.joined === false)
+  const rplComingSoonEnabled = true
+  const showRplComingSoon = rplComingSoonEnabled && screen !== 'admin' && selectedTournamentCode === 'RPL'
+  const showJoinOnboarding =
+    !showRplComingSoon && screen !== 'admin' && !profileTargetUserId && Boolean(profileData && profileData.joined === false)
 
   return (
     <div className="app-shell">
@@ -1761,6 +1764,37 @@ function App() {
       </header>
 
       <main className={`content screen-${screen}`}>
+        {showRplComingSoon ? (
+          <section className="cards">
+            <div className="card join-onboarding-card">
+              <div className="card-title">РПЛ скоро стартует</div>
+              <div className="card-text">
+                Привет, дорогой друг. Мы еще готовим РПЛ к старту.
+                <br />
+                Новый сезон РПЛ 2026/27 начинается 24 июля 2026.
+                <br />
+                <br />
+                Как обычно, играем в 2 этапа:
+                <br />
+                осенний — 1–17 туры (24 июля - 6 декабря),
+                <br />
+                весенний — 18–30 туры (февраль - 29 мая).
+                <br />
+                <br />
+                И так же, как обычно, у нас будет две лиги - ВЫСШАЯ и НИЗШАЯ.
+                <br />
+                До запуска РПЛ активен турнир WC.
+              </div>
+              <button
+                className="save-btn join-onboarding-btn is-dirty"
+                onClick={() => selectTournament('WC2026')}
+              >
+                Перейти в WC
+              </button>
+            </div>
+          </section>
+        ) : null}
+
         {showJoinOnboarding ? (
           <section className="cards">
             <div className="card join-onboarding-card">
@@ -1791,7 +1825,7 @@ function App() {
           </section>
         ) : null}
 
-        {!showJoinOnboarding && screen === 'predict' ? (
+        {!showRplComingSoon && !showJoinOnboarding && screen === 'predict' ? (
           <>
             {showWcSelector ? (
               <section className="cards">
@@ -2076,7 +2110,7 @@ function App() {
           </>
         ) : null}
 
-        {!showJoinOnboarding && screen === 'profile' ? (
+        {!showRplComingSoon && !showJoinOnboarding && screen === 'profile' ? (
           <section className="cards">
             <div className="card">
               {profileData?.joined && profileData.is_self_profile === false ? (
@@ -2345,7 +2379,7 @@ function App() {
           </section>
         ) : null}
 
-        {!showJoinOnboarding && screen === 'duels' ? (
+        {!showRplComingSoon && !showJoinOnboarding && screen === 'duels' ? (
           <>
             <section className="cards">
               <div className="card">
@@ -2634,7 +2668,7 @@ function App() {
           </>
         ) : null}
 
-        {!showJoinOnboarding && screen === 'table' ? (
+        {!showRplComingSoon && !showJoinOnboarding && screen === 'table' ? (
           <>
             {selectedTournamentCode === 'WC2026' ? (
               <section className="cards">
