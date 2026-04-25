@@ -527,6 +527,22 @@ const LEVEL_TARGETS_BY_BASE: Record<string, number[]> = {
   scoring_match_streak: [3, 5, 10],
   duel_wins_total: [5, 10, 20],
 }
+const LOCKED_ACHIEVEMENT_HINTS: Record<string, string> = {
+  scoring_match_streak_bronze: 'Набери очки в 3 матчах подряд.',
+  scoring_match_streak_silver: 'Набери очки в 5 матчах подряд.',
+  scoring_match_streak_gold: 'Набери очки в 10 матчах подряд.',
+  no_miss_tour_streak_bronze: 'Проставь прогнозы на все матчи одного тура.',
+  no_miss_tour_streak_silver: 'Проставь прогнозы на все матчи в 3 турах.',
+  no_miss_tour_streak_gold: 'Проставь прогнозы на все матчи турнира.',
+  duel_wins_total_bronze: 'Выиграй 5 дуэлей 1x1.',
+  duel_wins_total_silver: 'Выиграй 10 дуэлей 1x1.',
+  duel_wins_total_gold: 'Выиграй 20 дуэлей 1x1.',
+  first_exact_tournament: 'Стань первым участником турнира, кто угадает точный счёт.',
+  last_exact_tournament: 'Стань последним участником, кто угадает точный счёт.',
+  first_leader_after_round1: 'Займи 1 место после завершения 1 тура.',
+  first_101_points: 'Стань первым участником турнира, кто наберёт 100+ очков.',
+  group_stage_winner_after_round3: 'Займи 1 место после полного завершения 3 туров.',
+}
 
 const getAchievementLevelGroupBase = (rawKey: string): string | null => {
   const key = normalizeAchievementKey(rawKey)
@@ -580,6 +596,10 @@ const buildAchievementVisual = (achievement: AchievementItem): AchievementVisual
 }
 
 const isUniqueAchievement = (key: string): boolean => UNIQUE_ACHIEVEMENT_KEYS.has(normalizeAchievementKey(key))
+const getLockedAchievementHintText = (achievement: AchievementItem): string => {
+  const key = normalizeAchievementKey(achievement.key)
+  return LOCKED_ACHIEVEMENT_HINTS[key] || achievement.description || 'Выполни условие этой ачивки в матчах турнира.'
+}
 
 const DUEL_RULES_SECTIONS: Array<{ title: string; lines: string[] }> = [
   {
@@ -1674,6 +1694,11 @@ function App() {
     : (earnedAchievements.length > 0 ? earnedAchievements.slice(0, 3) : achievementsWithVisuals.slice(0, 3))
   const achievementPreviewVisual = achievementPreview?.visual || null
   const achievementPreviewIsUnique = achievementPreview ? isUniqueAchievement(achievementPreview.key) : false
+  const achievementPreviewIsLockedHint =
+    Boolean(achievementPreview && !achievementPreview.earned && !achievementPreview.visual.isSecretLocked)
+  const achievementPreviewLockedHintText = achievementPreview
+    ? getLockedAchievementHintText(achievementPreview)
+    : ''
   const achievementPreviewGroupBase = achievementPreview ? getAchievementLevelGroupBase(achievementPreview.key) : null
   const achievementProgressByBase: Record<string, number> = {
     no_miss_tour_streak: intOrZero(profileData?.achievement_progress?.no_miss_tour_streak),
@@ -2279,6 +2304,9 @@ function App() {
                     {allAchievements.length > 0 ? (
                       <div className="profile-achievements-grid">
                         {visibleAchievements.map((a) => (
+                          (() => {
+                            const canOpen = a.earned || !a.visual.isSecretLocked
+                            return (
                           <button
                             key={a.key}
                             type="button"
@@ -2286,9 +2314,9 @@ function App() {
                               a.earned ? 'is-earned' : 'is-locked'
                             } ${a.taken_by_other ? 'is-taken' : ''} ${a.visual.isSecretLocked ? 'is-secret-locked' : ''}`}
                             title={a.visual.displayDescription}
-                            onClick={a.earned ? () => setAchievementPreview(a) : undefined}
-                            disabled={!a.earned}
-                            aria-disabled={!a.earned}
+                            onClick={canOpen ? () => setAchievementPreview(a) : undefined}
+                            disabled={!canOpen}
+                            aria-disabled={!canOpen}
                           >
                             <span className="profile-achievement-emoji">
                               {a.visual.iconUrl ? (
@@ -2298,6 +2326,8 @@ function App() {
                               )}
                             </span>
                           </button>
+                            )
+                          })()
                         ))}
                       </div>
                     ) : (
@@ -3006,23 +3036,27 @@ function App() {
               >
                 ✕
               </button>
-              <div className="achievement-modal-icon-wrap">
-                {achievementPreviewVisual.iconUrl ? (
-                  <img
-                    src={achievementPreviewVisual.iconUrl}
-                    alt={achievementPreviewVisual.displayTitle}
-                    className="achievement-modal-icon"
-                  />
-                ) : (
-                  <span className="achievement-modal-emoji">{achievementPreviewVisual.iconEmoji}</span>
-                )}
-              </div>
+              {!achievementPreviewIsLockedHint ? (
+                <div className="achievement-modal-icon-wrap">
+                  {achievementPreviewVisual.iconUrl ? (
+                    <img
+                      src={achievementPreviewVisual.iconUrl}
+                      alt={achievementPreviewVisual.displayTitle}
+                      className="achievement-modal-icon"
+                    />
+                  ) : (
+                    <span className="achievement-modal-emoji">{achievementPreviewVisual.iconEmoji}</span>
+                  )}
+                </div>
+              ) : null}
               <div className="achievement-modal-title">{achievementPreviewVisual.displayTitle}</div>
-              {achievementPreviewIsUnique ? (
+              {achievementPreviewIsUnique && !achievementPreviewIsLockedHint ? (
                 <div className="achievement-modal-unique">Уникальная ачивка</div>
               ) : null}
-              <div className="achievement-modal-description">{achievementPreviewVisual.displayDescription}</div>
-              {achievementPreviewGroup ? (
+              <div className="achievement-modal-description">
+                {achievementPreviewIsLockedHint ? achievementPreviewLockedHintText : achievementPreviewVisual.displayDescription}
+              </div>
+              {!achievementPreviewIsLockedHint && achievementPreviewGroup ? (
                 <div className="achievement-levels">
                   {achievementPreviewGroup.map((item, idx) => (
                     <div className={`achievement-level-item ${item.earned ? 'is-earned' : 'is-locked'}`} key={item.key}>
@@ -3045,9 +3079,9 @@ function App() {
                     </div>
                   ))}
                 </div>
-              ) : (
+              ) : !achievementPreviewIsLockedHint ? (
                 <div className="achievement-modal-meta">{achievementPreview.earned ? 'Получена' : 'Не получена'}</div>
-              )}
+              ) : null}
             </div>
           </div>
         ) : null}
