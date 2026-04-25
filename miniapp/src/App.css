@@ -1757,6 +1757,13 @@ body {
   line-height: 1;
 }
 
+.tab-icon-img {
+  width: 14px;
+  height: 14px;
+  display: block;
+  object-fit: contain;
+}
+
 .tab-label {
   line-height: 1.05;
   white-space: nowrap;
