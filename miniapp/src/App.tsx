@@ -2278,12 +2278,8 @@ function App() {
                   <div className="card-text">{duelsData.message || 'Сначала вступи в турнир.'}</div>
                 ) : (
                   <>
-                    <div className="card-title">{profileData?.display_name || (tgUsername ? `@${tgUsername}` : 'Участник')}</div>
-                    <div className="profile-hits-line">
-                      Рейтинг: <b>{duelsData.elo?.rating ?? 1000}</b> · W <b>{duelsData.elo?.wins ?? 0}</b> · D <b>{duelsData.elo?.draws ?? 0}</b> · L{' '}
-                      <b>{duelsData.elo?.losses ?? 0}</b> · всего <b>{duelsData.elo?.duels_total ?? 0}</b>
-                    </div>
-                    <div className="duel-rules-row">
+                    <div className="duel-head-row">
+                      <div className="card-title">{profileData?.display_name || (tgUsername ? `@${tgUsername}` : 'Участник')}</div>
                       <button
                         type="button"
                         className="duel-rules-btn"
@@ -2291,6 +2287,10 @@ function App() {
                       >
                         Правила
                       </button>
+                    </div>
+                    <div className="profile-hits-line">
+                      Рейтинг: <b>{duelsData.elo?.rating ?? 1000}</b> · W <b>{duelsData.elo?.wins ?? 0}</b> · D <b>{duelsData.elo?.draws ?? 0}</b> · L{' '}
+                      <b>{duelsData.elo?.losses ?? 0}</b> · всего <b>{duelsData.elo?.duels_total ?? 0}</b>
                     </div>
 
                     <div className="card-title" style={{ marginTop: 10 }}>Бросить вызов</div>

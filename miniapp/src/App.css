@@ -399,10 +399,15 @@ body {
   margin-top: 8px;
 }
 
-.duel-rules-row {
-  margin-top: 8px;
+.duel-head-row {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.duel-head-row .card-title {
+  margin: 0;
 }
 
 .duel-rules-btn {
@@ -415,6 +420,8 @@ body {
   font-weight: 700;
   cursor: pointer;
   transition: transform 0.12s ease, border-color 0.16s ease, background-color 0.16s ease;
+  flex: 0 0 auto;
+  margin: 0;
 }
 
 .duel-rules-btn:hover {
