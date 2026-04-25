@@ -5,14 +5,6 @@ import wcActiveIcon from './assets/tournaments/wc-active.png'
 import wcInactiveIcon from './assets/tournaments/wc-inactive.png'
 import rplActiveIcon from './assets/tournaments/rpl-active.png'
 import rplInactiveIcon from './assets/tournaments/rpl-inactive.png'
-import tabProfileActiveIcon from './assets/tabs/tab_profile_active.png'
-import tabProfileInactiveIcon from './assets/tabs/tab_profile_inactive.png'
-import tabMatchesActiveIcon from './assets/tabs/tab_matches_active.png'
-import tabMatchesInactiveIcon from './assets/tabs/tab_matches_inactive.png'
-import tabDuelsActiveIcon from './assets/tabs/tab_duels_active.png'
-import tabDuelsInactiveIcon from './assets/tabs/tab_duels_inactive.png'
-import tabTableActiveIcon from './assets/tabs/tab_table_active.png'
-import tabTableInactiveIcon from './assets/tabs/tab_table_inactive.png'
 
 type MeResponse = {
   ok: boolean
@@ -1522,44 +1514,14 @@ function App() {
     table: { title: 'Таблица', subtitle: 'Позиции участников турнира', icon: '🏆' },
     admin: { title: 'Админ', subtitle: 'Внесение итогов и пересчёт очков', icon: '🛠️' },
   }
-  const bottomTabs: Array<{
-    key: Screen
-    iconEmoji: string
-    iconActive?: string
-    iconInactive?: string
-    label: string
-  }> = [
-    {
-      key: 'profile',
-      iconEmoji: '👤',
-      iconActive: tabProfileActiveIcon,
-      iconInactive: tabProfileInactiveIcon,
-      label: 'Профиль',
-    },
-    {
-      key: 'predict',
-      iconEmoji: '⚽',
-      iconActive: tabMatchesActiveIcon,
-      iconInactive: tabMatchesInactiveIcon,
-      label: 'Матчи',
-    },
-    {
-      key: 'duels',
-      iconEmoji: '⚔️',
-      iconActive: tabDuelsActiveIcon,
-      iconInactive: tabDuelsInactiveIcon,
-      label: '1x1',
-    },
-    {
-      key: 'table',
-      iconEmoji: '🏆',
-      iconActive: tabTableActiveIcon,
-      iconInactive: tabTableInactiveIcon,
-      label: 'Таблица',
-    },
+  const bottomTabs: Array<{ key: Screen; icon: string; label: string }> = [
+    { key: 'profile', icon: '👤', label: 'Профиль' },
+    { key: 'predict', icon: '⚽', label: 'Матчи' },
+    { key: 'duels', icon: '⚔️', label: '1x1' },
+    { key: 'table', icon: '🏆', label: 'Таблица' },
   ]
   if (meData?.is_admin) {
-    bottomTabs.push({ key: 'admin', iconEmoji: '🛠️', label: 'Админ' })
+    bottomTabs.push({ key: 'admin', icon: '🛠️', label: 'Админ' })
   }
 
   const tournamentButtons = [
@@ -3169,17 +3131,7 @@ function App() {
             }}
             aria-label={tab.label}
           >
-            <span className="tab-icon">
-              {tab.iconActive && tab.iconInactive ? (
-                <img
-                  src={screen === tab.key ? tab.iconActive : tab.iconInactive}
-                  alt={tab.label}
-                  className="tab-icon-img"
-                />
-              ) : (
-                tab.iconEmoji
-              )}
-            </span>
+            <span className="tab-icon">{tab.icon}</span>
             <span className="tab-label">{tab.label}</span>
           </button>
         ))}
