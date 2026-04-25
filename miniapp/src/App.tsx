@@ -691,6 +691,8 @@ function App() {
   const [duelOpponentSearch, setDuelOpponentSearch] = useState<string>('')
   const [duelMatchVisibleCount, setDuelMatchVisibleCount] = useState<number>(20)
   const [duelRulesOpen, setDuelRulesOpen] = useState<boolean>(false)
+  const [joinBusy, setJoinBusy] = useState<boolean>(false)
+  const [refreshTick, setRefreshTick] = useState<number>(0)
 
   const selectedRoundNumber =
     selectedTournamentCode === 'WC2026'
@@ -985,7 +987,7 @@ function App() {
       .catch((err) => {
         setProfileError(String(err))
       })
-  }, [selectedTournamentCode, profileTargetUserId])
+  }, [selectedTournamentCode, profileTargetUserId, refreshTick])
 
   useEffect(() => {
     setHistoryExpanded(false)
@@ -1096,7 +1098,7 @@ function App() {
     loadDuelsCurrent(apiBase, initData, selectedTournamentCode).catch((err) => {
       setDuelsError(String(err))
     })
-  }, [selectedTournamentCode, selectedRoundNumber, tableRoundFilter])
+  }, [selectedTournamentCode, selectedRoundNumber, tableRoundFilter, refreshTick])
 
   const selectTournament = async (code: string) => {
     if (!code || code === selectedTournamentCode) {
@@ -1125,6 +1127,43 @@ function App() {
       setTournamentNotice(`Выбран турнир: ${nextCode}`)
     } catch (err) {
       setTournamentNotice(`Ошибка выбора турнира: ${String(err)}`)
+    }
+  }
+
+  const joinSelectedTournament = async () => {
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-Telegram-Init-Data': initData,
+    }
+    setJoinBusy(true)
+    setTournamentNotice(null)
+    try {
+      const res = await fetch(`${apiBase}/api/miniapp/tournament/join`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ tournament_code: selectedTournamentCode || 'RPL' }),
+      })
+      const data = (await res.json()) as {
+        ok?: boolean
+        error?: string
+        reason?: string
+        selected_tournament_code?: string
+        selected_tournament_name?: string
+      }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      if (data.selected_tournament_code && data.selected_tournament_code !== selectedTournamentCode) {
+        setSelectedTournamentCode(data.selected_tournament_code)
+      }
+      setTournamentNotice(`Ты вступил в ${data.selected_tournament_name || data.selected_tournament_code || selectedTournamentCode}.`)
+      setRefreshTick((v) => v + 1)
+    } catch (err) {
+      setTournamentNotice(`Не удалось вступить в турнир: ${String(err)}`)
+    } finally {
+      setJoinBusy(false)
     }
   }
 
@@ -1673,6 +1712,7 @@ function App() {
   const medalBronze =
     legacyTrophies.filter((h) => h.place === 3).length +
     tournamentHistory.filter((h) => h.place === 3).length
+  const showJoinOnboarding = screen !== 'admin' && !profileTargetUserId && Boolean(profileData && profileData.joined === false)
 
   return (
     <div className="app-shell">
@@ -1721,7 +1761,37 @@ function App() {
       </header>
 
       <main className={`content screen-${screen}`}>
-        {screen === 'predict' ? (
+        {showJoinOnboarding ? (
+          <section className="cards">
+            <div className="card join-onboarding-card">
+              <div className="card-title">Добро пожаловать</div>
+              <div className="card-text">
+                Чтобы открыть Профиль, Матчи, 1x1 и личную активность, вступи в турнир.
+              </div>
+              <div className="join-onboarding-label">Выбери турнир</div>
+              <div className="tournament-row join-onboarding-row">
+                {tournamentButtons.map((t) => (
+                  <button
+                    key={`join-${t.code}`}
+                    className={`tournament-chip ${selectedTournamentCode === t.code ? 'is-active' : ''}`}
+                    onClick={() => selectTournament(t.code)}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+              <button
+                className="save-btn join-onboarding-btn is-dirty"
+                onClick={joinSelectedTournament}
+                disabled={joinBusy}
+              >
+                {joinBusy ? 'Вступаю…' : `Вступить в ${selectedTournamentCode === 'WC2026' ? 'WC' : 'RPL'}`}
+              </button>
+            </div>
+          </section>
+        ) : null}
+
+        {!showJoinOnboarding && screen === 'predict' ? (
           <>
             {showWcSelector ? (
               <section className="cards">
@@ -2006,7 +2076,7 @@ function App() {
           </>
         ) : null}
 
-        {screen === 'profile' ? (
+        {!showJoinOnboarding && screen === 'profile' ? (
           <section className="cards">
             <div className="card">
               {profileData?.joined && profileData.is_self_profile === false ? (
@@ -2021,7 +2091,16 @@ function App() {
                 </button>
               ) : null}
               {profileError ? (
-                <div className="card-text">Ошибка загрузки профиля: {profileError}</div>
+                <div className="card-text">
+                  Не удалось загрузить профиль. Попробуй снова через несколько секунд.
+                  {showDebugPanels ? (
+                    <>
+                      <br />
+                      <br />
+                      Debug: {profileError}
+                    </>
+                  ) : null}
+                </div>
               ) : !profileData ? (
                 <div className="card-text">Загружаю профиль...</div>
               ) : profileData.joined ? (
@@ -2266,7 +2345,7 @@ function App() {
           </section>
         ) : null}
 
-        {screen === 'duels' ? (
+        {!showJoinOnboarding && screen === 'duels' ? (
           <>
             <section className="cards">
               <div className="card">
@@ -2555,7 +2634,7 @@ function App() {
           </>
         ) : null}
 
-        {screen === 'table' ? (
+        {!showJoinOnboarding && screen === 'table' ? (
           <>
             {selectedTournamentCode === 'WC2026' ? (
               <section className="cards">

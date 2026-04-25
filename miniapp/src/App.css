@@ -895,6 +895,32 @@ body {
   padding: 12px;
 }
 
+.join-onboarding-card {
+  padding: 14px;
+}
+
+.join-onboarding-label {
+  margin-top: var(--vr-md);
+  color: #a9bde4;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.join-onboarding-row {
+  margin-top: var(--vr-sm);
+}
+
+.join-onboarding-btn {
+  margin-top: var(--vr-md);
+  width: 100%;
+  justify-content: center;
+  display: inline-flex;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 700;
+  min-height: 40px;
+}
+
 .segment-hint {
   margin-top: var(--vr-xs);
   margin-bottom: 8px;

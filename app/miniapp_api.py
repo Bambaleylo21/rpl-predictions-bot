@@ -447,22 +447,61 @@ async def _upsert_user_from_webapp(session, user: dict[str, Any]) -> User | None
     photo_url = user.get("photo_url") if isinstance(user, dict) else None
     full_name = f"{first_name or ''} {last_name or ''}".strip() or None
 
-    row = (await session.execute(select(User).where(User.tg_user_id == int(tg_user_id)))).scalar_one_or_none()
-    if row is None:
-        row = User(
+    normalized_photo_url = (str(photo_url).strip() or None) if photo_url else None
+
+    # Race-safe upsert: Mini App often sends parallel requests on load.
+    if str(session.bind.url).startswith("postgresql"):
+        stmt = pg_insert(User).values(
             tg_user_id=int(tg_user_id),
             username=username,
             full_name=full_name,
-            photo_url=(str(photo_url).strip() or None) if photo_url else None,
+            photo_url=normalized_photo_url,
         )
-        session.add(row)
-        await session.flush()
+        await session.execute(
+            stmt.on_conflict_do_update(
+                index_elements=[User.tg_user_id],
+                set_={
+                    "username": username,
+                    "full_name": full_name,
+                    "photo_url": normalized_photo_url,
+                },
+            )
+        )
+    elif str(session.bind.url).startswith("sqlite"):
+        stmt = sqlite_insert(User).values(
+            tg_user_id=int(tg_user_id),
+            username=username,
+            full_name=full_name,
+            photo_url=normalized_photo_url,
+        )
+        await session.execute(
+            stmt.on_conflict_do_update(
+                index_elements=[User.tg_user_id],
+                set_={
+                    "username": username,
+                    "full_name": full_name,
+                    "photo_url": normalized_photo_url,
+                },
+            )
+        )
+    else:
+        row = (await session.execute(select(User).where(User.tg_user_id == int(tg_user_id)))).scalar_one_or_none()
+        if row is None:
+            row = User(
+                tg_user_id=int(tg_user_id),
+                username=username,
+                full_name=full_name,
+                photo_url=normalized_photo_url,
+            )
+            session.add(row)
+            await session.flush()
+            return row
+        row.username = username
+        row.full_name = full_name
+        row.photo_url = normalized_photo_url
         return row
 
-    row.username = username
-    row.full_name = full_name
-    if photo_url:
-        row.photo_url = str(photo_url).strip() or row.photo_url
+    row = (await session.execute(select(User).where(User.tg_user_id == int(tg_user_id)))).scalar_one_or_none()
     return row
 
 
@@ -937,6 +976,59 @@ async def tournament_select(request: web.Request) -> web.Response:
                 "selected_tournament_name": tournament.name,
             }
         )
+
+
+async def tournament_join(request: web.Request) -> web.Response:
+    auth_result = _extract_verified_user(request)
+    if auth_result[0] is None:
+        return auth_result[1]
+    _payload, user = auth_result
+    tg_user_id = user.get("id") if isinstance(user, dict) else None
+    if not tg_user_id:
+        return web.json_response({"ok": False, "error": "user_not_found_in_init_data"}, status=400)
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    requested_code = str(body.get("tournament_code") or request.query.get("t") or "").strip().upper() or None
+
+    first_name = str(user.get("first_name") or "").strip() if isinstance(user, dict) else ""
+    last_name = str(user.get("last_name") or "").strip() if isinstance(user, dict) else ""
+    username = str(user.get("username") or "").strip() if isinstance(user, dict) else ""
+    display_name = " ".join(x for x in (first_name, last_name) if x).strip() or (f"@{username}" if username else None)
+
+    async with SessionLocal() as session:
+        await _upsert_user_from_webapp(session, user if isinstance(user, dict) else {})
+        tournament = await _resolve_tournament(session, int(tg_user_id), requested_code=requested_code)
+        row = (
+            await session.execute(
+                select(UserTournament).where(
+                    UserTournament.tournament_id == int(tournament.id),
+                    UserTournament.tg_user_id == int(tg_user_id),
+                )
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            row = UserTournament(
+                tournament_id=int(tournament.id),
+                tg_user_id=int(tg_user_id),
+                display_name=display_name,
+            )
+            session.add(row)
+        elif not (row.display_name or "").strip() and display_name:
+            row.display_name = display_name
+        await session.commit()
+    return web.json_response(
+        {
+            "ok": True,
+            "trusted": True,
+            "joined": True,
+            "selected_tournament_code": tournament.code,
+            "selected_tournament_name": tournament.name,
+            "display_name": display_name,
+        }
+    )
 
 
 async def _build_profile_achievements(
@@ -3343,6 +3435,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/miniapp/me", me)
     app.router.add_get("/api/miniapp/tournaments", tournaments_list)
     app.router.add_post("/api/miniapp/tournament/select", tournament_select)
+    app.router.add_post("/api/miniapp/tournament/join", tournament_join)
     app.router.add_get("/api/miniapp/profile", profile)
     app.router.add_get("/api/miniapp/predictions/current", predictions_current)
     app.router.add_get("/api/miniapp/table/current", table_current)
