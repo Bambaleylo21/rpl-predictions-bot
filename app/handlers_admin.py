@@ -57,6 +57,7 @@ from app.audience import (
     mark_user_blocked,
     LEFT_KEY_PATTERN,
 )
+from app.reminders import _build_reminder_keyboard, _build_reminder_text
 
 ADMIN_IDS = load_admin_ids()
 ROUND_DIGEST_CHAT_ID_RAW = os.getenv("ROUND_DIGEST_CHAT_ID", "").strip()
@@ -1578,6 +1579,7 @@ def register_admin_handlers(dp: Dispatcher) -> None:
     dp.message.register(admin_longterm_award, Command("admin_longterm_award"))
     dp.message.register(admin_manual_only_cleanup, Command("admin_manual_only_cleanup"))
     dp.message.register(admin_tournament_reset, Command("admin_tournament_reset"))
+    dp.message.register(admin_test_reminder, Command("admin_test_reminder"))
     dp.message.register(admin_health, Command("admin_health"))
 
     # Новое: управление окном турнира и удаление участников
@@ -2287,6 +2289,87 @@ async def admin_tournament_reset(message: types.Message):
         f"Удалено записей Elo: {int(del_duel_elo.rowcount or 0)}\n"
         f"Сброшено бонусов участников: {int(reset_bonuses.rowcount or 0)}\n"
         f"Очищено флагов пушей ачивок: {int(ach_push_removed)}"
+    )
+
+
+async def admin_test_reminder(message: types.Message):
+    """
+    /admin_test_reminder <tg_user_id> [TOURNAMENT_CODE]
+    Пример: /admin_test_reminder 210477579 WC2026
+
+    Отправляет тестовый пуш-напоминание о матче пользователю прямо сейчас.
+    """
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("⛔️ У вас нет прав на эту команду.")
+        return
+
+    parts = (message.text or "").strip().split()
+    if len(parts) < 2:
+        await message.answer("Формат: /admin_test_reminder 210477579 WC2026")
+        return
+
+    try:
+        target_tg_user_id = int(parts[1])
+    except ValueError:
+        await message.answer("tg_user_id должен быть числом.")
+        return
+
+    tournament_code = (parts[2].strip().upper() if len(parts) > 2 else "WC2026")
+
+    async with SessionLocal() as session:
+        t_q = await session.execute(select(Tournament).where(Tournament.code == tournament_code))
+        tournament = t_q.scalar_one_or_none()
+        if tournament is None:
+            await message.answer(f"❌ Турнир {tournament_code} не найден.")
+            return
+
+        now = _now_msk_naive()
+        kickoff_q = await session.execute(
+            select(func.min(Match.kickoff_time)).where(
+                Match.tournament_id == int(tournament.id),
+                Match.source == "manual",
+                Match.is_placeholder == 0,
+                Match.kickoff_time > now,
+            )
+        )
+        first_kickoff = kickoff_q.scalar_one_or_none()
+        if first_kickoff is None:
+            await message.answer("❌ Нет ближайших будущих матчей для тестового напоминания.")
+            return
+
+        matches_q = await session.execute(
+            select(Match).where(
+                Match.tournament_id == int(tournament.id),
+                Match.source == "manual",
+                Match.is_placeholder == 0,
+                Match.kickoff_time == first_kickoff,
+            ).order_by(Match.id.asc())
+        )
+        kickoff_matches = matches_q.scalars().all()
+        if not kickoff_matches:
+            await message.answer("❌ Не удалось собрать список матчей для тестового напоминания.")
+            return
+
+        text = _build_reminder_text(first_kickoff, kickoff_matches)
+        kb = _build_reminder_keyboard(kickoff_matches)
+
+        try:
+            await message.bot.send_message(chat_id=target_tg_user_id, text=text, reply_markup=kb)
+        except Exception as e:
+            if is_blocked_send_error(e):
+                await mark_user_blocked(session, int(target_tg_user_id))
+                await session.commit()
+                await message.answer(f"⚠️ Пользователь {target_tg_user_id} заблокировал бота.")
+                return
+            await message.answer(f"❌ Не удалось отправить тестовый пуш: {type(e).__name__}")
+            return
+
+    await message.answer(
+        "✅ Тестовый пуш отправлен.\n"
+        f"Кому: {target_tg_user_id}\n"
+        f"Турнир: {tournament.name} ({tournament.code})\n"
+        f"Матчей в пачке: {len(kickoff_matches)}\n"
+        f"Старт: {first_kickoff.strftime('%d.%m %H:%M')} МСК"
     )
 
 
