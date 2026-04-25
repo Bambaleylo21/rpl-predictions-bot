@@ -10,7 +10,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-from sqlalchemy import case, delete, select, func
+from sqlalchemy import case, delete, select, func, update
 
 from app.config import load_admin_ids
 from app.db import SessionLocal
@@ -19,6 +19,8 @@ from app.duel_notify import send_duel_finished_pushes
 from app.duels import finalize_duels_for_match
 from app.miniapp_api import send_new_achievement_pushes
 from app.models import (
+    Duel,
+    DuelElo,
     League,
     LeagueMovement,
     LeagueParticipant,
@@ -1575,6 +1577,7 @@ def register_admin_handlers(dp: Dispatcher) -> None:
     dp.message.register(admin_recalc, Command("admin_recalc"))
     dp.message.register(admin_longterm_award, Command("admin_longterm_award"))
     dp.message.register(admin_manual_only_cleanup, Command("admin_manual_only_cleanup"))
+    dp.message.register(admin_tournament_reset, Command("admin_tournament_reset"))
     dp.message.register(admin_health, Command("admin_health"))
 
     # Новое: управление окном турнира и удаление участников
@@ -2210,6 +2213,80 @@ async def admin_manual_only_cleanup(message: types.Message):
         f"Осталось матчей в RPL: {left_matches}\n"
         f"Осталось участников в RPL: {left_members}\n"
         "Теперь бот полностью очищен от других турниров."
+    )
+
+
+async def admin_tournament_reset(message: types.Message):
+    """
+    /admin_tournament_reset [TOURNAMENT_CODE]
+    Пример: /admin_tournament_reset WC2026
+
+    Полный предстартовый сброс выбранного турнира:
+    - очищает прогнозы и очки по матчам турнира
+    - сбрасывает результаты матчей (home_score/away_score -> NULL)
+    - очищает 1x1 дуэли и Elo-рейтинги
+    - очищает longterm прогнозы турнира
+    - сбрасывает бонусы участникам турнира
+    - очищает флаги пушей ачивок этого турнира
+    """
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("⛔️ У вас нет прав на эту команду.")
+        return
+
+    parts = (message.text or "").strip().split()
+    tournament_code = (parts[1].strip().upper() if len(parts) > 1 else "WC2026")
+
+    async with SessionLocal() as session:
+        t_q = await session.execute(select(Tournament).where(Tournament.code == tournament_code))
+        tournament = t_q.scalar_one_or_none()
+        if tournament is None:
+            await message.answer(f"❌ Турнир {tournament_code} не найден.")
+            return
+
+        match_ids_subq = select(Match.id).where(Match.tournament_id == int(tournament.id))
+
+        del_points = await session.execute(delete(Point).where(Point.match_id.in_(match_ids_subq)))
+        del_predictions = await session.execute(delete(Prediction).where(Prediction.match_id.in_(match_ids_subq)))
+        del_longterm = await session.execute(
+            delete(LongtermPrediction).where(LongtermPrediction.tournament_id == int(tournament.id))
+        )
+        del_duels = await session.execute(delete(Duel).where(Duel.tournament_id == int(tournament.id)))
+        del_duel_elo = await session.execute(delete(DuelElo).where(DuelElo.tournament_id == int(tournament.id)))
+
+        reset_matches = await session.execute(
+            update(Match)
+            .where(Match.tournament_id == int(tournament.id))
+            .values(home_score=None, away_score=None)
+        )
+
+        reset_bonuses = await session.execute(
+            update(UserTournament)
+            .where(UserTournament.tournament_id == int(tournament.id))
+            .values(bonus_points=0, bonus_winner=0, bonus_scorer=0)
+        )
+
+        ach_push_rows_q = await session.execute(
+            select(Setting).where(Setting.key.like(f"ACH_PUSH_SENT_T{int(tournament.id)}_U%"))
+        )
+        ach_push_rows = ach_push_rows_q.scalars().all()
+        ach_push_removed = 0
+        for row in ach_push_rows:
+            await session.delete(row)
+            ach_push_removed += 1
+
+        await session.commit()
+
+    await message.answer(
+        "✅ Предстартовый сброс турнира завершён.\n"
+        f"Турнир: {tournament.name} ({tournament.code})\n\n"
+        f"Сброшено результатов матчей: {int(reset_matches.rowcount or 0)}\n"
+        f"Удалено прогнозов: {int(del_predictions.rowcount or 0)}\n"
+        f"Удалено очков: {int(del_points.rowcount or 0)}\n"
+        f"Удалено доп. прогнозов: {int(del_longterm.rowcount or 0)}\n"
+        f"Удалено дуэлей 1x1: {int(del_duels.rowcount or 0)}\n"
+        f"Удалено записей Elo: {int(del_duel_elo.rowcount or 0)}\n"
+        f"Сброшено бонусов участников: {int(reset_bonuses.rowcount or 0)}\n"
+        f"Очищено флагов пушей ачивок: {int(ach_push_removed)}"
     )
 
 
