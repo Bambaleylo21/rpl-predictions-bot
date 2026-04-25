@@ -2,17 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from collections import defaultdict
 from datetime import datetime, timedelta
+from urllib.parse import urlencode
 
 from aiogram import types
 from sqlalchemy import select
 
 from app.audience import is_blocked_send_error, mark_user_blocked
 from app.display import display_team_name
-from app.models import Match, Prediction, Setting, UserTournament
+from app.models import Match, Prediction, Setting, Tournament, UserTournament
 
 logger = logging.getLogger(__name__)
+MINIAPP_WEB_URL = os.getenv("MINIAPP_WEB_URL", "https://rpl-predictions-bot-mini-app.onrender.com").strip()
 
 
 def _now_msk_naive() -> datetime:
@@ -50,14 +53,21 @@ def _build_reminder_text(kickoff: datetime, matches: list[Match]) -> str:
     return "\n".join(lines)
 
 
-def _build_reminder_keyboard(matches: list[Match]) -> types.InlineKeyboardMarkup:
+def _build_reminder_keyboard(matches: list[Match], tournament_code: str | None = None) -> types.InlineKeyboardMarkup:
+    params = {"screen": "matches"}
+    code = (tournament_code or "").strip().upper()
+    if code:
+        params["t"] = code
+    sep = "&" if "?" in MINIAPP_WEB_URL else "?"
+    miniapp_url = f"{MINIAPP_WEB_URL}{sep}{urlencode(params)}"
+
     rows: list[list[types.InlineKeyboardButton]] = []
     for m in matches:
         label = (
             f"{display_team_name(m.home_team)} — {display_team_name(m.away_team)}"
             f" | {m.kickoff_time.strftime('%d.%m %H:%M')}"
         )
-        rows.append([types.InlineKeyboardButton(text=label[:64], callback_data=f"pick_match:{m.id}")])
+        rows.append([types.InlineKeyboardButton(text=label[:64], web_app=types.WebAppInfo(url=miniapp_url))])
     return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -115,6 +125,9 @@ async def _process_reminders_once(bot, session_factory) -> int:
             for tg_user_id, match_id in preds_rows:
                 user_predicted_ids[int(tg_user_id)].add(int(match_id))
 
+            t_code_q = await session.execute(select(Tournament.code).where(Tournament.id == int(tournament_id)))
+            tournament_code = t_code_q.scalar_one_or_none()
+
             for tg_user_id in user_ids:
                 predicted_ids = user_predicted_ids.get(tg_user_id, set())
                 missing_matches = [m for m in kickoff_matches if m.id not in predicted_ids]
@@ -122,7 +135,7 @@ async def _process_reminders_once(bot, session_factory) -> int:
                     continue
 
                 text = _build_reminder_text(kickoff, missing_matches)
-                kb = _build_reminder_keyboard(missing_matches)
+                kb = _build_reminder_keyboard(missing_matches, tournament_code=tournament_code)
                 try:
                     await bot.send_message(chat_id=tg_user_id, text=text, reply_markup=kb)
                 except Exception as e:
