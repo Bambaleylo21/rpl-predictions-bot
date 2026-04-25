@@ -17,6 +17,7 @@ from app.db import SessionLocal
 from app.display import display_round_name, display_team_name, display_tournament_name
 from app.duel_notify import send_duel_finished_pushes
 from app.duels import finalize_duels_for_match
+from app.miniapp_api import send_new_achievement_pushes
 from app.models import (
     League,
     LeagueMovement,
@@ -1699,6 +1700,11 @@ async def admin_set_result(message: types.Message):
         duel_events = await finalize_duels_for_match(session, int(match_id))
         if duel_events:
             await send_duel_finished_pushes(message.bot, session, events=duel_events)
+        await send_new_achievement_pushes(
+            message.bot,
+            session,
+            tournament_id=int(match.tournament_id),
+        )
         await session.commit()
 
     sent_exact_pushes = await _maybe_send_exact_hit_pushes(message.bot, match.id)
@@ -1918,6 +1924,11 @@ async def admin_set_result_score_input(message: types.Message, state: FSMContext
         duel_events = await finalize_duels_for_match(session, int(match_id))
         if duel_events:
             await send_duel_finished_pushes(message.bot, session, events=duel_events)
+        await send_new_achievement_pushes(
+            message.bot,
+            session,
+            tournament_id=int(match.tournament_id),
+        )
         await session.commit()
 
     await state.clear()

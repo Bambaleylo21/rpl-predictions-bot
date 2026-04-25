@@ -6,16 +6,18 @@ import json
 import logging
 import os
 import asyncio
+import random
 from datetime import datetime, timezone, timedelta
 from typing import Any
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlencode
 
 from aiohttp import web
-from aiogram import Bot
+from aiogram import Bot, types
 from sqlalchemy import case, false, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+from app.audience import is_blocked_send_error, mark_user_blocked
 from app.config import load_admin_ids, load_config
 from app.db import SessionLocal, init_db
 from app.duel_notify import (
@@ -38,6 +40,16 @@ TOURNAMENT_SELECTED_KEY_PREFIX = "TOURNAMENT_SELECTED_U"
 LONGTERM_TYPES = ("winner", "scorer")
 ADMIN_IDS = load_admin_ids()
 _NOTIFY_BOT: Bot | None = None
+MINIAPP_WEB_URL = os.getenv("MINIAPP_WEB_URL", "https://rpl-predictions-bot-mini-app.onrender.com").strip()
+ACHIEVEMENT_PUSH_TEXTS = (
+    "🏆 Новое достижение открыто!\nЗагляни в профиль и проверь, что именно ты получил.",
+    "🎉 У тебя новая награда\nОткрой Mini App и посмотри в разделе Профиль.",
+    "✅ Получено новое достижение\nПодробности уже ждут тебя в профиле.",
+    "🔥 Есть обновление по наградам\nЗайди в профиль и открой новую ачивку.",
+    "🏅 Твоя коллекция достижений обновилась\nПроверь профиль в Mini App.",
+    "🚀 Новая ачивка уже у тебя\nУзнай подробности в профиле.",
+    "📌 Появилась новая награда\nОткрой профиль в Mini App, чтобы посмотреть.",
+)
 WC_TOP_SCORER_OPTIONS = [
     "Килиан Мбаппе",
     "Эрлинг Холанд",
@@ -299,6 +311,44 @@ def _extract_init_data(request: web.Request) -> str:
     # 3) Query param for manual testing
     q = request.query.get("init_data", "").strip()
     return q
+
+
+def _achievement_push_setting_key(tournament_id: int, tg_user_id: int, achievement_key: str) -> str:
+    return f"ACH_PUSH_SENT_T{int(tournament_id)}_U{int(tg_user_id)}_A{achievement_key}"
+
+
+def _open_profile_keyboard(tournament_code: str | None = None) -> types.InlineKeyboardMarkup | None:
+    if not MINIAPP_WEB_URL:
+        return None
+    url = MINIAPP_WEB_URL
+    params = {"screen": "profile"}
+    t_code = (tournament_code or "").strip().upper()
+    if t_code:
+        params["t"] = t_code
+    sep = "&" if "?" in url else "?"
+    url = f"{url}{sep}{urlencode(params)}"
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[[types.InlineKeyboardButton(text="Посмотреть награду", web_app=types.WebAppInfo(url=url))]]
+    )
+
+
+async def _safe_send_achievement_push(
+    bot: Bot,
+    session,
+    *,
+    chat_id: int,
+    text: str,
+    reply_markup: types.InlineKeyboardMarkup | None = None,
+) -> bool:
+    try:
+        await bot.send_message(chat_id=int(chat_id), text=text, reply_markup=reply_markup)
+        return True
+    except Exception as exc:
+        if is_blocked_send_error(exc):
+            await mark_user_blocked(session, int(chat_id))
+        else:
+            logger.warning("achievement notify send failed for %s: %s", chat_id, exc)
+        return False
 
 
 def _verify_init_data_signature(init_data: str, bot_token: str) -> tuple[bool, str]:
@@ -732,6 +782,14 @@ async def admin_result_set(request: web.Request) -> web.Response:
                     await send_duel_finished_pushes(_get_notify_bot(), session, events=duel_events)
                 except Exception:
                     logger.exception("miniapp admin_result_set duel notify failed")
+            try:
+                await send_new_achievement_pushes(
+                    _get_notify_bot(),
+                    session,
+                    tournament_id=int(tournament.id),
+                )
+            except Exception:
+                logger.exception("miniapp admin_result_set achievement notify failed")
             await session.commit()
 
         return web.json_response(
@@ -785,6 +843,14 @@ async def admin_recalc_round(request: web.Request) -> web.Response:
             total_updates = 0
             for (mid,) in matches:
                 total_updates += int(await _recalc_points_for_match_in_session(session, int(mid)))
+            try:
+                await send_new_achievement_pushes(
+                    _get_notify_bot(),
+                    session,
+                    tournament_id=int(tournament.id),
+                )
+            except Exception:
+                logger.exception("miniapp admin_recalc_round achievement notify failed")
             await session.commit()
 
         return web.json_response(
@@ -1361,6 +1427,91 @@ async def _build_profile_achievements(
         "missed_matches": int(missed_matches),
     }
     return achievements, progress_meta
+
+
+async def send_new_achievement_pushes(
+    bot: Bot,
+    session,
+    *,
+    tournament_id: int,
+    tg_user_ids: list[int] | None = None,
+) -> int:
+    if tournament_id <= 0:
+        return 0
+
+    tournament = (
+        await session.execute(select(Tournament).where(Tournament.id == int(tournament_id)).limit(1))
+    ).scalar_one_or_none()
+    if tournament is None:
+        return 0
+
+    if tg_user_ids:
+        target_user_ids = sorted({int(x) for x in tg_user_ids if int(x) > 0})
+    else:
+        participant_rows = (
+            await session.execute(
+                select(UserTournament.tg_user_id).where(UserTournament.tournament_id == int(tournament_id))
+            )
+        ).all()
+        target_user_ids = sorted({int(r[0]) for r in participant_rows if r[0] is not None})
+
+    if not target_user_ids:
+        return 0
+
+    now = _now_msk_naive()
+    sent_total = 0
+    for target_tg_user_id in target_user_ids:
+        started_total_q = await session.execute(
+            select(func.count(Match.id)).where(
+                Match.tournament_id == int(tournament_id),
+                Match.is_placeholder == 0,
+                Match.kickoff_time <= now,
+            )
+        )
+        started_total = int(started_total_q.scalar_one() or 0)
+
+        pred_started_q = await session.execute(
+            select(func.count(Prediction.id))
+            .select_from(Prediction)
+            .join(Match, Match.id == Prediction.match_id)
+            .where(
+                Prediction.tg_user_id == int(target_tg_user_id),
+                Match.tournament_id == int(tournament_id),
+                Match.is_placeholder == 0,
+                Match.kickoff_time <= now,
+            )
+        )
+        pred_started = int(pred_started_q.scalar_one() or 0)
+        missed_matches = max(0, started_total - pred_started)
+
+        achievements, _meta = await _build_profile_achievements(
+            session=session,
+            tournament_id=int(tournament_id),
+            tg_user_id=int(target_tg_user_id),
+            missed_matches=int(missed_matches),
+        )
+        earned_keys = [str(a.get("key") or "") for a in achievements if bool(a.get("earned")) and a.get("key")]
+        if not earned_keys:
+            continue
+
+        for achievement_key in earned_keys:
+            setting_key = _achievement_push_setting_key(int(tournament_id), int(target_tg_user_id), achievement_key)
+            already_sent = (await _get_setting(session, setting_key) or "").strip() == "1"
+            if already_sent:
+                continue
+
+            sent = await _safe_send_achievement_push(
+                bot,
+                session,
+                chat_id=int(target_tg_user_id),
+                text=random.choice(ACHIEVEMENT_PUSH_TEXTS),
+                reply_markup=_open_profile_keyboard((tournament.code or "").strip().upper()),
+            )
+            if sent:
+                await _set_setting(session, setting_key, "1")
+                sent_total += 1
+
+    return sent_total
 
 
 async def _build_profile_tournament_history(
