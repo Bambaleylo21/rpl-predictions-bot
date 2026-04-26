@@ -236,6 +236,12 @@ async def _ensure_tournament(
     round_min: int,
     round_max: int,
     planned_matches_total: int = 0,
+    *,
+    sort_order: int = 100,
+    status: str = "active",
+    visible_in_miniapp: int = 1,
+    join_open: int = 1,
+    predict_open: int = 1,
 ) -> Tournament:
     q = await session.execute(select(Tournament).where(Tournament.code == code).limit(1))
     row = q.scalar_one_or_none()
@@ -245,6 +251,11 @@ async def _ensure_tournament(
             name=name,
             round_min=round_min,
             round_max=round_max,
+            status=str(status or "active"),
+            visible_in_miniapp=int(visible_in_miniapp),
+            join_open=int(join_open),
+            predict_open=int(predict_open),
+            sort_order=int(sort_order),
             planned_matches_total=int(planned_matches_total or 0),
             is_active=1,
         )
@@ -265,6 +276,11 @@ async def _ensure_default_tournaments(session) -> None:
         round_min=1,
         round_max=30,
         planned_matches_total=0,
+        sort_order=100,
+        status="active",
+        visible_in_miniapp=1,
+        join_open=0,
+        predict_open=0,
     )
     await _ensure_tournament(
         session=session,
@@ -273,7 +289,31 @@ async def _ensure_default_tournaments(session) -> None:
         round_min=1,
         round_max=64,
         planned_matches_total=104,
+        sort_order=10,
+        status="active",
+        visible_in_miniapp=1,
+        join_open=1,
+        predict_open=1,
     )
+
+
+def _is_tournament_visible_in_miniapp(tournament: Tournament) -> bool:
+    status = str(getattr(tournament, "status", "active") or "active").strip().lower()
+    return int(getattr(tournament, "visible_in_miniapp", 1) or 0) == 1 and status not in {"draft", "archived"}
+
+
+def _is_tournament_join_open(tournament: Tournament) -> bool:
+    status = str(getattr(tournament, "status", "active") or "active").strip().lower()
+    if status not in {"announce", "active"}:
+        return False
+    return int(getattr(tournament, "join_open", 1) or 0) == 1
+
+
+def _is_tournament_predict_open(tournament: Tournament) -> bool:
+    status = str(getattr(tournament, "status", "active") or "active").strip().lower()
+    if status != "active":
+        return False
+    return int(getattr(tournament, "predict_open", 1) or 0) == 1
 
 
 async def _get_active_tournaments(session) -> list[Tournament]:
@@ -281,9 +321,13 @@ async def _get_active_tournaments(session) -> list[Tournament]:
     q = await session.execute(
         select(Tournament)
         .where(Tournament.is_active == 1)
-        .order_by(case((Tournament.code == DEFAULT_TOURNAMENT_CODE, 0), else_=1), Tournament.code.asc())
+        .order_by(
+            case((Tournament.sort_order.is_(None), 1), else_=0),
+            Tournament.sort_order.asc(),
+            Tournament.code.asc(),
+        )
     )
-    return list(q.scalars().all())
+    return [t for t in q.scalars().all() if _is_tournament_visible_in_miniapp(t)]
 
 
 async def _resolve_tournament(session, tg_user_id: int, requested_code: str | None = None) -> Tournament:
@@ -1161,6 +1205,11 @@ async def tournaments_list(request: web.Request) -> web.Response:
                         "name": t.name,
                         "round_min": int(t.round_min),
                         "round_max": int(t.round_max),
+                        "status": str(getattr(t, "status", "active") or "active"),
+                        "visible_in_miniapp": int(getattr(t, "visible_in_miniapp", 1) or 0),
+                        "join_open": int(getattr(t, "join_open", 1) or 0),
+                        "predict_open": int(getattr(t, "predict_open", 1) or 0),
+                        "sort_order": int(getattr(t, "sort_order", 100) or 100),
                         "selected": (t.code or "").strip().upper() == selected_code,
                     }
                     for t in tournaments
@@ -1224,6 +1273,18 @@ async def tournament_join(request: web.Request) -> web.Response:
     async with SessionLocal() as session:
         await _upsert_user_from_webapp(session, user if isinstance(user, dict) else {})
         tournament = await _resolve_tournament(session, int(tg_user_id), requested_code=requested_code)
+        if not _is_tournament_join_open(tournament):
+            await session.commit()
+            return web.json_response(
+                {
+                    "ok": False,
+                    "error": "join_closed",
+                    "reason": "Вступление в этот турнир сейчас закрыто.",
+                    "tournament_code": tournament.code,
+                    "tournament_name": tournament.name,
+                },
+                status=409,
+            )
         row = (
             await session.execute(
                 select(UserTournament).where(
@@ -3084,6 +3145,24 @@ async def predict_current(request: web.Request) -> web.Response:
                     }
                 )
 
+            if not _is_tournament_predict_open(tournament):
+                return web.json_response(
+                    {
+                        "ok": True,
+                        "trusted": True,
+                        "joined": True,
+                        "predict_open": False,
+                        "message": "Приём прогнозов в этом турнире сейчас закрыт.",
+                        "tournament_code": tournament.code,
+                        "tournament": tournament.name,
+                        "round_name": display_round_name(tournament.code, int(tournament.round_min)),
+                        "round_number": int(tournament.round_min),
+                        "round_min": int(tournament.round_min),
+                        "round_max": int(tournament.round_max),
+                        "items": [],
+                    }
+                )
+
             round_min = int(tournament.round_min)
             round_max = int(tournament.round_max)
             stage_row = (
@@ -3230,6 +3309,8 @@ async def predict_set(request: web.Request) -> web.Response:
         async with SessionLocal() as session:
             tournament = await _resolve_tournament(session, int(tg_user_id), requested_code=request.query.get("t"))
             await session.commit()
+            if not _is_tournament_predict_open(tournament):
+                return web.json_response({"ok": False, "error": "predict_closed"}, status=409)
 
             in_tournament = (
                 await session.execute(

@@ -36,6 +36,11 @@ class Tournament(Base):
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     round_min: Mapped[int] = mapped_column(Integer, nullable=False)
     round_max: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active", server_default="active", index=True)
+    visible_in_miniapp: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    join_open: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    predict_open: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=100, server_default="100")
     planned_matches_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     is_active: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
 
