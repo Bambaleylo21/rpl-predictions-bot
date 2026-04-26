@@ -2495,6 +2495,93 @@ async def _build_overall_table_rows(
     return rows, participants
 
 
+async def _build_longterm_table_rows(
+    session,
+    tournament_id: int,
+) -> tuple[list[dict[str, Any]], int]:
+    winner_subq = (
+        select(
+            LongtermPrediction.tg_user_id.label("tg_user_id"),
+            func.max(LongtermPrediction.pick_value).label("winner_pick"),
+        )
+        .where(
+            LongtermPrediction.tournament_id == int(tournament_id),
+            LongtermPrediction.pick_type == "winner",
+        )
+        .group_by(LongtermPrediction.tg_user_id)
+        .subquery()
+    )
+    scorer_subq = (
+        select(
+            LongtermPrediction.tg_user_id.label("tg_user_id"),
+            func.max(LongtermPrediction.pick_value).label("scorer_pick"),
+        )
+        .where(
+            LongtermPrediction.tournament_id == int(tournament_id),
+            LongtermPrediction.pick_type == "scorer",
+        )
+        .group_by(LongtermPrediction.tg_user_id)
+        .subquery()
+    )
+
+    q = await session.execute(
+        select(
+            User.tg_user_id,
+            UserTournament.display_name,
+            User.display_name,
+            User.username,
+            User.full_name,
+            UserTournament.bonus_winner,
+            UserTournament.bonus_scorer,
+            winner_subq.c.winner_pick,
+            scorer_subq.c.scorer_pick,
+        )
+        .select_from(UserTournament)
+        .join(User, User.tg_user_id == UserTournament.tg_user_id)
+        .outerjoin(winner_subq, winner_subq.c.tg_user_id == User.tg_user_id)
+        .outerjoin(scorer_subq, scorer_subq.c.tg_user_id == User.tg_user_id)
+        .where(UserTournament.tournament_id == int(tournament_id))
+        .order_by(
+            (func.coalesce(UserTournament.bonus_winner, 0) + func.coalesce(UserTournament.bonus_scorer, 0)).desc(),
+            User.tg_user_id.asc(),
+        )
+    )
+
+    rows: list[dict[str, Any]] = []
+    place = 1
+    for (
+        tg_user_id,
+        tournament_display_name,
+        user_display_name,
+        username,
+        full_name,
+        bonus_winner,
+        bonus_scorer,
+        winner_pick,
+        scorer_pick,
+    ) in q.all():
+        name = (
+            tournament_display_name
+            or user_display_name
+            or (f"@{username}" if username else None)
+            or full_name
+            or str(tg_user_id)
+        )
+        longterm_points = int(bonus_winner or 0) + int(bonus_scorer or 0)
+        rows.append(
+            {
+                "place": int(place),
+                "tg_user_id": int(tg_user_id),
+                "name": str(name),
+                "winner_pick": str(winner_pick).strip() if winner_pick else None,
+                "scorer_pick": str(scorer_pick).strip() if scorer_pick else None,
+                "longterm_points": int(longterm_points),
+            }
+        )
+        place += 1
+    return rows, len(rows)
+
+
 async def predictions_current(request: web.Request) -> web.Response:
     try:
         auth_result = _extract_verified_user(request)
@@ -3333,6 +3420,8 @@ async def table_current(request: web.Request) -> web.Response:
             return web.json_response({"ok": False, "error": "user_not_found_in_init_data"}, status=400)
 
         requested_round_raw = (request.query.get("round") or "").strip()
+        requested_round_upper = requested_round_raw.upper()
+        is_longterm_round = requested_round_upper == "LT"
         requested_round = int(requested_round_raw) if requested_round_raw.isdigit() else None
 
         async with SessionLocal() as session:
@@ -3398,6 +3487,27 @@ async def table_current(request: web.Request) -> web.Response:
             requested_round = None
 
         async with SessionLocal() as session:
+            if is_longterm_round and (tournament.code or "").strip().upper() == WC_TOURNAMENT_CODE:
+                rows_longterm, participants = await _build_longterm_table_rows(session, int(tournament.id))
+                return web.json_response(
+                    {
+                        "ok": True,
+                        "trusted": True,
+                        "tournament_code": tournament.code,
+                        "tournament_name": tournament.name,
+                        "table_mode": "longterm",
+                        "has_table": True,
+                        "season_name": tournament.name,
+                        "stage_name": "Доп. прогнозы",
+                        "stage_round_min": int(tournament.round_min),
+                        "stage_round_max": int(tournament.round_max),
+                        "league_name": "Доп. прогнозы",
+                        "participants": int(participants),
+                        "user_place": next((int(r["place"]) for r in rows_longterm if int(r["tg_user_id"]) == int(tg_user_id)), None),
+                        "rows_longterm": rows_longterm,
+                        "rows": [],
+                    }
+                )
             rows, participants = await _build_overall_table_rows(
                 session,
                 int(tournament.id),
@@ -3415,6 +3525,7 @@ async def table_current(request: web.Request) -> web.Response:
                 "trusted": True,
                 "tournament_code": tournament.code,
                 "tournament_name": tournament.name,
+                "table_mode": "regular",
                 "has_table": True,
                 "season_name": tournament.name,
                 "stage_name": stage_name,

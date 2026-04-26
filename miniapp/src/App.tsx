@@ -168,6 +168,7 @@ type TableResponse = {
   error?: string
   reason?: string
   trusted?: boolean
+  table_mode?: 'regular' | 'longterm'
   has_table?: boolean
   message?: string
   season_name?: string
@@ -190,8 +191,17 @@ type TableResponse = {
     hit_rate: number
     missed_matches?: number
   }>
+  rows_longterm?: Array<{
+    tg_user_id?: number
+    place: number
+    name: string
+    winner_pick?: string | null
+    scorer_pick?: string | null
+    longterm_points: number
+  }>
 }
 type TableRow = NonNullable<TableResponse['rows']>[number]
+type TableLongtermRow = NonNullable<TableResponse['rows_longterm']>[number]
 
 type TournamentsResponse = {
   ok: boolean
@@ -681,7 +691,7 @@ function App() {
   const [profileTargetUserId, setProfileTargetUserId] = useState<number | null>(null)
   const [stageTab, setStageTab] = useState<'1' | '2' | '3' | 'PO' | 'LT'>('1')
   const [playoffTab, setPlayoffTab] = useState<4 | 5 | 6 | 7 | 8 | 9>(4)
-  const [tableRoundFilter, setTableRoundFilter] = useState<'ALL' | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9>('ALL')
+  const [tableRoundFilter, setTableRoundFilter] = useState<'ALL' | 'LT' | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9>('ALL')
   const [tableSortKey, setTableSortKey] = useState<'total' | 'exact' | 'diff' | 'outcome' | 'missed' | 'bonus'>('total')
   const [tableSortDir, setTableSortDir] = useState<'desc' | 'asc'>('desc')
   const [achievementsExpanded, setAchievementsExpanded] = useState<boolean>(false)
@@ -1657,6 +1667,9 @@ function App() {
   }, [selectedTournamentCode])
 
   const tableRowsSorted = useMemo(() => {
+    if (tableData?.table_mode === 'longterm') {
+      return []
+    }
     const rows = [...(tableData?.rows || [])]
     const dir = tableSortDir === 'asc' ? 1 : -1
     const getBonus = (r: TableRow) =>
@@ -1692,6 +1705,10 @@ function App() {
     })
     return rows
   }, [tableData, tableSortDir, tableSortKey])
+
+  const tableLongtermRows = useMemo<TableLongtermRow[]>(() => {
+    return [...(tableData?.rows_longterm || [])]
+  }, [tableData])
 
   const handleSortHeader = (key: 'total' | 'exact' | 'diff' | 'outcome' | 'missed' | 'bonus') => {
     if (tableSortKey === key) {
@@ -2849,6 +2866,12 @@ function App() {
                     >
                       Финал
                     </button>
+                    <button
+                      className={`tournament-chip ${tableRoundFilter === 'LT' ? 'is-active' : ''}`}
+                      onClick={() => setTableRoundFilter('LT')}
+                    >
+                      Доп. прогнозы
+                    </button>
                   </div>
                 </div>
               </section>
@@ -2871,6 +2894,46 @@ function App() {
               ) : !tableData ? (
                 <div className="card">
                   <div className="card-text">Загружаю таблицу...</div>
+                </div>
+              ) : tableData?.table_mode === 'longterm' ? (
+                <div className="card table-card">
+                  <div className="table-grid-longterm table-grid-head">
+                    <div className="col-place">#</div>
+                    <div className="col-name">Имя</div>
+                    <div className="col-name">🏆</div>
+                    <div className="col-name">⚽</div>
+                    <div className="col-num">⭐</div>
+                  </div>
+                  {tableLongtermRows.length > 0 ? (
+                    tableLongtermRows.map((r) => (
+                      <div
+                        className={`table-grid-longterm table-grid-row ${tableData?.user_place === r.place ? 'is-user' : ''}`}
+                        key={`${r.place}-${r.name}`}
+                      >
+                        <div className="col-place">{r.place}</div>
+                        <div className="col-name col-name-text">
+                          {r.tg_user_id ? (
+                            <button
+                              className="table-name-btn"
+                              onClick={() => {
+                                setProfileTargetUserId(r.tg_user_id || null)
+                                setScreen('profile')
+                              }}
+                            >
+                              {r.name}
+                            </button>
+                          ) : (
+                            r.name
+                          )}
+                        </div>
+                        <div className="col-name col-name-text">{r.winner_pick || '—'}</div>
+                        <div className="col-name col-name-text">{r.scorer_pick || '—'}</div>
+                        <div className="col-num">{r.longterm_points ?? 0}</div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="card-text table-empty-note">Пока нет участников в таблице доп. прогнозов.</div>
+                  )}
                 </div>
               ) : (tableData?.rows || []).length > 0 ? (
                 <div className="card table-card">
@@ -2940,22 +3003,24 @@ function App() {
               )}
             </section>
 
-            <section className="cards space-top">
-              <div className="card">
-                <div className="card-title">Расшифровка</div>
-                <div className="card-text">
-                  🎯 Точный счёт: 4 очка
-                  <br />
-                  📏 Разница мячей: 2 очка
-                  <br />
-                  ✅ Исход: 1 очко
-                  <br />
-                  ⛔ Пропущенные матчи: 0 очков
-                  <br />
-                  ⭐ Доп. прогнозы / бонусы: +5 за каждый угаданный доп. прогноз
+            {tableData?.table_mode !== 'longterm' ? (
+              <section className="cards space-top">
+                <div className="card">
+                  <div className="card-title">Расшифровка</div>
+                  <div className="card-text">
+                    🎯 Точный счёт: 4 очка
+                    <br />
+                    📏 Разница мячей: 2 очка
+                    <br />
+                    ✅ Исход: 1 очко
+                    <br />
+                    ⛔ Пропущенные матчи: 0 очков
+                    <br />
+                    ⭐ Доп. прогнозы / бонусы: +5 за каждый угаданный доп. прогноз
+                  </div>
                 </div>
-              </div>
-            </section>
+              </section>
+            ) : null}
           </>
         ) : null}
 

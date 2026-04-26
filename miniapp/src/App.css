@@ -246,6 +246,13 @@ body {
   column-gap: 3px;
 }
 
+.table-grid-longterm {
+  display: grid;
+  grid-template-columns: 22px minmax(96px, 1fr) minmax(86px, 1fr) minmax(92px, 1fr) 30px;
+  align-items: center;
+  column-gap: 5px;
+}
+
 .table-grid-head {
   padding: 6px 2px 8px;
   border-bottom: 1px solid rgba(79, 112, 174, 0.4);
@@ -337,6 +344,10 @@ body {
 
 .col-sort-btn:active {
   transform: translateY(1px);
+}
+
+.table-empty-note {
+  padding: 10px 2px 6px;
 }
 
 .card-static {
