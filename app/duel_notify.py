@@ -197,6 +197,8 @@ async def send_duel_finished_pushes(bot: Bot, session, *, events: list[dict[str,
         op_d = int(ev.get("opponent_delta") or 0)
         ch_old = int(ch_new - ch_d)
         op_old = int(op_new - op_d)
+        ch_delta_text = f"{ch_d:+d}"
+        op_delta_text = f"{op_d:+d}"
 
         ch_emoji = "📈" if ch_d > 0 else ("📉" if ch_d < 0 else "")
         op_emoji = "📈" if op_d > 0 else ("📉" if op_d < 0 else "")
@@ -209,13 +211,47 @@ async def send_duel_finished_pushes(bot: Bot, session, *, events: list[dict[str,
         else:
             middle = f"{challenger_name} и {opponent_name} сыграли вничью"
 
+        pair_low = min(int(duel.challenger_tg_user_id), int(duel.opponent_tg_user_id))
+        pair_high = max(int(duel.challenger_tg_user_id), int(duel.opponent_tg_user_id))
+        h2h_rows = (
+            await session.execute(
+                select(Duel.challenger_tg_user_id, Duel.opponent_tg_user_id, Duel.outcome).where(
+                    Duel.tournament_id == int(duel.tournament_id),
+                    Duel.pair_low_tg_user_id == int(pair_low),
+                    Duel.pair_high_tg_user_id == int(pair_high),
+                    Duel.status == "finished",
+                )
+            )
+        ).all()
+        h2h_w = 0
+        h2h_d = 0
+        h2h_l = 0
+        challenger_id = int(duel.challenger_tg_user_id)
+        for row_ch_id, row_op_id, row_outcome in h2h_rows:
+            row_ch_id = int(row_ch_id)
+            row_op_id = int(row_op_id)
+            row_outcome = str(row_outcome or "")
+            if row_outcome == "draw":
+                h2h_d += 1
+            elif row_outcome == "challenger_win":
+                if row_ch_id == challenger_id:
+                    h2h_w += 1
+                elif row_op_id == challenger_id:
+                    h2h_l += 1
+            elif row_outcome == "opponent_win":
+                if row_op_id == challenger_id:
+                    h2h_w += 1
+                elif row_ch_id == challenger_id:
+                    h2h_l += 1
+
         text = (
             "🏁 Дуэль завершилась!\n"
             f"Матч: {match.home_team} {int(match.home_score)}:{int(match.away_score)} {match.away_team}\n"
             f"Итог: {middle}\n\n"
             "Рейтинг:\n"
-            f"{challenger_name}: {ch_old} → {ch_new}" + (f" {ch_emoji}" if ch_emoji else "") + "\n"
-            f"{opponent_name}: {op_old} → {op_new}" + (f" {op_emoji}" if op_emoji else "")
+            f"{challenger_name}: {ch_old} → {ch_new}" + (f" {ch_emoji}" if ch_emoji else "") + f" ({ch_delta_text})\n"
+            f"{opponent_name}: {op_old} → {op_new}" + (f" {op_emoji}" if op_emoji else "") + f" ({op_delta_text})\n\n"
+            f"{challenger_name} {h2h_w}-{h2h_d}-{h2h_l} {opponent_name}"
         )
         kb = _open_duels_keyboard("Смотреть 1х1", duel_id=int(duel.id))
 
