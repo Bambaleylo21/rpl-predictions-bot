@@ -42,13 +42,13 @@ async def _apply_postgres_schema_fixes(conn) -> None:
         # tournaments
         "CREATE TABLE IF NOT EXISTS tournaments (id SERIAL PRIMARY KEY, code VARCHAR(16) UNIQUE NOT NULL, name VARCHAR(64) NOT NULL, round_min INTEGER NOT NULL, round_max INTEGER NOT NULL, status VARCHAR(16) NOT NULL DEFAULT 'active', visible_in_miniapp INTEGER NOT NULL DEFAULT 1, join_open INTEGER NOT NULL DEFAULT 1, predict_open INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 100, planned_matches_total INTEGER NOT NULL DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1, created_at TIMESTAMP NOT NULL DEFAULT NOW())",
         "CREATE INDEX IF NOT EXISTS ix_tournaments_code ON tournaments (code)",
-        "CREATE INDEX IF NOT EXISTS ix_tournaments_status ON tournaments (status)",
         "ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS status VARCHAR(16) NOT NULL DEFAULT 'active'",
         "ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS visible_in_miniapp INTEGER NOT NULL DEFAULT 1",
         "ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS join_open INTEGER NOT NULL DEFAULT 1",
         "ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS predict_open INTEGER NOT NULL DEFAULT 1",
         "ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 100",
         "ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS planned_matches_total INTEGER NOT NULL DEFAULT 0",
+        "CREATE INDEX IF NOT EXISTS ix_tournaments_status ON tournaments (status)",
         "INSERT INTO tournaments (code, name, round_min, round_max, is_active) VALUES ('RPL', 'РПЛ', 19, 30, 1) ON CONFLICT (code) DO NOTHING",
         "UPDATE tournaments SET name='РПЛ', round_min=19, round_max=30, status='active', visible_in_miniapp=1, join_open=0, predict_open=0, sort_order=100, is_active=1 WHERE code='RPL'",
         "UPDATE tournaments SET name='ЧМ 2026', status='active', visible_in_miniapp=1, join_open=1, predict_open=1, sort_order=10, planned_matches_total = 104 WHERE code='WC2026'",
@@ -131,7 +131,10 @@ async def _apply_postgres_schema_fixes(conn) -> None:
 
     for sql in statements:
         try:
-            await conn.execute(text(sql))
+            # Отдельный savepoint на каждый statement:
+            # одна ошибка не должна ронять всю цепочку миграций.
+            async with conn.begin_nested():
+                await conn.execute(text(sql))
         except Exception as e:
             print("MIGRATION SKIP:", sql, "ERR:", repr(e))
 
@@ -144,13 +147,13 @@ async def _apply_sqlite_schema_fixes(conn) -> None:
         # tournaments
         "CREATE TABLE IF NOT EXISTS tournaments (id INTEGER PRIMARY KEY AUTOINCREMENT, code VARCHAR(16) UNIQUE NOT NULL, name VARCHAR(64) NOT NULL, round_min INTEGER NOT NULL, round_max INTEGER NOT NULL, status VARCHAR(16) NOT NULL DEFAULT 'active', visible_in_miniapp INTEGER NOT NULL DEFAULT 1, join_open INTEGER NOT NULL DEFAULT 1, predict_open INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 100, planned_matches_total INTEGER NOT NULL DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)",
         "CREATE INDEX IF NOT EXISTS ix_tournaments_code ON tournaments (code)",
-        "CREATE INDEX IF NOT EXISTS ix_tournaments_status ON tournaments (status)",
         "ALTER TABLE tournaments ADD COLUMN status VARCHAR(16) NOT NULL DEFAULT 'active'",
         "ALTER TABLE tournaments ADD COLUMN visible_in_miniapp INTEGER NOT NULL DEFAULT 1",
         "ALTER TABLE tournaments ADD COLUMN join_open INTEGER NOT NULL DEFAULT 1",
         "ALTER TABLE tournaments ADD COLUMN predict_open INTEGER NOT NULL DEFAULT 1",
         "ALTER TABLE tournaments ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 100",
         "ALTER TABLE tournaments ADD COLUMN planned_matches_total INTEGER NOT NULL DEFAULT 0",
+        "CREATE INDEX IF NOT EXISTS ix_tournaments_status ON tournaments (status)",
         "INSERT OR IGNORE INTO tournaments (code, name, round_min, round_max, is_active) VALUES ('RPL', 'РПЛ', 19, 30, 1)",
         "UPDATE tournaments SET name='РПЛ', round_min=19, round_max=30, status='active', visible_in_miniapp=1, join_open=0, predict_open=0, sort_order=100, is_active=1 WHERE code='RPL'",
         "UPDATE tournaments SET name='ЧМ 2026', status='active', visible_in_miniapp=1, join_open=1, predict_open=1, sort_order=10, planned_matches_total = 104 WHERE code='WC2026'",
@@ -201,7 +204,8 @@ async def _apply_sqlite_schema_fixes(conn) -> None:
 
     for sql in statements:
         try:
-            await conn.execute(text(sql))
+            async with conn.begin_nested():
+                await conn.execute(text(sql))
         except Exception as e:
             print("MIGRATION SKIP:", sql, "ERR:", repr(e))
 
