@@ -918,6 +918,24 @@ body {
   opacity: 0.6;
 }
 
+.admin-longterm-grid {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+  margin-bottom: 10px;
+}
+
+.admin-longterm-label {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.admin-longterm-select {
+  margin-bottom: 0;
+}
+
 .card-title {
   font-weight: 700;
   font-size: 18px;

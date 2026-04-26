@@ -348,6 +348,21 @@ type AdminResultsCurrentResponse = {
   items?: AdminResultItem[]
 }
 
+type AdminLongtermCurrentResponse = {
+  ok: boolean
+  error?: string
+  reason?: string
+  winner_actual?: string | null
+  scorer_actual?: string | null
+  participants?: number
+  winner_awarded?: number
+  scorer_awarded?: number
+  options?: {
+    winner?: string[]
+    scorer?: string[]
+  }
+}
+
 const ENGLAND_FLAG = String.fromCodePoint(
   0x1f3f4,
   0xe0067,
@@ -700,11 +715,20 @@ function App() {
   const [currentInsight, setCurrentInsight] = useState<string | null>(null)
   const [adminRounds, setAdminRounds] = useState<AdminRound[]>([])
   const [adminRound, setAdminRound] = useState<number | null>(null)
+  const [adminViewMode, setAdminViewMode] = useState<'matches' | 'longterm'>('matches')
   const [adminMode, setAdminMode] = useState<'open' | 'all'>('open')
   const [adminResults, setAdminResults] = useState<AdminResultItem[]>([])
   const [adminRoundName, setAdminRoundName] = useState<string>('')
   const [adminRoundTotal, setAdminRoundTotal] = useState<number>(0)
   const [adminWithoutResult, setAdminWithoutResult] = useState<number>(0)
+  const [adminLongtermWinner, setAdminLongtermWinner] = useState<string>('')
+  const [adminLongtermScorer, setAdminLongtermScorer] = useState<string>('')
+  const [adminLongtermWinnerOptions, setAdminLongtermWinnerOptions] = useState<string[]>([])
+  const [adminLongtermScorerOptions, setAdminLongtermScorerOptions] = useState<string[]>([])
+  const [adminLongtermParticipants, setAdminLongtermParticipants] = useState<number>(0)
+  const [adminLongtermWinnerAwarded, setAdminLongtermWinnerAwarded] = useState<number>(0)
+  const [adminLongtermScorerAwarded, setAdminLongtermScorerAwarded] = useState<number>(0)
+  const [adminLongtermSaving, setAdminLongtermSaving] = useState<boolean>(false)
   const [adminError, setAdminError] = useState<string | null>(null)
   const [adminNotice, setAdminNotice] = useState<string | null>(null)
   const [adminSavingMatchId, setAdminSavingMatchId] = useState<number | null>(null)
@@ -1390,7 +1414,10 @@ function App() {
     }
     const rounds = data.rounds || []
     setAdminRounds(rounds)
-    setAdminRound((prev) => prev ?? (data.current_round || rounds[0]?.round || null))
+    setAdminRound((prev) => {
+      if (prev != null && rounds.some((r) => r.round === prev)) return prev
+      return data.current_round || rounds[0]?.round || null
+    })
   }
 
   const loadAdminResults = async (
@@ -1418,6 +1445,23 @@ function App() {
       nextInputs[item.match_id] = item.result || ''
     }
     setAdminScoreInputs(nextInputs)
+  }
+
+  const loadAdminLongtermCurrent = async (apiBase: string, initData: string, tournamentCode: string) => {
+    const headers = { 'X-Telegram-Init-Data': initData }
+    const tParam = encodeURIComponent(tournamentCode || 'RPL')
+    const res = await fetch(`${apiBase}/api/miniapp/admin/longterm/current?t=${tParam}`, { headers })
+    const data = (await res.json()) as AdminLongtermCurrentResponse
+    if (!res.ok || !data.ok) {
+      throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+    }
+    setAdminLongtermWinner(data.winner_actual || '')
+    setAdminLongtermScorer(data.scorer_actual || '')
+    setAdminLongtermWinnerOptions(data.options?.winner || [])
+    setAdminLongtermScorerOptions(data.options?.scorer || [])
+    setAdminLongtermParticipants(data.participants || 0)
+    setAdminLongtermWinnerAwarded(data.winner_awarded || 0)
+    setAdminLongtermScorerAwarded(data.scorer_awarded || 0)
   }
 
   const saveAdminResult = async (matchId: number) => {
@@ -1492,6 +1536,49 @@ function App() {
     }
   }
 
+  const saveAdminLongterm = async () => {
+    const winner = (adminLongtermWinner || '').trim()
+    const scorer = (adminLongtermScorer || '').trim()
+    if (!winner || !scorer) {
+      setAdminNotice('Выбери победителя и бомбардира.')
+      return
+    }
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    setAdminLongtermSaving(true)
+    setAdminNotice(null)
+    try {
+      const tParam = encodeURIComponent(selectedTournamentCode || 'RPL')
+      const res = await fetch(`${apiBase}/api/miniapp/admin/longterm/set?t=${tParam}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Telegram-Init-Data': initData,
+        },
+        body: JSON.stringify({ winner, scorer }),
+      })
+      const data = (await res.json()) as {
+        ok?: boolean
+        error?: string
+        reason?: string
+        changed_participants?: number
+        winner_awarded?: number
+        scorer_awarded?: number
+      }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      setAdminNotice(
+        `Доп. прогнозы обновлены: изменилось ${data.changed_participants ?? 0}, +5 за победителя: ${data.winner_awarded ?? 0}, +5 за бомбардира: ${data.scorer_awarded ?? 0}`
+      )
+      await loadAdminLongtermCurrent(apiBase, initData, selectedTournamentCode)
+    } catch (err) {
+      setAdminNotice(`Ошибка сохранения доп. прогнозов: ${String(err)}`)
+    } finally {
+      setAdminLongtermSaving(false)
+    }
+  }
+
   useEffect(() => {
     if (!meData?.is_admin) {
       setAdminRounds([])
@@ -1520,6 +1607,7 @@ function App() {
 
   useEffect(() => {
     if (!meData?.is_admin || adminRound == null) return
+    if (adminViewMode !== 'matches') return
     const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
     const initData = getInitData()
     if (!initData || !selectedTournamentCode) return
@@ -1530,7 +1618,26 @@ function App() {
         setAdminError(String(err))
         setAdminResults([])
       })
-  }, [meData?.is_admin, selectedTournamentCode, adminRound, adminMode])
+  }, [meData?.is_admin, selectedTournamentCode, adminRound, adminMode, adminViewMode])
+
+  useEffect(() => {
+    if (!meData?.is_admin) return
+    if (adminViewMode !== 'longterm') return
+    if (selectedTournamentCode !== 'WC2026') return
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    if (!initData || !selectedTournamentCode) return
+
+    loadAdminLongtermCurrent(apiBase, initData, selectedTournamentCode)
+      .then(() => setAdminError(null))
+      .catch((err) => setAdminError(String(err)))
+  }, [meData?.is_admin, selectedTournamentCode, adminViewMode])
+
+  useEffect(() => {
+    if (selectedTournamentCode !== 'WC2026' && adminViewMode === 'longterm') {
+      setAdminViewMode('matches')
+    }
+  }, [selectedTournamentCode, adminViewMode])
 
   const tabMeta: Record<Screen, { title: string; subtitle: string; icon: string }> = {
     profile: { title: 'Профиль', subtitle: 'Личная статистика участника', icon: '👤' },
@@ -3028,49 +3135,67 @@ function App() {
           <>
             <section className="cards">
               <div className="card card-static">
-                <div className="card-title">Тур для внесения итогов</div>
-                <div className="segment-hint">Нажми, чтобы выбрать тур и матч</div>
+                <div className="card-title">Этап для внесения итогов</div>
+                <div className="segment-hint">Нажми, чтобы выбрать тур/этап</div>
                 <div className="tournament-row">
                   {adminRounds.map((r) => (
                     <button
                       key={r.round}
-                      className={`tournament-chip ${adminRound === r.round ? 'is-active' : ''}`}
-                      onClick={() => setAdminRound(r.round)}
+                      className={`tournament-chip ${adminViewMode === 'matches' && adminRound === r.round ? 'is-active' : ''}`}
+                      onClick={() => {
+                        setAdminViewMode('matches')
+                        setAdminRound(r.round)
+                      }}
                     >
                       {r.round_name || `Тур ${r.round}`} · {r.without_result}/{r.total}
                     </button>
                   ))}
+                  {selectedTournamentCode === 'WC2026' ? (
+                    <button
+                      className={`tournament-chip ${adminViewMode === 'longterm' ? 'is-active' : ''}`}
+                      onClick={() => setAdminViewMode('longterm')}
+                    >
+                      Доп. прогнозы
+                    </button>
+                  ) : null}
                 </div>
 
-                <div className="admin-top-row">
-                  <div className="match-toggle">
+                {adminViewMode === 'matches' ? (
+                  <div className="admin-top-row">
+                    <div className="match-toggle">
+                      <button
+                        className={`match-toggle-btn ${adminMode === 'open' ? 'is-active' : ''}`}
+                        onClick={() => setAdminMode('open')}
+                      >
+                        Без итогов
+                      </button>
+                      <button
+                        className={`match-toggle-btn ${adminMode === 'all' ? 'is-active' : ''}`}
+                        onClick={() => setAdminMode('all')}
+                      >
+                        Все
+                      </button>
+                    </div>
+
                     <button
-                      className={`match-toggle-btn ${adminMode === 'open' ? 'is-active' : ''}`}
-                      onClick={() => setAdminMode('open')}
+                      className="admin-recalc-btn"
+                      onClick={recalcAdminRound}
+                      disabled={adminRecalcLoading || adminRound == null}
                     >
-                      Без итогов
-                    </button>
-                    <button
-                      className={`match-toggle-btn ${adminMode === 'all' ? 'is-active' : ''}`}
-                      onClick={() => setAdminMode('all')}
-                    >
-                      Все
+                      {adminRecalcLoading ? 'Пересчёт…' : 'Пересчитать тур'}
                     </button>
                   </div>
-
-                  <button
-                    className="admin-recalc-btn"
-                    onClick={recalcAdminRound}
-                    disabled={adminRecalcLoading || adminRound == null}
-                  >
-                    {adminRecalcLoading ? 'Пересчёт…' : 'Пересчитать тур'}
-                  </button>
-                </div>
+                ) : null}
 
                 <div className="card-text">
-                  {adminRoundName ? (
+                  {adminViewMode === 'matches' && adminRoundName ? (
                     <>
                       Выбран: <b>{adminRoundName}</b> · матчей: <b>{adminRoundTotal}</b> · без итогов: <b>{adminWithoutResult}</b>
+                    </>
+                  ) : adminViewMode === 'longterm' ? (
+                    <>
+                      Доп. прогнозы: участников <b>{adminLongtermParticipants}</b> · угадали победителя: <b>{adminLongtermWinnerAwarded}</b> · угадали
+                      бомбардира: <b>{adminLongtermScorerAwarded}</b>
                     </>
                   ) : (
                     'Выбери тур.'
@@ -3091,50 +3216,100 @@ function App() {
               </div>
             </section>
 
-            <section className="cards space-top">
-              <div className="card compact-list-card">
-                {adminResults.length === 0 ? (
-                  <div className="card-text">Матчей для показа нет.</div>
-                ) : (
-                  adminResults.map((m) => (
-                    <div className="compact-match" key={m.match_id}>
-                      <div className="compact-meta">
-                        {m.group_label ? <span className="group-small">[{m.group_label}]</span> : <span className="group-small">—</span>}
-                        <span className="kickoff-small">{m.kickoff || '—'}</span>
+            {adminViewMode === 'matches' ? (
+              <section className="cards space-top">
+                <div className="card compact-list-card">
+                  {adminResults.length === 0 ? (
+                    <div className="card-text">Матчей для показа нет.</div>
+                  ) : (
+                    adminResults.map((m) => (
+                      <div className="compact-match" key={m.match_id}>
+                        <div className="compact-meta">
+                          {m.group_label ? <span className="group-small">[{m.group_label}]</span> : <span className="group-small">—</span>}
+                          <span className="kickoff-small">{m.kickoff || '—'}</span>
+                        </div>
+                        <div className="compact-main admin-main">
+                          <span className="team-name team-left">{teamWithFlag(m.home_team)}</span>
+                          <input
+                            className="score-inline-input"
+                            value={adminScoreInputs[m.match_id] || ''}
+                            onChange={(e) =>
+                              setAdminScoreInputs((prev) => ({
+                                ...prev,
+                                [m.match_id]: formatScoreInput(e.target.value),
+                              }))
+                            }
+                            placeholder="-:-"
+                            inputMode="numeric"
+                          />
+                          <span className="team-name team-right">{teamWithFlag(m.away_team)}</span>
+                          <button
+                            className={`save-btn compact-save-btn ${
+                              normalizeScore(adminScoreInputs[m.match_id] || '') ? 'is-dirty' : 'is-empty'
+                            }`}
+                            onClick={() => saveAdminResult(m.match_id)}
+                            disabled={adminSavingMatchId === m.match_id}
+                          >
+                            {adminSavingMatchId === m.match_id ? '…' : '✓'}
+                          </button>
+                        </div>
+                        <div className="compact-note">
+                          Итог: <b>{m.result || 'не задан'}</b> · Прогнозов: <b>{m.predictions_count ?? 0}</b>
+                        </div>
                       </div>
-                      <div className="compact-main admin-main">
-                        <span className="team-name team-left">{teamWithFlag(m.home_team)}</span>
-                        <input
-                          className="score-inline-input"
-                          value={adminScoreInputs[m.match_id] || ''}
-                          onChange={(e) =>
-                            setAdminScoreInputs((prev) => ({
-                              ...prev,
-                              [m.match_id]: formatScoreInput(e.target.value),
-                            }))
-                          }
-                          placeholder="-:-"
-                          inputMode="numeric"
-                        />
-                        <span className="team-name team-right">{teamWithFlag(m.away_team)}</span>
-                        <button
-                          className={`save-btn compact-save-btn ${
-                            normalizeScore(adminScoreInputs[m.match_id] || '') ? 'is-dirty' : 'is-empty'
-                          }`}
-                          onClick={() => saveAdminResult(m.match_id)}
-                          disabled={adminSavingMatchId === m.match_id}
-                        >
-                          {adminSavingMatchId === m.match_id ? '…' : '✓'}
-                        </button>
-                      </div>
-                      <div className="compact-note">
-                        Итог: <b>{m.result || 'не задан'}</b> · Прогнозов: <b>{m.predictions_count ?? 0}</b>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </section>
+                    ))
+                  )}
+                </div>
+              </section>
+            ) : (
+              <section className="cards space-top">
+                <div className="card">
+                  <div className="card-title">Итоги доп. прогнозов</div>
+                  <div className="card-text">
+                    Выбери фактического победителя турнира и лучшего бомбардира, затем нажми «Сохранить».
+                  </div>
+                  <div className="admin-longterm-grid">
+                    <label className="admin-longterm-label">
+                      Победитель турнира
+                      <select
+                        className="duel-picker-search admin-longterm-select"
+                        value={adminLongtermWinner}
+                        onChange={(e) => setAdminLongtermWinner(e.target.value)}
+                      >
+                        <option value="">Выбрать команду</option>
+                        {adminLongtermWinnerOptions.map((v) => (
+                          <option key={v} value={v}>
+                            {v}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="admin-longterm-label">
+                      Лучший бомбардир
+                      <select
+                        className="duel-picker-search admin-longterm-select"
+                        value={adminLongtermScorer}
+                        onChange={(e) => setAdminLongtermScorer(e.target.value)}
+                      >
+                        <option value="">Выбрать игрока</option>
+                        {adminLongtermScorerOptions.map((v) => (
+                          <option key={v} value={v}>
+                            {v}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <button
+                    className="admin-recalc-btn"
+                    onClick={saveAdminLongterm}
+                    disabled={adminLongtermSaving || !adminLongtermWinner || !adminLongtermScorer}
+                  >
+                    {adminLongtermSaving ? 'Сохраняю…' : 'Сохранить и пересчитать'}
+                  </button>
+                </div>
+              </section>
+            )}
           </>
         ) : null}
 

@@ -38,6 +38,8 @@ DEFAULT_TOURNAMENT_CODE = "RPL"
 WC_TOURNAMENT_CODE = "WC2026"
 TOURNAMENT_SELECTED_KEY_PREFIX = "TOURNAMENT_SELECTED_U"
 LONGTERM_TYPES = ("winner", "scorer")
+LONGTERM_ACTUAL_WINNER_KEY_PREFIX = "LONGTERM_ACTUAL_WINNER_T"
+LONGTERM_ACTUAL_SCORER_KEY_PREFIX = "LONGTERM_ACTUAL_SCORER_T"
 ADMIN_IDS = load_admin_ids()
 _NOTIFY_BOT: Bot | None = None
 MINIAPP_WEB_URL = os.getenv("MINIAPP_WEB_URL", "https://rpl-predictions-bot-mini-app.onrender.com").strip()
@@ -151,6 +153,18 @@ def _normalize_username(value: str | None) -> str:
     while s.startswith("@"):
         s = s[1:]
     return s
+
+
+def _normalize_pick_text(value: str | None) -> str:
+    return " ".join((value or "").strip().casefold().split())
+
+
+def _longterm_actual_winner_key(tournament_id: int) -> str:
+    return f"{LONGTERM_ACTUAL_WINNER_KEY_PREFIX}{int(tournament_id)}"
+
+
+def _longterm_actual_scorer_key(tournament_id: int) -> str:
+    return f"{LONGTERM_ACTUAL_SCORER_KEY_PREFIX}{int(tournament_id)}"
 
 
 def _legacy_trophies_for_username(username: str | None) -> list[dict[str, Any]]:
@@ -625,14 +639,28 @@ async def admin_rounds(request: web.Request) -> web.Response:
             ).all()
             await session.commit()
 
-        rounds = []
-        current_round = int(tournament.round_min)
-        if rows:
-            current_round = int(rows[-1].round_number)
-            for r in rows:
-                if int(r.without_result_cnt or 0) > 0:
-                    current_round = int(r.round_number)
-                    break
+        rows_by_round = {
+            int(r.round_number): {
+                "total": int(r.total_cnt or 0),
+                "without_result": int(r.without_result_cnt or 0),
+            }
+            for r in rows
+        }
+
+        rounds: list[dict[str, Any]] = []
+        code_upper = (tournament.code or "").strip().upper()
+        if code_upper == WC_TOURNAMENT_CODE:
+            for rn in range(1, 10):
+                stats = rows_by_round.get(int(rn), {"total": 0, "without_result": 0})
+                rounds.append(
+                    {
+                        "round": int(rn),
+                        "round_name": display_round_name(tournament.code, int(rn)),
+                        "total": int(stats["total"]),
+                        "without_result": int(stats["without_result"]),
+                    }
+                )
+        else:
             for r in rows:
                 rounds.append(
                     {
@@ -642,6 +670,16 @@ async def admin_rounds(request: web.Request) -> web.Response:
                         "without_result": int(r.without_result_cnt or 0),
                     }
                 )
+
+        current_round = int(tournament.round_min)
+        rounds_with_matches = [r for r in rounds if int(r.get("total", 0)) > 0]
+        rounds_open = [r for r in rounds_with_matches if int(r.get("without_result", 0)) > 0]
+        if rounds_open:
+            current_round = int(rounds_open[0]["round"])
+        elif rounds_with_matches:
+            current_round = int(rounds_with_matches[-1]["round"])
+        elif rounds:
+            current_round = int(rounds[0]["round"])
 
         return web.json_response(
             {
@@ -908,6 +946,191 @@ async def admin_recalc_round(request: web.Request) -> web.Response:
         logger.exception("miniapp admin_recalc_round error")
         return web.json_response(
             {"ok": False, "error": "admin_recalc_round_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
+async def admin_longterm_current(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_admin_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = int(user.get("id"))
+
+        async with SessionLocal() as session:
+            tournament = await _resolve_tournament(session, tg_user_id, requested_code=request.query.get("t"))
+            if (tournament.code or "").strip().upper() != WC_TOURNAMENT_CODE:
+                return web.json_response({"ok": False, "error": "longterm_not_enabled_for_tournament"}, status=400)
+
+            winner_options = await _wc_winner_options(session, int(tournament.id))
+            winner_actual = await _get_setting(session, _longterm_actual_winner_key(int(tournament.id)))
+            scorer_actual = await _get_setting(session, _longterm_actual_scorer_key(int(tournament.id)))
+
+            participants_q = await session.execute(
+                select(func.count(UserTournament.id)).where(UserTournament.tournament_id == int(tournament.id))
+            )
+            participants = int(participants_q.scalar_one() or 0)
+            winner_awarded_q = await session.execute(
+                select(func.count(UserTournament.id)).where(
+                    UserTournament.tournament_id == int(tournament.id),
+                    UserTournament.bonus_winner > 0,
+                )
+            )
+            winner_awarded = int(winner_awarded_q.scalar_one() or 0)
+            scorer_awarded_q = await session.execute(
+                select(func.count(UserTournament.id)).where(
+                    UserTournament.tournament_id == int(tournament.id),
+                    UserTournament.bonus_scorer > 0,
+                )
+            )
+            scorer_awarded = int(scorer_awarded_q.scalar_one() or 0)
+
+            await session.commit()
+
+        return web.json_response(
+            {
+                "ok": True,
+                "trusted": True,
+                "is_admin": True,
+                "tournament_code": tournament.code,
+                "tournament_name": tournament.name,
+                "winner_actual": winner_actual,
+                "scorer_actual": scorer_actual,
+                "participants": int(participants),
+                "winner_awarded": int(winner_awarded),
+                "scorer_awarded": int(scorer_awarded),
+                "options": {
+                    "winner": winner_options,
+                    "scorer": WC_TOP_SCORER_OPTIONS,
+                },
+            }
+        )
+    except Exception as e:
+        logger.exception("miniapp admin_longterm_current error")
+        return web.json_response(
+            {"ok": False, "error": "admin_longterm_current_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
+async def admin_longterm_set(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_admin_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = int(user.get("id"))
+
+        body = await request.json()
+        winner_value = str(body.get("winner") or "").strip()
+        scorer_value = str(body.get("scorer") or "").strip()
+        if not winner_value or not scorer_value:
+            return web.json_response({"ok": False, "error": "winner_and_scorer_required"}, status=400)
+
+        async with SessionLocal() as session:
+            tournament = await _resolve_tournament(session, tg_user_id, requested_code=request.query.get("t"))
+            if (tournament.code or "").strip().upper() != WC_TOURNAMENT_CODE:
+                return web.json_response({"ok": False, "error": "longterm_not_enabled_for_tournament"}, status=400)
+
+            winner_options = await _wc_winner_options(session, int(tournament.id))
+            if winner_value not in winner_options:
+                return web.json_response({"ok": False, "error": "invalid_winner_value"}, status=400)
+            if scorer_value not in WC_TOP_SCORER_OPTIONS:
+                return web.json_response({"ok": False, "error": "invalid_scorer_value"}, status=400)
+
+            winner_norm = _normalize_pick_text(winner_value)
+            scorer_norm = _normalize_pick_text(scorer_value)
+
+            participants_rows = (
+                await session.execute(
+                    select(
+                        UserTournament.tg_user_id,
+                        UserTournament.bonus_winner,
+                        UserTournament.bonus_scorer,
+                        UserTournament.bonus_points,
+                    )
+                    .where(UserTournament.tournament_id == int(tournament.id))
+                )
+            ).all()
+
+            picks_rows = (
+                await session.execute(
+                    select(
+                        LongtermPrediction.tg_user_id,
+                        LongtermPrediction.pick_type,
+                        LongtermPrediction.pick_value,
+                    ).where(LongtermPrediction.tournament_id == int(tournament.id))
+                )
+            ).all()
+
+            picks_map: dict[int, dict[str, str]] = {}
+            for uid, pick_type, pick_value in picks_rows:
+                tgid = int(uid)
+                if tgid not in picks_map:
+                    picks_map[tgid] = {}
+                picks_map[tgid][str(pick_type)] = str(pick_value or "")
+
+            updated_count = 0
+            changed_count = 0
+            winner_awarded = 0
+            scorer_awarded = 0
+
+            for uid, old_w, old_s, old_total in participants_rows:
+                tgid = int(uid)
+                picks = picks_map.get(tgid, {})
+                pick_winner = _normalize_pick_text(picks.get("winner"))
+                pick_scorer = _normalize_pick_text(picks.get("scorer"))
+
+                new_w = 5 if pick_winner and pick_winner == winner_norm else 0
+                new_s = 5 if pick_scorer and pick_scorer == scorer_norm else 0
+                new_total = new_w + new_s
+                if new_w > 0:
+                    winner_awarded += 1
+                if new_s > 0:
+                    scorer_awarded += 1
+
+                ut = (
+                    await session.execute(
+                        select(UserTournament).where(
+                            UserTournament.tg_user_id == tgid,
+                            UserTournament.tournament_id == int(tournament.id),
+                        )
+                    )
+                ).scalar_one_or_none()
+                if ut is None:
+                    continue
+
+                if int(old_w or 0) != new_w or int(old_s or 0) != new_s or int(old_total or 0) != new_total:
+                    changed_count += 1
+                ut.bonus_winner = int(new_w)
+                ut.bonus_scorer = int(new_s)
+                ut.bonus_points = int(new_total)
+                updated_count += 1
+
+            await _set_setting(session, _longterm_actual_winner_key(int(tournament.id)), winner_value)
+            await _set_setting(session, _longterm_actual_scorer_key(int(tournament.id)), scorer_value)
+            await session.commit()
+
+        return web.json_response(
+            {
+                "ok": True,
+                "trusted": True,
+                "is_admin": True,
+                "winner": winner_value,
+                "scorer": scorer_value,
+                "updated_participants": int(updated_count),
+                "changed_participants": int(changed_count),
+                "winner_awarded": int(winner_awarded),
+                "scorer_awarded": int(scorer_awarded),
+            }
+        )
+    except (ValueError, TypeError):
+        return web.json_response({"ok": False, "error": "invalid_payload"}, status=400)
+    except Exception as e:
+        logger.exception("miniapp admin_longterm_set error")
+        return web.json_response(
+            {"ok": False, "error": "admin_longterm_set_failed", "reason": str(e), "signature_checked": True},
             status=500,
         )
 
@@ -3584,6 +3807,8 @@ def build_app() -> web.Application:
     app.router.add_get("/api/miniapp/admin/results/current", admin_results_current)
     app.router.add_post("/api/miniapp/admin/result/set", admin_result_set)
     app.router.add_post("/api/miniapp/admin/recalc_round", admin_recalc_round)
+    app.router.add_get("/api/miniapp/admin/longterm/current", admin_longterm_current)
+    app.router.add_post("/api/miniapp/admin/longterm/set", admin_longterm_set)
     return app
 
 
