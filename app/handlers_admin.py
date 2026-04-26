@@ -1578,6 +1578,9 @@ def register_admin_handlers(dp: Dispatcher) -> None:
     dp.message.register(admin_longterm_award, Command("admin_longterm_award"))
     dp.message.register(admin_manual_only_cleanup, Command("admin_manual_only_cleanup"))
     dp.message.register(admin_tournament_reset, Command("admin_tournament_reset"))
+    dp.message.register(admin_tournament_create, Command("admin_tournament_create"))
+    dp.message.register(admin_tournament_open, Command("admin_tournament_open"))
+    dp.message.register(admin_tournament_close, Command("admin_tournament_close"))
     dp.message.register(admin_test_reminder, Command("admin_test_reminder"))
     dp.message.register(admin_health, Command("admin_health"))
 
@@ -2355,6 +2358,160 @@ async def admin_tournament_reset(message: types.Message):
         f"Удалено записей Elo: {int(del_duel_elo.rowcount or 0)}\n"
         f"Сброшено бонусов участников: {int(reset_bonuses.rowcount or 0)}\n"
         f"Очищено флагов пушей ачивок: {int(ach_push_removed)}"
+    )
+
+
+async def admin_tournament_create(message: types.Message):
+    """
+    /admin_tournament_create CODE | NAME | ROUND_MIN | ROUND_MAX [| SORT_ORDER]
+    Пример:
+    /admin_tournament_create RPL_2026_27_A | РПЛ 2026/27 · Осень | 1 | 17 | 20
+    """
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("⛔️ У вас нет прав на эту команду.")
+        return
+
+    raw = (message.text or "").strip()
+    payload = raw.split(maxsplit=1)[1].strip() if " " in raw else ""
+    parts = [p.strip() for p in payload.split("|")]
+    if len(parts) not in (4, 5):
+        await message.answer(
+            "Формат:\n"
+            "/admin_tournament_create CODE | NAME | ROUND_MIN | ROUND_MAX [| SORT_ORDER]\n"
+            "Пример:\n"
+            "/admin_tournament_create RPL_2026_27_A | РПЛ 2026/27 · Осень | 1 | 17 | 20"
+        )
+        return
+
+    code = (parts[0] or "").strip().upper()
+    name = (parts[1] or "").strip()
+    if not code or not name:
+        await message.answer("Нужно указать и код, и название турнира.")
+        return
+    if not re.fullmatch(r"[A-Z0-9_]{2,32}", code):
+        await message.answer("Код турнира: только A-Z, 0-9, '_' (длина 2..32).")
+        return
+
+    try:
+        round_min = int(parts[2])
+        round_max = int(parts[3])
+        sort_order = int(parts[4]) if len(parts) == 5 and parts[4] != "" else 100
+    except ValueError:
+        await message.answer("ROUND_MIN, ROUND_MAX и SORT_ORDER должны быть целыми числами.")
+        return
+
+    if round_min <= 0 or round_max <= 0 or round_min > round_max:
+        await message.answer("Проверь диапазон туров: ROUND_MIN и ROUND_MAX должны быть >0, а ROUND_MIN <= ROUND_MAX.")
+        return
+
+    async with SessionLocal() as session:
+        existing = (await session.execute(select(Tournament).where(Tournament.code == code))).scalar_one_or_none()
+        if existing is not None:
+            await message.answer(
+                f"Турнир с кодом {code} уже существует.\n"
+                "Используй /admin_tournament_open или /admin_tournament_close."
+            )
+            return
+
+        tournament = Tournament(
+            code=code,
+            name=name,
+            round_min=int(round_min),
+            round_max=int(round_max),
+            status="announce",
+            visible_in_miniapp=1,
+            join_open=0,
+            predict_open=0,
+            sort_order=int(sort_order),
+            planned_matches_total=0,
+            is_active=1,
+        )
+        session.add(tournament)
+        await session.commit()
+
+    await message.answer(
+        "✅ Турнир создан.\n"
+        f"Код: {code}\n"
+        f"Название: {name}\n"
+        f"Туры: {round_min}-{round_max}\n"
+        f"Статус: announce\n"
+        "По умолчанию вступление и прогнозы закрыты.\n"
+        f"Для запуска: /admin_tournament_open {code}"
+    )
+
+
+async def admin_tournament_open(message: types.Message):
+    """
+    /admin_tournament_open CODE
+    Пример: /admin_tournament_open RPL_2026_27_A
+    """
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("⛔️ У вас нет прав на эту команду.")
+        return
+
+    parts = (message.text or "").strip().split()
+    if len(parts) < 2:
+        await message.answer("Формат: /admin_tournament_open CODE")
+        return
+    code = parts[1].strip().upper()
+
+    async with SessionLocal() as session:
+        t = (await session.execute(select(Tournament).where(Tournament.code == code))).scalar_one_or_none()
+        if t is None:
+            await message.answer(f"Турнир {code} не найден.")
+            return
+
+        t.status = "active"
+        t.visible_in_miniapp = 1
+        t.join_open = 1
+        t.predict_open = 1
+        t.is_active = 1
+        await session.commit()
+
+    await message.answer(
+        "✅ Турнир открыт.\n"
+        f"{t.name} ({t.code})\n"
+        "visible_in_miniapp=1, join_open=1, predict_open=1, status=active"
+    )
+
+
+async def admin_tournament_close(message: types.Message):
+    """
+    /admin_tournament_close CODE [hide]
+    Примеры:
+    /admin_tournament_close WC2026
+    /admin_tournament_close WC2026 hide
+    """
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("⛔️ У вас нет прав на эту команду.")
+        return
+
+    parts = (message.text or "").strip().split()
+    if len(parts) < 2:
+        await message.answer("Формат: /admin_tournament_close CODE [hide]")
+        return
+    code = parts[1].strip().upper()
+    hide = len(parts) >= 3 and parts[2].strip().lower() in {"hide", "1", "yes", "true"}
+
+    async with SessionLocal() as session:
+        t = (await session.execute(select(Tournament).where(Tournament.code == code))).scalar_one_or_none()
+        if t is None:
+            await message.answer(f"Турнир {code} не найден.")
+            return
+
+        t.status = "finished"
+        t.join_open = 0
+        t.predict_open = 0
+        t.is_active = 1
+        if hide:
+            t.visible_in_miniapp = 0
+        await session.commit()
+
+    await message.answer(
+        "✅ Турнир закрыт.\n"
+        f"{t.name} ({t.code})\n"
+        f"status=finished, join_open=0, predict_open=0, visible_in_miniapp={int(t.visible_in_miniapp or 0)}\n"
+        f"{'Скрыт из Mini App.' if hide else 'Остался видимым в Mini App (только просмотр).'}"
     )
 
 
