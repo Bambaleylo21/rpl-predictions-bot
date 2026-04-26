@@ -50,7 +50,6 @@ from app.season_setup import (
     set_enrollment_open,
     setup_new_season_foundation,
 )
-from app.tournament import ROUND_DEFAULT, ROUND_MAX, ROUND_MIN, is_tournament_round
 from app.audience import (
     extract_left_user_id,
     is_blocked_send_error,
@@ -1604,6 +1603,7 @@ def register_admin_handlers(dp: Dispatcher) -> None:
 async def admin_add_match(message: types.Message):
     """
     /admin_add_match 19 | TeamA | TeamB | YYYY-MM-DD HH:MM
+    /admin_add_match WC2026 | 1/16 | TeamA | TeamB | YYYY-MM-DD HH:MM
     Время — как и раньше в проекте: МСК считаем просто "как введено" (UTC+3 без zoneinfo).
     """
     if message.from_user.id not in ADMIN_IDS:
@@ -1612,26 +1612,67 @@ async def admin_add_match(message: types.Message):
 
     text = (message.text or "").strip()
     parts = [p.strip() for p in text.split("|")]
-    if len(parts) != 4:
-        await message.answer(f"Формат: /admin_add_match {ROUND_DEFAULT} | TeamA | TeamB | YYYY-MM-DD HH:MM")
-        return
-
-    try:
-        round_number = int(parts[0].split(maxsplit=1)[1])
-    except Exception:
-        await message.answer(f"Не смог прочитать номер тура. Пример: /admin_add_match {ROUND_DEFAULT} | ...")
-        return
-
-    if not is_tournament_round(round_number):
+    if len(parts) not in (4, 5):
         await message.answer(
-            f"Можно добавлять матчи только для туров {ROUND_MIN}..{ROUND_MAX}. "
-            f"Пример: /admin_add_match {ROUND_DEFAULT} | TeamA | TeamB | YYYY-MM-DD HH:MM"
+            "Форматы:\n"
+            "1) /admin_add_match 19 | TeamA | TeamB | YYYY-MM-DD HH:MM  (RPL по умолчанию)\n"
+            "2) /admin_add_match WC2026 | 1/16 | TeamA | TeamB | YYYY-MM-DD HH:MM\n"
+            "   Стадии WC: 1, 2, 3, 1/16, 1/8, 1/4, 1/2, 3, финал"
         )
         return
 
-    home = parts[1]
-    away = parts[2]
-    dt_str = parts[3]
+    def _parse_round_for_code(code: str, raw_value: str) -> int | None:
+        raw = (raw_value or "").strip().lower().replace("ё", "е")
+        raw = raw.replace("’", "'").replace("`", "'")
+        raw = " ".join(raw.split())
+        code_up = (code or "").strip().upper()
+        if code_up == "WC2026":
+            wc_map = {
+                "1": 1,
+                "тур 1": 1,
+                "2": 2,
+                "тур 2": 2,
+                "3": 3,
+                "тур 3": 3,
+                "1/16": 4,
+                "1\\16": 4,
+                "1-16": 4,
+                "1/8": 5,
+                "1\\8": 5,
+                "1-8": 5,
+                "1/4": 6,
+                "1\\4": 6,
+                "1-4": 6,
+                "четвертьфинал": 6,
+                "четвертьфиналы": 6,
+                "1/2": 7,
+                "1\\2": 7,
+                "1-2": 7,
+                "полуфинал": 7,
+                "полуфиналы": 7,
+                "за 3-е": 8,
+                "за 3 место": 8,
+                "3 место": 8,
+                "матч за 3 место": 8,
+                "финал": 9,
+            }
+            return wc_map.get(raw)
+        if raw.isdigit():
+            return int(raw)
+        return None
+
+    if len(parts) == 4:
+        tournament_code = "RPL"
+        round_raw = parts[0]
+        home = parts[1]
+        away = parts[2]
+        dt_str = parts[3]
+    else:
+        tournament_code = (parts[0] or "").strip().upper()
+        round_raw = parts[1]
+        home = parts[2]
+        away = parts[3]
+        dt_str = parts[4]
 
     kickoff = _parse_admin_kickoff_datetime(dt_str)
     if kickoff is None:
@@ -1639,22 +1680,53 @@ async def admin_add_match(message: types.Message):
         return
 
     async with SessionLocal() as session:
-        t_q = await session.execute(select(Tournament).where(Tournament.code == "RPL"))
-        rpl = t_q.scalar_one_or_none()
-        tournament_id = rpl.id if rpl is not None else 1
+        t_q = await session.execute(select(Tournament).where(Tournament.code == tournament_code))
+        tournament = t_q.scalar_one_or_none()
+        if tournament is None:
+            await message.answer(f"Турнир {tournament_code} не найден.")
+            return
+
+        round_number = _parse_round_for_code(tournament_code, round_raw)
+        if round_number is None:
+            if tournament_code == "WC2026":
+                await message.answer(
+                    "Для WC укажи стадию так: 1, 2, 3, 1/16, 1/8, 1/4, 1/2, 3, финал.\n"
+                    "Пример: /admin_add_match WC2026 | 1/16 | TeamA | TeamB | 2026-07-04 19:00"
+                )
+            else:
+                await message.answer(
+                    "Не смог прочитать номер тура.\n"
+                    "Пример: /admin_add_match RPL | 19 | TeamA | TeamB | 2026-08-01 19:00"
+                )
+            return
+
+        if not (int(tournament.round_min) <= int(round_number) <= int(tournament.round_max)):
+            await message.answer(
+                f"Для турнира {display_tournament_name(tournament.name)} доступны туры "
+                f"{int(tournament.round_min)}..{int(tournament.round_max)}."
+            )
+            return
 
         m = Match(
-            tournament_id=tournament_id,
-            round_number=round_number,
+            tournament_id=int(tournament.id),
+            round_number=int(round_number),
             home_team=home,
             away_team=away,
             kickoff_time=kickoff,
             source="manual",
+            is_placeholder=0,
         )
         session.add(m)
         await session.commit()
 
-        await message.answer(f"✅ Матч добавлен: #{m.id} | тур {round_number} | {home} — {away} | {dt_str} (МСК)")
+        round_label = display_round_name((tournament.code or "").strip().upper(), int(round_number))
+        await message.answer(
+            f"✅ Матч добавлен: #{m.id}\n"
+            f"Турнир: {display_tournament_name(tournament.name)} ({tournament.code})\n"
+            f"Стадия: {round_label}\n"
+            f"Пара: {home} — {away}\n"
+            f"Старт: {dt_str} (МСК)"
+        )
 
 
 async def admin_set_result(message: types.Message):
