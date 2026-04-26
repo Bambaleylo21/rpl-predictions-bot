@@ -2441,8 +2441,10 @@ async def profile(request: web.Request) -> web.Response:
                 user_place = next((int(r["place"]) for r in rows if int(r["tg_user_id"]) == int(target_tg_user_id)), None)
                 rows_for_statuses = rows
 
+            table_has_results = played_matches > 0
+
             live_statuses: list[str] = []
-            if user_place == 1:
+            if table_has_results and user_place == 1:
                 live_statuses.append("Лидер таблицы")
 
             def _best_status(field: str, label: str) -> None:
@@ -2460,9 +2462,10 @@ async def profile(request: web.Request) -> web.Response:
                 if int(my_row.get(field, 0)) == int(max_value):
                     live_statuses.append(label)
 
-            _best_status("exact", "Лучший по 🎯 точным")
-            _best_status("diff", "Лучший по 📏 разнице")
-            _best_status("outcome", "Лучший по ✅ исходам")
+            if table_has_results:
+                _best_status("exact", "Лучший по 🎯 точным")
+                _best_status("diff", "Лучший по 📏 разнице")
+                _best_status("outcome", "Лучший по ✅ исходам")
 
             insights: list[str] = []
 
@@ -2499,7 +2502,7 @@ async def profile(request: web.Request) -> web.Response:
                 else:
                     _add_insight(f"Есть пропуски ({missed_matches}). Закрывай туры полностью, чтобы не терять лёгкие очки.")
 
-            if participants > 1 and user_place is not None:
+            if table_has_results and participants > 1 and user_place is not None:
                 if user_place == 1:
                     _add_insight("Ты лидер таблицы. Удержать первое место обычно сложнее, чем взять его.")
                 elif user_place <= 3:
