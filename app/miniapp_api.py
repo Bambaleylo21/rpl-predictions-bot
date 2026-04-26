@@ -1285,6 +1285,7 @@ async def tournament_join(request: web.Request) -> web.Response:
                 },
                 status=409,
             )
+        created_new_join = False
         row = (
             await session.execute(
                 select(UserTournament).where(
@@ -1300,9 +1301,31 @@ async def tournament_join(request: web.Request) -> web.Response:
                 display_name=display_name,
             )
             session.add(row)
+            created_new_join = True
         elif not (row.display_name or "").strip() and display_name:
             row.display_name = display_name
         await session.commit()
+        if created_new_join and ADMIN_IDS:
+            try:
+                name = (
+                    display_name
+                    or (f"@{username}" if username else None)
+                    or str(tg_user_id)
+                )
+                notify_text = (
+                    "🆕 Новый участник вступил в турнир\n"
+                    f"Турнир: {tournament.name} ({tournament.code})\n"
+                    f"Участник: {name}\n"
+                    f"ID: {int(tg_user_id)}"
+                )
+                bot = _get_notify_bot()
+                for admin_id in ADMIN_IDS:
+                    try:
+                        await bot.send_message(chat_id=int(admin_id), text=notify_text)
+                    except Exception:
+                        logger.exception("tournament_join admin notify failed for admin_id=%s", admin_id)
+            except Exception:
+                logger.exception("tournament_join admin notify unexpected error")
     return web.json_response(
         {
             "ok": True,
