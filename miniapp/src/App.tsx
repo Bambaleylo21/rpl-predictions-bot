@@ -671,6 +671,10 @@ function App() {
   const [savingLongtermType, setSavingLongtermType] = useState<'winner' | 'scorer' | null>(null)
   const [winnerPickInput, setWinnerPickInput] = useState<string>('')
   const [scorerPickInput, setScorerPickInput] = useState<string>('')
+  const [winnerPickerOpen, setWinnerPickerOpen] = useState<boolean>(false)
+  const [scorerPickerOpen, setScorerPickerOpen] = useState<boolean>(false)
+  const [winnerSearch, setWinnerSearch] = useState<string>('')
+  const [scorerSearch, setScorerSearch] = useState<string>('')
   const [selectedTournamentCode, setSelectedTournamentCode] = useState<string>('WC2026')
   const [tournamentNotice, setTournamentNotice] = useState<string | null>(null)
   const [predictionsFilter, setPredictionsFilter] = useState<'open' | 'closed'>('open')
@@ -737,7 +741,18 @@ function App() {
       setDuelMatchPickerOpen(false)
       setDuelOpponentPickerOpen(false)
     }
+    if (screen !== 'predict') {
+      setWinnerPickerOpen(false)
+      setScorerPickerOpen(false)
+    }
   }, [screen])
+
+  useEffect(() => {
+    if (stageTab !== 'LT') {
+      setWinnerPickerOpen(false)
+      setScorerPickerOpen(false)
+    }
+  }, [stageTab])
 
   useEffect(() => {
     try {
@@ -1596,6 +1611,12 @@ function App() {
     { key: 9, label: 'Финал' },
   ]
   const allowLongtermTab = showWcSelector
+  const winnerSearchNorm = winnerSearch.trim().toLowerCase()
+  const scorerSearchNorm = scorerSearch.trim().toLowerCase()
+  const winnerOptions = longtermData?.options?.winner || []
+  const scorerOptions = longtermData?.options?.scorer || []
+  const winnerFilteredOptions = winnerOptions.filter((name) => name.toLowerCase().includes(winnerSearchNorm))
+  const scorerFilteredOptions = scorerOptions.filter((name) => name.toLowerCase().includes(scorerSearchNorm))
 
   const predictItems = predictData?.items || []
   const predictGroups = (() => {
@@ -1879,7 +1900,7 @@ function App() {
               </section>
             ) : null}
 
-            {predictData?.joined !== false && (predictData || predictionsData) ? (
+            {stageTab !== 'LT' && predictData?.joined !== false && (predictData || predictionsData) ? (
               <section className="cards space-top">
                 <div className="card card-static matches-overview-card">
                   <div className="matches-overview-head">Сводка матчей</div>
@@ -1949,18 +1970,45 @@ function App() {
                     <div className="card">
                       <div className="card-title">🏆 Победитель ЧМ</div>
                       <div className="predict-row">
-                        <select
-                          className="score-input select-input"
-                          value={winnerPickInput}
-                          onChange={(e) => setWinnerPickInput(e.target.value)}
-                        >
-                          <option value="">Выбери команду</option>
-                          {(longtermData?.options?.winner || []).map((name) => (
-                            <option key={name} value={name}>
-                              {name}
-                            </option>
-                          ))}
-                        </select>
+                        <div className="duel-picker-wrap longterm-picker-wrap">
+                          <button
+                            className={`duel-picker-btn ${winnerPickerOpen ? 'is-open' : ''}`}
+                            onClick={() => {
+                              setWinnerPickerOpen((v) => !v)
+                              setScorerPickerOpen(false)
+                            }}
+                          >
+                            <span className="duel-picker-value">{winnerPickInput ? teamWithFlag(winnerPickInput) : 'Выбери команду'}</span>
+                            <span className={`duel-picker-chevron ${winnerPickerOpen ? 'is-open' : ''}`}>⌄</span>
+                          </button>
+                          {winnerPickerOpen ? (
+                            <div className="duel-picker-panel">
+                              <input
+                                className="duel-picker-search"
+                                value={winnerSearch}
+                                onChange={(e) => setWinnerSearch(e.target.value)}
+                                placeholder="Поиск команды"
+                              />
+                              <div className="duel-picker-list">
+                                {winnerFilteredOptions.map((name) => (
+                                  <button
+                                    key={name}
+                                    className={`duel-picker-item ${winnerPickInput === name ? 'is-selected' : ''}`}
+                                    onClick={() => {
+                                      setWinnerPickInput(name)
+                                      setWinnerPickerOpen(false)
+                                    }}
+                                  >
+                                    <div className="duel-picker-item-title">{teamWithFlag(name)}</div>
+                                  </button>
+                                ))}
+                                {winnerFilteredOptions.length === 0 ? (
+                                  <div className="longterm-picker-empty">Ничего не найдено</div>
+                                ) : null}
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
                         <button
                           className={`save-btn longterm-save-btn ${winnerVisualState}`}
                           onClick={() => saveLongtermPick('winner')}
@@ -1974,18 +2022,45 @@ function App() {
                     <div className="card">
                       <div className="card-title">⚽ Лучший бомбардир</div>
                       <div className="predict-row">
-                        <select
-                          className="score-input select-input"
-                          value={scorerPickInput}
-                          onChange={(e) => setScorerPickInput(e.target.value)}
-                        >
-                          <option value="">Выбери игрока</option>
-                          {(longtermData?.options?.scorer || []).map((name) => (
-                            <option key={name} value={name}>
-                              {name}
-                            </option>
-                          ))}
-                        </select>
+                        <div className="duel-picker-wrap longterm-picker-wrap">
+                          <button
+                            className={`duel-picker-btn ${scorerPickerOpen ? 'is-open' : ''}`}
+                            onClick={() => {
+                              setScorerPickerOpen((v) => !v)
+                              setWinnerPickerOpen(false)
+                            }}
+                          >
+                            <span className="duel-picker-value">{scorerPickInput || 'Выбери игрока'}</span>
+                            <span className={`duel-picker-chevron ${scorerPickerOpen ? 'is-open' : ''}`}>⌄</span>
+                          </button>
+                          {scorerPickerOpen ? (
+                            <div className="duel-picker-panel">
+                              <input
+                                className="duel-picker-search"
+                                value={scorerSearch}
+                                onChange={(e) => setScorerSearch(e.target.value)}
+                                placeholder="Поиск игрока"
+                              />
+                              <div className="duel-picker-list">
+                                {scorerFilteredOptions.map((name) => (
+                                  <button
+                                    key={name}
+                                    className={`duel-picker-item ${scorerPickInput === name ? 'is-selected' : ''}`}
+                                    onClick={() => {
+                                      setScorerPickInput(name)
+                                      setScorerPickerOpen(false)
+                                    }}
+                                  >
+                                    <div className="duel-picker-item-title">{name}</div>
+                                  </button>
+                                ))}
+                                {scorerFilteredOptions.length === 0 ? (
+                                  <div className="longterm-picker-empty">Ничего не найдено</div>
+                                ) : null}
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
                         <button
                           className={`save-btn longterm-save-btn ${scorerVisualState}`}
                           onClick={() => saveLongtermPick('scorer')}

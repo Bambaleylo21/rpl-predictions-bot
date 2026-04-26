@@ -836,6 +836,35 @@ body {
   line-height: 1;
 }
 
+.longterm-picker-wrap {
+  margin-top: 0;
+  flex: 1;
+}
+
+.longterm-picker-wrap .duel-picker-btn {
+  min-height: 38px;
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.longterm-picker-wrap .duel-picker-value {
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.longterm-picker-empty {
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: #182a52;
+  color: #9bb1dc;
+  text-align: center;
+  padding: 10px 8px;
+  font-size: 12px;
+}
+
 .save-btn {
   border: 1px solid var(--line-2);
   border-radius: var(--radius-control);
