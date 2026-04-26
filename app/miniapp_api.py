@@ -2675,6 +2675,19 @@ async def _wc_first_kickoff(session, tournament_id: int) -> datetime | None:
     return q.scalar_one_or_none()
 
 
+def _normalize_winner_option_name(name: str) -> str:
+    return (
+        (name or "")
+        .strip()
+        .replace("’", "'")
+        .replace("`", "'")
+        .replace("‐", "-")
+        .replace("‑", "-")
+        .replace("–", "-")
+        .replace("—", "-")
+    )
+
+
 async def _wc_winner_options(session, tournament_id: int) -> list[str]:
     homes = await session.execute(
         select(Match.home_team)
@@ -2694,9 +2707,19 @@ async def _wc_winner_options(session, tournament_id: int) -> list[str]:
         )
         .distinct()
     )
-    names = {str(x[0]).strip() for x in homes.all() if x and x[0]}
-    names.update({str(x[0]).strip() for x in aways.all() if x and x[0]})
-    return sorted([x for x in names if x], key=lambda s: s.lower())
+    raw_names = [str(x[0]).strip() for x in homes.all() if x and x[0]]
+    raw_names.extend([str(x[0]).strip() for x in aways.all() if x and x[0]])
+
+    deduped: dict[str, str] = {}
+    for raw in raw_names:
+        normalized = _normalize_winner_option_name(raw)
+        if not normalized:
+            continue
+        # Используем нормализованную форму как единую "каноническую",
+        # чтобы не показывать дубли вида "Кот-д'Ивуар" / "Кот-д’Ивуар".
+        deduped[normalized.lower()] = normalized
+
+    return sorted(deduped.values(), key=lambda s: s.lower())
 
 
 async def _get_longterm_picks(session, tournament_id: int, tg_user_id: int) -> dict[str, str]:
