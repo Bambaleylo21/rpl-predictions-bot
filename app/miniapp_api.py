@@ -1738,11 +1738,25 @@ async def _build_profile_achievements(
             description=description,
         )
 
-    # scoring_match_streak: серия матчей подряд с очками > 0.
+    # scoring_match_streak: серия по хронологии kickoff.
+    # Важно: считаем по полной сетке матчей турнира, а не только по рассчитанным.
+    # Любой нерассчитанный или "нулевой" матч между двумя угаданными разрывает серию.
+    all_match_rows = (
+        await session.execute(
+            select(Match.id, Match.kickoff_time)
+            .where(
+                Match.tournament_id == int(tournament_id),
+                Match.is_placeholder == 0,
+            )
+            .order_by(Match.kickoff_time.asc(), Match.id.asc())
+        )
+    ).all()
+
     current_scoring_streak = 0
     max_scoring_match_streak = 0
-    for match in closed_matches:
-        mid = int(match["match_id"])
+    for mid_raw, _kickoff in all_match_rows:
+        mid = int(mid_raw)
+        # Матч без результата в points -> разрыв.
         if int(user_points_by_match.get(mid, 0)) > 0:
             current_scoring_streak += 1
             max_scoring_match_streak = max(max_scoring_match_streak, current_scoring_streak)
