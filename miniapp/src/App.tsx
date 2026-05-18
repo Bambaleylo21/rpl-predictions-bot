@@ -831,7 +831,9 @@ function App() {
       const getParam = (key: string): string =>
         params.get(key) || startParams.get(key) || ''
       const screenParam = getParam('screen').toLowerCase()
-      if (screenParam === 'profile' || screenParam === 'matches' || screenParam === 'predict') {
+      if (screenParam === 'profile') {
+        setScreen('profile')
+      } else if (screenParam === 'matches' || screenParam === 'predict') {
         setScreen('predict')
       } else if (screenParam === 'table') {
         setScreen('table')
