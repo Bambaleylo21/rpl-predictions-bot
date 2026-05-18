@@ -1580,6 +1580,15 @@ async def _build_profile_achievements(
     missed_matches: int,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     achievements: list[dict[str, Any]] = []
+    tournament_code = (
+        (
+            await session.execute(
+                select(Tournament.code).where(Tournament.id == int(tournament_id)).limit(1)
+            )
+        ).scalar_one_or_none()
+        or ""
+    )
+    tournament_code = str(tournament_code).strip().upper()
 
     def _push(key: str, title: str, emoji: str, earned: bool, description: str) -> None:
         achievements.append(
@@ -1682,6 +1691,9 @@ async def _build_profile_achievements(
         for rnd, total in round_total_map.items()
     }
     sorted_rounds = sorted(round_total_map.keys())
+    # Для ЧМ "Без пропусков" считаем только по групповому этапу (туры 1-3).
+    if tournament_code == WC_TOURNAMENT_CODE:
+        sorted_rounds = [rnd for rnd in sorted_rounds if int(rnd) in (1, 2, 3)]
     no_miss_round_count = 0
     for rnd in sorted_rounds:
         if not bool(round_is_completed.get(int(rnd), False)):
