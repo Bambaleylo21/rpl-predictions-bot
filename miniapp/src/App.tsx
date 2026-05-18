@@ -363,6 +363,24 @@ type AdminLongtermCurrentResponse = {
   }
 }
 
+type AdminPlayoffSlotItem = {
+  match_id: number
+  round_number: number
+  round_name: string
+  kickoff: string
+  home_team: string
+  away_team: string
+  is_placeholder: boolean
+  is_filled: boolean
+}
+
+type AdminPlayoffSlotsCurrentResponse = {
+  ok: boolean
+  error?: string
+  reason?: string
+  items?: AdminPlayoffSlotItem[]
+}
+
 const ENGLAND_FLAG = String.fromCodePoint(
   0x1f3f4,
   0xe0067,
@@ -715,7 +733,7 @@ function App() {
   const [currentInsight, setCurrentInsight] = useState<string | null>(null)
   const [adminRounds, setAdminRounds] = useState<AdminRound[]>([])
   const [adminRound, setAdminRound] = useState<number | null>(null)
-  const [adminViewMode, setAdminViewMode] = useState<'matches' | 'longterm'>('matches')
+  const [adminViewMode, setAdminViewMode] = useState<'matches' | 'playoff' | 'longterm'>('matches')
   const [adminMode, setAdminMode] = useState<'open' | 'all'>('open')
   const [adminResults, setAdminResults] = useState<AdminResultItem[]>([])
   const [adminRoundName, setAdminRoundName] = useState<string>('')
@@ -729,6 +747,10 @@ function App() {
   const [adminLongtermWinnerAwarded, setAdminLongtermWinnerAwarded] = useState<number>(0)
   const [adminLongtermScorerAwarded, setAdminLongtermScorerAwarded] = useState<number>(0)
   const [adminLongtermSaving, setAdminLongtermSaving] = useState<boolean>(false)
+  const [adminPlayoffSlots, setAdminPlayoffSlots] = useState<AdminPlayoffSlotItem[]>([])
+  const [adminPlayoffInitLoading, setAdminPlayoffInitLoading] = useState<boolean>(false)
+  const [adminPlayoffSavingMatchId, setAdminPlayoffSavingMatchId] = useState<number | null>(null)
+  const [adminPlayoffTeamInputs, setAdminPlayoffTeamInputs] = useState<Record<number, { home_team: string; away_team: string }>>({})
   const [adminError, setAdminError] = useState<string | null>(null)
   const [adminNotice, setAdminNotice] = useState<string | null>(null)
   const [adminSavingMatchId, setAdminSavingMatchId] = useState<number | null>(null)
@@ -1464,6 +1486,26 @@ function App() {
     setAdminLongtermScorerAwarded(data.scorer_awarded || 0)
   }
 
+  const loadAdminPlayoffSlots = async (apiBase: string, initData: string, tournamentCode: string) => {
+    const headers = { 'X-Telegram-Init-Data': initData }
+    const tParam = encodeURIComponent(tournamentCode || 'RPL')
+    const res = await fetch(`${apiBase}/api/miniapp/admin/playoff_slots/current?t=${tParam}`, { headers })
+    const data = (await res.json()) as AdminPlayoffSlotsCurrentResponse
+    if (!res.ok || !data.ok) {
+      throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+    }
+    const items = data.items || []
+    setAdminPlayoffSlots(items)
+    const nextInputs: Record<number, { home_team: string; away_team: string }> = {}
+    for (const item of items) {
+      nextInputs[item.match_id] = {
+        home_team: item.home_team === '—' ? '' : item.home_team,
+        away_team: item.away_team === '—' ? '' : item.away_team,
+      }
+    }
+    setAdminPlayoffTeamInputs(nextInputs)
+  }
+
   const saveAdminResult = async (matchId: number) => {
     const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
     const initData = getInitData()
@@ -1579,6 +1621,72 @@ function App() {
     }
   }
 
+  const initAdminPlayoffSlots = async () => {
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    setAdminPlayoffInitLoading(true)
+    setAdminNotice(null)
+    try {
+      const tParam = encodeURIComponent(selectedTournamentCode || 'RPL')
+      const res = await fetch(`${apiBase}/api/miniapp/admin/playoff_slots/init?t=${tParam}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Telegram-Init-Data': initData,
+        },
+        body: JSON.stringify({}),
+      })
+      const data = (await res.json()) as { ok?: boolean; error?: string; reason?: string; created?: number; skipped?: number }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      setAdminNotice(`Шаблоны готовы: добавлено ${data.created ?? 0}, уже существовало ${data.skipped ?? 0}`)
+      await loadAdminPlayoffSlots(apiBase, initData, selectedTournamentCode)
+    } catch (err) {
+      setAdminNotice(`Ошибка инициализации: ${String(err)}`)
+    } finally {
+      setAdminPlayoffInitLoading(false)
+    }
+  }
+
+  const saveAdminPlayoffSlot = async (matchId: number) => {
+    const teams = adminPlayoffTeamInputs[matchId] || { home_team: '', away_team: '' }
+    const home_team = (teams.home_team || '').trim()
+    const away_team = (teams.away_team || '').trim()
+    if (!home_team || !away_team) {
+      setAdminNotice('Заполни обе команды для пары.')
+      return
+    }
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    setAdminPlayoffSavingMatchId(matchId)
+    setAdminNotice(null)
+    try {
+      const tParam = encodeURIComponent(selectedTournamentCode || 'RPL')
+      const res = await fetch(`${apiBase}/api/miniapp/admin/playoff_slots/fill?t=${tParam}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Telegram-Init-Data': initData,
+        },
+        body: JSON.stringify({ match_id: matchId, home_team, away_team }),
+      })
+      const data = (await res.json()) as { ok?: boolean; error?: string; reason?: string }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      setAdminNotice('Пара сохранена.')
+      await loadAdminPlayoffSlots(apiBase, initData, selectedTournamentCode)
+      if (adminRound != null) {
+        await loadAdminResults(apiBase, initData, selectedTournamentCode, adminRound, adminMode)
+      }
+    } catch (err) {
+      setAdminNotice(`Ошибка сохранения пары: ${String(err)}`)
+    } finally {
+      setAdminPlayoffSavingMatchId(null)
+    }
+  }
+
   useEffect(() => {
     if (!meData?.is_admin) {
       setAdminRounds([])
@@ -1634,7 +1742,20 @@ function App() {
   }, [meData?.is_admin, selectedTournamentCode, adminViewMode])
 
   useEffect(() => {
-    if (selectedTournamentCode !== 'WC2026' && adminViewMode === 'longterm') {
+    if (!meData?.is_admin) return
+    if (adminViewMode !== 'playoff') return
+    if (selectedTournamentCode !== 'WC2026') return
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    if (!initData || !selectedTournamentCode) return
+
+    loadAdminPlayoffSlots(apiBase, initData, selectedTournamentCode)
+      .then(() => setAdminError(null))
+      .catch((err) => setAdminError(String(err)))
+  }, [meData?.is_admin, selectedTournamentCode, adminViewMode])
+
+  useEffect(() => {
+    if (selectedTournamentCode !== 'WC2026' && (adminViewMode === 'longterm' || adminViewMode === 'playoff')) {
       setAdminViewMode('matches')
     }
   }, [selectedTournamentCode, adminViewMode])
@@ -3163,6 +3284,14 @@ function App() {
                   ))}
                   {selectedTournamentCode === 'WC2026' ? (
                     <button
+                      className={`tournament-chip ${adminViewMode === 'playoff' ? 'is-active' : ''}`}
+                      onClick={() => setAdminViewMode('playoff')}
+                    >
+                      Плей-офф слоты
+                    </button>
+                  ) : null}
+                  {selectedTournamentCode === 'WC2026' ? (
+                    <button
                       className={`tournament-chip ${adminViewMode === 'longterm' ? 'is-active' : ''}`}
                       onClick={() => setAdminViewMode('longterm')}
                     >
@@ -3202,6 +3331,11 @@ function App() {
                   {adminViewMode === 'matches' && adminRoundName ? (
                     <>
                       Выбран: <b>{adminRoundName}</b> · матчей: <b>{adminRoundTotal}</b> · без итогов: <b>{adminWithoutResult}</b>
+                    </>
+                  ) : adminViewMode === 'playoff' ? (
+                    <>
+                      Шаблоны плей-офф: <b>{adminPlayoffSlots.length}</b> · заполнено пар:{' '}
+                      <b>{adminPlayoffSlots.filter((x) => x.is_filled).length}</b>
                     </>
                   ) : adminViewMode === 'longterm' ? (
                     <>
@@ -3269,6 +3403,69 @@ function App() {
                         </div>
                       </div>
                     ))
+                  )}
+                </div>
+              </section>
+            ) : adminViewMode === 'playoff' ? (
+              <section className="cards space-top">
+                <div className="card">
+                  <div className="card-title">Шаблоны плей-офф WC2026</div>
+                  <div className="card-text">
+                    Создай сетку один раз, затем заполняй пары. Пока команда не заполнена, слот остаётся скрыт от пользователей.
+                  </div>
+                  <button className="admin-recalc-btn" onClick={initAdminPlayoffSlots} disabled={adminPlayoffInitLoading}>
+                    {adminPlayoffInitLoading ? 'Создаю…' : 'Инициализировать шаблоны'}
+                  </button>
+                </div>
+                <div className="card compact-list-card admin-playoff-card">
+                  {adminPlayoffSlots.length === 0 ? (
+                    <div className="card-text">Слотов пока нет. Нажми «Инициализировать шаблоны».</div>
+                  ) : (
+                    adminPlayoffSlots.map((m) => {
+                      const rowInput = adminPlayoffTeamInputs[m.match_id] || { home_team: '', away_team: '' }
+                      return (
+                        <div className="admin-playoff-row" key={m.match_id}>
+                          <div className="compact-meta">
+                            <span className="group-small">{m.round_name}</span>
+                            <span className="kickoff-small">{m.kickoff}</span>
+                          </div>
+                          <div className="admin-playoff-inputs">
+                            <input
+                              className="duel-picker-search"
+                              value={rowInput.home_team}
+                              onChange={(e) =>
+                                setAdminPlayoffTeamInputs((prev) => ({
+                                  ...prev,
+                                  [m.match_id]: { ...(prev[m.match_id] || { home_team: '', away_team: '' }), home_team: e.target.value },
+                                }))
+                              }
+                              placeholder="Команда A"
+                            />
+                            <input
+                              className="duel-picker-search"
+                              value={rowInput.away_team}
+                              onChange={(e) =>
+                                setAdminPlayoffTeamInputs((prev) => ({
+                                  ...prev,
+                                  [m.match_id]: { ...(prev[m.match_id] || { home_team: '', away_team: '' }), away_team: e.target.value },
+                                }))
+                              }
+                              placeholder="Команда B"
+                            />
+                            <button
+                              className="save-btn compact-save-btn is-dirty"
+                              onClick={() => saveAdminPlayoffSlot(m.match_id)}
+                              disabled={adminPlayoffSavingMatchId === m.match_id}
+                            >
+                              {adminPlayoffSavingMatchId === m.match_id ? '…' : '✓'}
+                            </button>
+                          </div>
+                          <div className="compact-note">
+                            Статус: <b>{m.is_filled ? 'пара заполнена' : 'ожидает пары'}</b>
+                          </div>
+                        </div>
+                      )
+                    })
                   )}
                 </div>
               </section>

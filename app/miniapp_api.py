@@ -85,6 +85,42 @@ WC_TOP_SCORER_OPTIONS = [
     "Флориан Вирц",
 ]
 
+# Плей-офф ЧМ 2026 (МСК), заранее известные слоты без пар.
+WC2026_PLAYOFF_SLOTS: list[tuple[int, str]] = [
+    (4, "28.06.2026 22:00"),
+    (4, "29.06.2026 20:00"),
+    (4, "29.06.2026 23:30"),
+    (4, "30.06.2026 04:00"),
+    (4, "30.06.2026 20:00"),
+    (4, "01.07.2026 00:00"),
+    (4, "01.07.2026 04:00"),
+    (4, "01.07.2026 19:00"),
+    (4, "01.07.2026 23:00"),
+    (4, "02.07.2026 03:00"),
+    (4, "02.07.2026 22:00"),
+    (4, "03.07.2026 02:00"),
+    (4, "03.07.2026 06:00"),
+    (4, "03.07.2026 21:00"),
+    (4, "04.07.2026 01:00"),
+    (4, "04.07.2026 04:30"),
+    (5, "04.07.2026 20:00"),
+    (5, "05.07.2026 00:00"),
+    (5, "05.07.2026 23:00"),
+    (5, "06.07.2026 03:00"),
+    (5, "06.07.2026 22:00"),
+    (5, "07.07.2026 03:00"),
+    (5, "07.07.2026 19:00"),
+    (5, "07.07.2026 23:00"),
+    (6, "09.07.2026 23:00"),
+    (6, "10.07.2026 22:00"),
+    (6, "12.07.2026 00:00"),
+    (6, "12.07.2026 04:00"),
+    (7, "14.07.2026 22:00"),
+    (7, "15.07.2026 22:00"),
+    (8, "19.07.2026 00:00"),
+    (9, "19.07.2026 22:00"),
+]
+
 LEGACY_TROPHIES = [
     {"season": "2025/26", "title": "Лига Кайратовна", "format": "Группа ЛЧ", "place": 1, "username": "ImRus32"},
     {"season": "2025/26", "title": "Лига Кайратовна", "format": "Группа ЛЧ", "place": 2, "username": "kuznetsoff32"},
@@ -615,6 +651,15 @@ def _parse_score_text(raw: str | None) -> tuple[int, int] | None:
     return int(left), int(right)
 
 
+def _parse_msk_datetime(raw: str) -> datetime:
+    return datetime.strptime(raw, "%d.%m.%Y %H:%M")
+
+
+def _is_blank_team_name(value: str | None) -> bool:
+    s = (value or "").strip()
+    return not s or s in {"—", "-", "TBD", "tbd", "?"}
+
+
 async def _recalc_points_for_match_in_session(session, match_id: int) -> int:
     updates = 0
     match = (await session.execute(select(Match).where(Match.id == int(match_id)))).scalar_one_or_none()
@@ -998,6 +1043,188 @@ async def admin_recalc_round(request: web.Request) -> web.Response:
         logger.exception("miniapp admin_recalc_round error")
         return web.json_response(
             {"ok": False, "error": "admin_recalc_round_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
+async def admin_playoff_slots_current(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_admin_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = int(user.get("id"))
+
+        async with SessionLocal() as session:
+            tournament = await _resolve_tournament(session, tg_user_id, requested_code=request.query.get("t"))
+            if (tournament.code or "").strip().upper() != WC_TOURNAMENT_CODE:
+                return web.json_response({"ok": False, "error": "playoff_slots_only_for_wc2026"}, status=400)
+
+            rows = (
+                await session.execute(
+                    select(Match)
+                    .where(
+                        Match.tournament_id == int(tournament.id),
+                        Match.round_number.in_([4, 5, 6, 7, 8, 9]),
+                    )
+                    .order_by(Match.round_number.asc(), Match.kickoff_time.asc(), Match.id.asc())
+                )
+            ).scalars().all()
+            await session.commit()
+
+        items: list[dict[str, Any]] = []
+        for m in rows:
+            items.append(
+                {
+                    "match_id": int(m.id),
+                    "round_number": int(m.round_number or 0),
+                    "round_name": display_round_name(tournament.code, int(m.round_number or 0)),
+                    "kickoff": m.kickoff_time.strftime("%d.%m.%Y %H:%M"),
+                    "home_team": str(m.home_team or "").strip(),
+                    "away_team": str(m.away_team or "").strip(),
+                    "is_placeholder": int(m.is_placeholder or 0) == 1,
+                    "is_filled": not _is_blank_team_name(m.home_team) and not _is_blank_team_name(m.away_team),
+                }
+            )
+
+        return web.json_response(
+            {
+                "ok": True,
+                "trusted": True,
+                "is_admin": True,
+                "tournament_code": tournament.code,
+                "tournament_name": tournament.name,
+                "items": items,
+            }
+        )
+    except Exception as e:
+        logger.exception("miniapp admin_playoff_slots_current error")
+        return web.json_response(
+            {"ok": False, "error": "admin_playoff_slots_current_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
+async def admin_playoff_slots_init(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_admin_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = int(user.get("id"))
+
+        created = 0
+        skipped = 0
+        async with SessionLocal() as session:
+            tournament = await _resolve_tournament(session, tg_user_id, requested_code=request.query.get("t"))
+            if (tournament.code or "").strip().upper() != WC_TOURNAMENT_CODE:
+                return web.json_response({"ok": False, "error": "playoff_slots_only_for_wc2026"}, status=400)
+
+            existing_rows = (
+                await session.execute(
+                    select(Match.round_number, Match.kickoff_time)
+                    .where(
+                        Match.tournament_id == int(tournament.id),
+                        Match.round_number.in_([4, 5, 6, 7, 8, 9]),
+                    )
+                )
+            ).all()
+            existing_keys = {(int(rn), kickoff) for rn, kickoff in existing_rows}
+
+            for rn, kickoff_raw in WC2026_PLAYOFF_SLOTS:
+                kickoff = _parse_msk_datetime(kickoff_raw)
+                key = (int(rn), kickoff)
+                if key in existing_keys:
+                    skipped += 1
+                    continue
+                session.add(
+                    Match(
+                        tournament_id=int(tournament.id),
+                        round_number=int(rn),
+                        home_team="—",
+                        away_team="—",
+                        kickoff_time=kickoff,
+                        source="manual",
+                        is_placeholder=1,
+                    )
+                )
+                created += 1
+                existing_keys.add(key)
+
+            await session.commit()
+
+        return web.json_response(
+            {
+                "ok": True,
+                "trusted": True,
+                "is_admin": True,
+                "created": int(created),
+                "skipped": int(skipped),
+                "total_template_slots": int(len(WC2026_PLAYOFF_SLOTS)),
+            }
+        )
+    except Exception as e:
+        logger.exception("miniapp admin_playoff_slots_init error")
+        return web.json_response(
+            {"ok": False, "error": "admin_playoff_slots_init_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
+async def admin_playoff_slot_fill(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_admin_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = int(user.get("id"))
+
+        body = await request.json()
+        match_id = int(body.get("match_id") or 0)
+        home_team = str(body.get("home_team") or "").strip()
+        away_team = str(body.get("away_team") or "").strip()
+        if match_id <= 0 or not home_team or not away_team:
+            return web.json_response({"ok": False, "error": "invalid_payload"}, status=400)
+
+        async with SessionLocal() as session:
+            tournament = await _resolve_tournament(session, tg_user_id, requested_code=request.query.get("t"))
+            if (tournament.code or "").strip().upper() != WC_TOURNAMENT_CODE:
+                return web.json_response({"ok": False, "error": "playoff_slots_only_for_wc2026"}, status=400)
+
+            match = (
+                await session.execute(
+                    select(Match).where(
+                        Match.id == int(match_id),
+                        Match.tournament_id == int(tournament.id),
+                        Match.round_number.in_([4, 5, 6, 7, 8, 9]),
+                    )
+                )
+            ).scalar_one_or_none()
+            if match is None:
+                return web.json_response({"ok": False, "error": "match_not_found"}, status=404)
+
+            match.home_team = home_team
+            match.away_team = away_team
+            # Когда пары заполнены — матч становится обычным для пользовательских экранов.
+            match.is_placeholder = 0
+            await session.commit()
+
+        return web.json_response(
+            {
+                "ok": True,
+                "trusted": True,
+                "is_admin": True,
+                "match_id": int(match_id),
+                "home_team": home_team,
+                "away_team": away_team,
+            }
+        )
+    except (ValueError, TypeError):
+        return web.json_response({"ok": False, "error": "invalid_payload"}, status=400)
+    except Exception as e:
+        logger.exception("miniapp admin_playoff_slot_fill error")
+        return web.json_response(
+            {"ok": False, "error": "admin_playoff_slot_fill_failed", "reason": str(e), "signature_checked": True},
             status=500,
         )
 
@@ -3922,6 +4149,9 @@ def build_app() -> web.Application:
     app.router.add_get("/api/miniapp/admin/results/current", admin_results_current)
     app.router.add_post("/api/miniapp/admin/result/set", admin_result_set)
     app.router.add_post("/api/miniapp/admin/recalc_round", admin_recalc_round)
+    app.router.add_get("/api/miniapp/admin/playoff_slots/current", admin_playoff_slots_current)
+    app.router.add_post("/api/miniapp/admin/playoff_slots/init", admin_playoff_slots_init)
+    app.router.add_post("/api/miniapp/admin/playoff_slots/fill", admin_playoff_slot_fill)
     app.router.add_get("/api/miniapp/admin/longterm/current", admin_longterm_current)
     app.router.add_post("/api/miniapp/admin/longterm/set", admin_longterm_set)
     return app

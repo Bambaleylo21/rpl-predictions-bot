@@ -936,6 +936,29 @@ body {
   margin-bottom: 0;
 }
 
+.admin-playoff-card {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-playoff-row {
+  border-top: 1px solid rgba(80, 120, 200, 0.22);
+  padding-top: 10px;
+}
+
+.admin-playoff-row:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.admin-playoff-inputs {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
 .card-title {
   font-weight: 700;
   font-size: 18px;
