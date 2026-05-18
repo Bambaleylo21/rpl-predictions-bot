@@ -949,6 +949,11 @@ body {
   line-height: 1.35;
 }
 
+.table-legend-text {
+  font-size: 12px;
+  line-height: 1.28;
+}
+
 .segment-card {
   padding: 12px;
 }

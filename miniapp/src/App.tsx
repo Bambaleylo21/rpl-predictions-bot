@@ -3114,7 +3114,7 @@ function App() {
               <section className="cards space-top">
                 <div className="card">
                   <div className="card-title">Расшифровка</div>
-                  <div className="card-text">
+                  <div className="card-text table-legend-text">
                     🎯 Точный счёт: 4 очка
                     <br />
                     📏 Разница мячей: 2 очка
@@ -3124,6 +3124,17 @@ function App() {
                     ⛔ Пропущенные матчи: 0 очков
                     <br />
                     ⭐ Доп. прогнозы / бонусы: +5 за каждый угаданный доп. прогноз
+                    <br />
+                    <br />
+                    Коэффициенты плей-офф
+                    <br />
+                    В плей-офф очки за матч умножаются на коэффициент стадии.
+                    <br />
+                    1/16, 1/8: x1
+                    <br />
+                    1/4, 1/2: x2
+                    <br />
+                    Финал, 3-е место: x3
                   </div>
                 </div>
               </section>
