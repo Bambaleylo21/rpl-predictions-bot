@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, urlencode
 
 from aiohttp import web
 from aiogram import Bot, types
-from sqlalchemy import case, false, func, select
+from sqlalchemy import case, false, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
@@ -3476,18 +3476,36 @@ async def predict_current(request: web.Request) -> web.Response:
             if requested_round is not None and int(round_min) <= int(requested_round) <= int(round_max):
                 current_round = int(requested_round)
 
-            matches = (
-                await session.execute(
-                    select(Match)
-                    .where(
-                        Match.tournament_id == int(tournament.id),
-                        Match.round_number == int(current_round),
-                        Match.kickoff_time > now,
-                        Match.is_placeholder == 0,
+            is_wc_playoff_round = (
+                (tournament.code or "").strip().upper() == WC_TOURNAMENT_CODE
+                and int(current_round) in (4, 5, 6, 7, 8, 9)
+            )
+
+            if is_wc_playoff_round:
+                matches = (
+                    await session.execute(
+                        select(Match)
+                        .where(
+                            Match.tournament_id == int(tournament.id),
+                            Match.round_number == int(current_round),
+                            or_(Match.kickoff_time > now, Match.is_placeholder == 1),
+                        )
+                        .order_by(Match.kickoff_time.asc(), Match.id.asc())
                     )
-                    .order_by(Match.kickoff_time.asc(), Match.id.asc())
-                )
-            ).scalars().all()
+                ).scalars().all()
+            else:
+                matches = (
+                    await session.execute(
+                        select(Match)
+                        .where(
+                            Match.tournament_id == int(tournament.id),
+                            Match.round_number == int(current_round),
+                            Match.kickoff_time > now,
+                            Match.is_placeholder == 0,
+                        )
+                        .order_by(Match.kickoff_time.asc(), Match.id.asc())
+                    )
+                ).scalars().all()
 
             match_ids = [int(m.id) for m in matches]
             preds_map: dict[int, Prediction] = {}
@@ -3513,6 +3531,7 @@ async def predict_current(request: web.Request) -> web.Response:
                         "match_id": int(m.id),
                         "home_team": m.home_team,
                         "away_team": m.away_team,
+                        "is_placeholder": int(m.is_placeholder or 0) == 1,
                         "group_label": m.group_label,
                         "kickoff": m.kickoff_time.strftime("%d.%m %H:%M"),
                         "prediction": f"{pred.pred_home}:{pred.pred_away}" if pred is not None else None,

@@ -153,6 +153,7 @@ type PredictCurrentResponse = {
     match_id: number
     home_team: string
     away_team: string
+    is_placeholder?: boolean
     group_label?: string | null
     kickoff: string
     prediction: string | null
@@ -2364,6 +2365,24 @@ function App() {
                             {matches.map((m) => (
                               <div className="compact-match" key={m.match_id}>
                                 {(() => {
+                                  if (m.is_placeholder) {
+                                    return (
+                                      <>
+                                        <div className="compact-meta">
+                                          {m.group_label ? <span className="group-small">[{m.group_label}]</span> : <span className="group-small">—</span>}
+                                          <span className="kickoff-small">{(m.kickoff || '').split(' ')[1] || ''} МСК</span>
+                                        </div>
+                                        <div className="compact-main compact-main-result">
+                                          <span className="team-name team-left">{teamWithFlag(m.home_team)}</span>
+                                          <span className="score-inline-pill">—</span>
+                                          <span className="team-name team-right">{teamWithFlag(m.away_team)}</span>
+                                        </div>
+                                        <div className="compact-note compact-note-under-score">
+                                          <span className="compact-note-under-score-text">Пара определится позже</span>
+                                        </div>
+                                      </>
+                                    )
+                                  }
                                   const currentInput = normalizeScore(scoreInputs[m.match_id] || '')
                                   const savedInput = normalizeScore(m.prediction || '')
                                   const isDirty = currentInput !== savedInput
