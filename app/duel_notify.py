@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from app.audience import is_blocked_send_error, mark_user_blocked
 from app.models import Duel, DuelElo, Match, UserTournament
+from app.notify_prefs import should_send_notification
 
 logger = logging.getLogger(__name__)
 
@@ -108,13 +109,14 @@ async def send_new_duel_challenge_push(bot: Bot, session, *, duel_id: int) -> No
         f"Матч: {match.home_team} — {match.away_team}\n"
         f"Его прогноз: {int(duel.challenger_pred_home)}:{int(duel.challenger_pred_away)}"
     )
-    await _safe_send(
-        bot,
-        session,
-        chat_id=int(duel.opponent_tg_user_id),
-        text=text,
-        reply_markup=_challenge_keyboard(int(duel.id)),
-    )
+    if await should_send_notification(session, int(duel.opponent_tg_user_id), "duels"):
+        await _safe_send(
+            bot,
+            session,
+            chat_id=int(duel.opponent_tg_user_id),
+            text=text,
+            reply_markup=_challenge_keyboard(int(duel.id)),
+        )
 
 
 async def send_duel_accepted_push(bot: Bot, session, *, duel_id: int) -> None:
@@ -138,20 +140,22 @@ async def send_duel_accepted_push(bot: Bot, session, *, duel_id: int) -> None:
         f"✅ {ctx['opponent_name']} ({opponent_rating}) принял твой вызов\n"
         f"Матч: {match.home_team} — {match.away_team}"
     )
-    await _safe_send(
-        bot,
-        session,
-        chat_id=int(duel.challenger_tg_user_id),
-        text=text,
-        reply_markup=_open_duels_keyboard("Открыть 1х1", duel_id=int(duel.id)),
-    )
-    await _safe_send(
-        bot,
-        session,
-        chat_id=int(duel.opponent_tg_user_id),
-        text="✅ Вызов принят\nОткрой 1х1 в Mini App и поставь свой прогноз.",
-        reply_markup=_open_duels_keyboard("Открыть 1х1", duel_id=int(duel.id)),
-    )
+    if await should_send_notification(session, int(duel.challenger_tg_user_id), "duels"):
+        await _safe_send(
+            bot,
+            session,
+            chat_id=int(duel.challenger_tg_user_id),
+            text=text,
+            reply_markup=_open_duels_keyboard("Открыть 1х1", duel_id=int(duel.id)),
+        )
+    if await should_send_notification(session, int(duel.opponent_tg_user_id), "duels"):
+        await _safe_send(
+            bot,
+            session,
+            chat_id=int(duel.opponent_tg_user_id),
+            text="✅ Вызов принят\nОткрой 1х1 в Mini App и поставь свой прогноз.",
+            reply_markup=_open_duels_keyboard("Открыть 1х1", duel_id=int(duel.id)),
+        )
 
 
 async def send_duel_declined_push(bot: Bot, session, *, duel_id: int) -> None:
@@ -164,13 +168,14 @@ async def send_duel_declined_push(bot: Bot, session, *, duel_id: int) -> None:
         f"❌ {ctx['opponent_name']} отклонил твой вызов\n"
         f"Матч: {match.home_team} — {match.away_team}"
     )
-    await _safe_send(
-        bot,
-        session,
-        chat_id=int(duel.challenger_tg_user_id),
-        text=text,
-        reply_markup=_open_duels_keyboard("Открыть 1х1", duel_id=int(duel.id)),
-    )
+    if await should_send_notification(session, int(duel.challenger_tg_user_id), "duels"):
+        await _safe_send(
+            bot,
+            session,
+            chat_id=int(duel.challenger_tg_user_id),
+            text=text,
+            reply_markup=_open_duels_keyboard("Открыть 1х1", duel_id=int(duel.id)),
+        )
 
 
 async def send_duel_finished_pushes(bot: Bot, session, *, events: list[dict[str, Any]]) -> None:
@@ -255,17 +260,19 @@ async def send_duel_finished_pushes(bot: Bot, session, *, events: list[dict[str,
         )
         kb = _open_duels_keyboard("Смотреть 1х1", duel_id=int(duel.id))
 
-        await _safe_send(
-            bot,
-            session,
-            chat_id=int(duel.challenger_tg_user_id),
-            text=text,
-            reply_markup=kb,
-        )
-        await _safe_send(
-            bot,
-            session,
-            chat_id=int(duel.opponent_tg_user_id),
-            text=text,
-            reply_markup=kb,
-        )
+        if await should_send_notification(session, int(duel.challenger_tg_user_id), "duels"):
+            await _safe_send(
+                bot,
+                session,
+                chat_id=int(duel.challenger_tg_user_id),
+                text=text,
+                reply_markup=kb,
+            )
+        if await should_send_notification(session, int(duel.opponent_tg_user_id), "duels"):
+            await _safe_send(
+                bot,
+                session,
+                chat_id=int(duel.opponent_tg_user_id),
+                text=text,
+                reply_markup=kb,
+            )

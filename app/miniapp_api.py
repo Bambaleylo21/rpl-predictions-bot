@@ -30,6 +30,7 @@ from app.display import display_round_name
 from app.duels import create_duel, finalize_duels_for_match, get_duel_hub, respond_duel
 from app.league_table import build_active_stage_league_table
 from app.models import Duel, DuelElo, League, LeagueParticipant, LongtermPrediction, Match, Point, Prediction, Setting, Stage, Tournament, User, UserTournament
+from app.notify_prefs import get_user_notification_prefs, set_user_notification_pref, should_send_notification
 from app.scoring import calculate_points, get_stage_points_multiplier
 
 logger = logging.getLogger(__name__)
@@ -2145,6 +2146,8 @@ async def send_new_achievement_pushes(
             already_sent = (await _get_setting(session, setting_key) or "").strip() == "1"
             if already_sent:
                 continue
+            if not await should_send_notification(session, int(target_tg_user_id), "achievements"):
+                continue
 
             sent = await _safe_send_achievement_push(
                 bot,
@@ -4006,6 +4009,74 @@ async def duels_respond(request: web.Request) -> web.Response:
         )
 
 
+async def notifications_current(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = user.get("id") if isinstance(user, dict) else None
+        if not tg_user_id:
+            return web.json_response({"ok": False, "error": "user_not_found_in_init_data"}, status=400)
+
+        async with SessionLocal() as session:
+            prefs = await get_user_notification_prefs(session, int(tg_user_id))
+
+        return web.json_response(
+            {
+                "ok": True,
+                "all": bool(prefs.get("all", True)),
+                "reminders": bool(prefs.get("reminders", True)),
+                "duels": bool(prefs.get("duels", True)),
+                "achievements": bool(prefs.get("achievements", True)),
+            }
+        )
+    except Exception as e:
+        logger.exception("miniapp notifications_current error")
+        return web.json_response(
+            {"ok": False, "error": "notifications_current_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
+async def notifications_set(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = user.get("id") if isinstance(user, dict) else None
+        if not tg_user_id:
+            return web.json_response({"ok": False, "error": "user_not_found_in_init_data"}, status=400)
+
+        body = await request.json()
+        pref = str(body.get("type") or "").strip().lower()
+        enabled = bool(body.get("enabled"))
+
+        async with SessionLocal() as session:
+            ok = await set_user_notification_pref(session, int(tg_user_id), pref, bool(enabled))
+            if not ok:
+                return web.json_response({"ok": False, "error": "invalid_notification_type"}, status=400)
+            await session.commit()
+            prefs = await get_user_notification_prefs(session, int(tg_user_id))
+
+        return web.json_response(
+            {
+                "ok": True,
+                "all": bool(prefs.get("all", True)),
+                "reminders": bool(prefs.get("reminders", True)),
+                "duels": bool(prefs.get("duels", True)),
+                "achievements": bool(prefs.get("achievements", True)),
+            }
+        )
+    except Exception as e:
+        logger.exception("miniapp notifications_set error")
+        return web.json_response(
+            {"ok": False, "error": "notifications_set_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
 async def table_current(request: web.Request) -> web.Response:
     try:
         auth_result = _extract_verified_user(request)
@@ -4167,6 +4238,8 @@ def build_app() -> web.Application:
     app.router.add_get("/api/miniapp/tournaments", tournaments_list)
     app.router.add_post("/api/miniapp/tournament/select", tournament_select)
     app.router.add_post("/api/miniapp/tournament/join", tournament_join)
+    app.router.add_get("/api/miniapp/notifications/current", notifications_current)
+    app.router.add_post("/api/miniapp/notifications/set", notifications_set)
     app.router.add_get("/api/miniapp/profile", profile)
     app.router.add_get("/api/miniapp/predictions/current", predictions_current)
     app.router.add_get("/api/miniapp/table/current", table_current)

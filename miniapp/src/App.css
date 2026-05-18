@@ -1545,6 +1545,29 @@ body {
   line-height: 1.25;
 }
 
+.profile-notifications {
+  margin-top: var(--vr-md);
+}
+
+.profile-notifications-row {
+  width: 100%;
+  border: 1px solid #2f4777;
+  background: #122345;
+  border-radius: 10px;
+  padding: 11px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #dce9ff;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.profile-notifications-row:active {
+  transform: translateY(1px);
+}
+
 .duel-challenge-title {
   margin-top: var(--vr-md);
 }
@@ -1712,6 +1735,103 @@ body {
   color: #6b7891;
   font-size: 14px;
   font-weight: 700;
+}
+
+.notif-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1210;
+  background: rgba(3, 8, 18, 0.74);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.notif-modal-card {
+  width: min(380px, calc(100vw - 24px));
+  border-radius: 16px;
+  border: 1px solid #2d4474;
+  background: #122345;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.3);
+  padding: 14px 14px 16px;
+  position: relative;
+}
+
+.notif-modal-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  border: 1px solid #3a568d;
+  border-radius: 999px;
+  background: #0f1f3c;
+  color: #bfd2f8;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.notif-modal-title {
+  color: #e9f1ff;
+  font-size: 18px;
+  font-weight: 800;
+  margin-bottom: 10px;
+  padding-right: 36px;
+}
+
+.notif-modal-list {
+  display: grid;
+  gap: 8px;
+}
+
+.notif-switch-row {
+  border: 1px solid #345189;
+  border-radius: 12px;
+  background: #0f1f3c;
+  color: #d9e8ff;
+  min-height: 42px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.notif-switch-row.is-on .notif-switch-pill {
+  border-color: #2f9c57;
+  background: #1f8f4a;
+  color: #f3fff8;
+}
+
+.notif-switch-row.is-off .notif-switch-pill {
+  border-color: #476399;
+  background: #19305d;
+  color: #c8d8f7;
+}
+
+.notif-switch-row.is-disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+.notif-switch-pill {
+  border: 1px solid #476399;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.notif-modal-error {
+  margin-top: 8px;
+  color: #efb2b2;
+  font-size: 12px;
 }
 
 .duel-rules-modal-overlay {

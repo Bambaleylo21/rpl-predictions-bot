@@ -220,6 +220,16 @@ type TournamentsResponse = {
   reason?: string
 }
 
+type NotificationsPrefsResponse = {
+  ok: boolean
+  error?: string
+  reason?: string
+  all?: boolean
+  reminders?: boolean
+  duels?: boolean
+  achievements?: boolean
+}
+
 type LongtermResponse = {
   ok: boolean
   error?: string
@@ -732,6 +742,15 @@ function App() {
   const [achievementsExpanded, setAchievementsExpanded] = useState<boolean>(false)
   const [achievementPreview, setAchievementPreview] = useState<AchievementWithVisual | null>(null)
   const [historyExpanded, setHistoryExpanded] = useState<boolean>(false)
+  const [notifModalOpen, setNotifModalOpen] = useState<boolean>(false)
+  const [notifPrefs, setNotifPrefs] = useState<{ all: boolean; reminders: boolean; duels: boolean; achievements: boolean }>({
+    all: true,
+    reminders: true,
+    duels: true,
+    achievements: true,
+  })
+  const [notifSavingType, setNotifSavingType] = useState<'all' | 'reminders' | 'duels' | 'achievements' | null>(null)
+  const [notifError, setNotifError] = useState<string | null>(null)
   const [currentInsight, setCurrentInsight] = useState<string | null>(null)
   const [adminRounds, setAdminRounds] = useState<AdminRound[]>([])
   const [adminRound, setAdminRound] = useState<number | null>(null)
@@ -1085,6 +1104,33 @@ function App() {
   }, [selectedTournamentCode, profileTargetUserId, refreshTick])
 
   useEffect(() => {
+    const canManagePrefs = Boolean(profileData?.joined && profileData?.is_self_profile !== false)
+    if (!canManagePrefs) return
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    if (!initData) return
+    const headers = { 'X-Telegram-Init-Data': initData }
+
+    fetch(`${apiBase}/api/miniapp/notifications/current`, { headers })
+      .then(async (res) => {
+        const data = (await res.json()) as NotificationsPrefsResponse
+        if (!res.ok || !data.ok) {
+          throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+        }
+        setNotifPrefs({
+          all: Boolean(data.all ?? true),
+          reminders: Boolean(data.reminders ?? true),
+          duels: Boolean(data.duels ?? true),
+          achievements: Boolean(data.achievements ?? true),
+        })
+        setNotifError(null)
+      })
+      .catch((err) => {
+        setNotifError(String(err))
+      })
+  }, [profileData?.joined, profileData?.is_self_profile, selectedTournamentCode, refreshTick])
+
+  useEffect(() => {
     setHistoryExpanded(false)
   }, [selectedTournamentCode, profileTargetUserId, profileData?.viewed_tg_user_id])
 
@@ -1099,6 +1145,11 @@ function App() {
   }, [screen])
 
   useEffect(() => {
+    if (screen === 'profile') return
+    setNotifModalOpen(false)
+  }, [screen])
+
+  useEffect(() => {
     if (!achievementPreview) return
     const onKeyDown = (ev: KeyboardEvent) => {
       if (ev.key === 'Escape') {
@@ -1110,6 +1161,19 @@ function App() {
       window.removeEventListener('keydown', onKeyDown)
     }
   }, [achievementPreview])
+
+  useEffect(() => {
+    if (!notifModalOpen) return
+    const onKeyDown = (ev: KeyboardEvent) => {
+      if (ev.key === 'Escape') {
+        setNotifModalOpen(false)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [notifModalOpen])
 
   useEffect(() => {
     if (screen !== 'profile') return
@@ -1260,6 +1324,41 @@ function App() {
       setTournamentNotice('Не удалось вступить в турнир. Попробуй ещё раз.')
     } finally {
       setJoinBusy(false)
+    }
+  }
+
+  const updateNotifPref = async (
+    type: 'all' | 'reminders' | 'duels' | 'achievements',
+    enabled: boolean
+  ) => {
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    if (!initData) return
+    setNotifSavingType(type)
+    setNotifError(null)
+    try {
+      const res = await fetch(`${apiBase}/api/miniapp/notifications/set`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Telegram-Init-Data': initData,
+        },
+        body: JSON.stringify({ type, enabled }),
+      })
+      const data = (await res.json()) as NotificationsPrefsResponse
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      setNotifPrefs({
+        all: Boolean(data.all ?? true),
+        reminders: Boolean(data.reminders ?? true),
+        duels: Boolean(data.duels ?? true),
+        achievements: Boolean(data.achievements ?? true),
+      })
+    } catch (err) {
+      setNotifError(String(err))
+    } finally {
+      setNotifSavingType(null)
     }
   }
 
@@ -1999,6 +2098,7 @@ function App() {
       : null
   const legacyTrophies = profileData?.legacy_trophies || []
   const tournamentHistory = profileData?.tournament_history || []
+  const notificationsSummary = notifPrefs.all ? 'Включены' : 'Отключены'
   const medalGold =
     legacyTrophies.filter((h) => h.place === 1).length +
     tournamentHistory.filter((h) => h.place === 1).length
@@ -2742,6 +2842,19 @@ function App() {
                       <div className="card-text">Пока нет завершённых турниров в истории.</div>
                     ) : null}
                   </div>
+
+                  {profileData.is_self_profile !== false ? (
+                    <div className="profile-notifications">
+                      <button
+                        type="button"
+                        className="profile-notifications-row"
+                        onClick={() => setNotifModalOpen(true)}
+                      >
+                        <span>Уведомления</span>
+                        <b>{notificationsSummary}</b>
+                      </button>
+                    </div>
+                  ) : null}
                 </>
               ) : (
                 <div className="card-text">{profileData.message || 'Пока нет активного участия в турнире.'}</div>
@@ -3649,6 +3762,47 @@ function App() {
               ) : !achievementPreviewIsLockedHint ? (
                 <div className="achievement-modal-meta">{achievementPreview.earned ? 'Получена' : 'Не получена'}</div>
               ) : null}
+            </div>
+          </div>
+        ) : null}
+
+        {notifModalOpen ? (
+          <div className="notif-modal-overlay" onClick={() => setNotifModalOpen(false)}>
+            <div className="notif-modal-card" onClick={(ev) => ev.stopPropagation()}>
+              <button
+                type="button"
+                className="notif-modal-close"
+                onClick={() => setNotifModalOpen(false)}
+                aria-label="Закрыть"
+              >
+                ✕
+              </button>
+              <div className="notif-modal-title">Уведомления</div>
+              <div className="notif-modal-list">
+                {[
+                  { key: 'all', label: 'Все уведомления' },
+                  { key: 'reminders', label: 'Напоминания о матчах' },
+                  { key: 'duels', label: 'События 1x1' },
+                  { key: 'achievements', label: 'Новые ачивки' },
+                ].map((item) => {
+                  const key = item.key as 'all' | 'reminders' | 'duels' | 'achievements'
+                  const enabled = Boolean(notifPrefs[key])
+                  const disabled = notifSavingType !== null
+                  return (
+                    <button
+                      key={item.key}
+                      type="button"
+                      className={`notif-switch-row ${enabled ? 'is-on' : 'is-off'} ${disabled ? 'is-disabled' : ''}`}
+                      onClick={() => updateNotifPref(key, !enabled)}
+                      disabled={disabled}
+                    >
+                      <span>{item.label}</span>
+                      <span className="notif-switch-pill">{enabled ? 'Вкл' : 'Выкл'}</span>
+                    </button>
+                  )
+                })}
+              </div>
+              {notifError && showDebugPanels ? <div className="notif-modal-error">Debug: {notifError}</div> : null}
             </div>
           </div>
         ) : null}

@@ -12,6 +12,7 @@ from sqlalchemy import select
 
 from app.audience import is_blocked_send_error, mark_user_blocked
 from app.models import Match, Prediction, Setting, Tournament, UserTournament
+from app.notify_prefs import should_send_notification
 
 logger = logging.getLogger(__name__)
 MINIAPP_WEB_URL = os.getenv("MINIAPP_WEB_URL", "https://rpl-predictions-bot-mini-app.onrender.com").strip()
@@ -218,6 +219,8 @@ async def _process_reminders_once(bot, session_factory) -> int:
             tournament_code = t_code_q.scalar_one_or_none()
 
             for tg_user_id in user_ids:
+                if not await should_send_notification(session, int(tg_user_id), "reminders"):
+                    continue
                 predicted_ids = user_predicted_ids.get(tg_user_id, set())
                 missing_matches = [m for m in kickoff_matches if m.id not in predicted_ids]
                 if not missing_matches:
