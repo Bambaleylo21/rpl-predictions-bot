@@ -2744,7 +2744,7 @@ function App() {
                           className="profile-history-toggle"
                           onClick={() => setAchievementsExpanded((v) => !v)}
                         >
-                          {achievementsExpanded ? 'Скрыть' : 'Показать больше'}
+                          {achievementsExpanded ? 'Скрыть' : 'Показать'}
                         </button>
                       ) : null}
                     </div>
