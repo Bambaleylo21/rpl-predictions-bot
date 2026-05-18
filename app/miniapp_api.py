@@ -1230,6 +1230,65 @@ async def admin_playoff_slot_fill(request: web.Request) -> web.Response:
         )
 
 
+async def admin_playoff_slot_clear(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_admin_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = int(user.get("id"))
+
+        body = await request.json()
+        match_id = int(body.get("match_id") or 0)
+        if match_id <= 0:
+            return web.json_response({"ok": False, "error": "invalid_payload"}, status=400)
+
+        async with SessionLocal() as session:
+            tournament = await _resolve_tournament(session, tg_user_id, requested_code=request.query.get("t"))
+            if (tournament.code or "").strip().upper() != WC_TOURNAMENT_CODE:
+                return web.json_response({"ok": False, "error": "playoff_slots_only_for_wc2026"}, status=400)
+
+            match = (
+                await session.execute(
+                    select(Match).where(
+                        Match.id == int(match_id),
+                        Match.tournament_id == int(tournament.id),
+                        Match.round_number.in_([4, 5, 6, 7, 8, 9]),
+                    )
+                )
+            ).scalar_one_or_none()
+            if match is None:
+                return web.json_response({"ok": False, "error": "match_not_found"}, status=404)
+
+            await session.execute(Point.__table__.delete().where(Point.match_id == int(match_id)))
+            await session.execute(Prediction.__table__.delete().where(Prediction.match_id == int(match_id)))
+            await session.execute(Duel.__table__.delete().where(Duel.match_id == int(match_id)))
+
+            match.home_team = "—"
+            match.away_team = "—"
+            match.home_score = None
+            match.away_score = None
+            match.is_placeholder = 1
+            await session.commit()
+
+        return web.json_response(
+            {
+                "ok": True,
+                "trusted": True,
+                "is_admin": True,
+                "match_id": int(match_id),
+            }
+        )
+    except (ValueError, TypeError):
+        return web.json_response({"ok": False, "error": "invalid_payload"}, status=400)
+    except Exception as e:
+        logger.exception("miniapp admin_playoff_slot_clear error")
+        return web.json_response(
+            {"ok": False, "error": "admin_playoff_slot_clear_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
 async def admin_longterm_current(request: web.Request) -> web.Response:
     try:
         auth_result = _extract_verified_admin_user(request)
@@ -4271,6 +4330,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/miniapp/admin/playoff_slots/current", admin_playoff_slots_current)
     app.router.add_post("/api/miniapp/admin/playoff_slots/init", admin_playoff_slots_init)
     app.router.add_post("/api/miniapp/admin/playoff_slots/fill", admin_playoff_slot_fill)
+    app.router.add_post("/api/miniapp/admin/playoff_slots/clear", admin_playoff_slot_clear)
     app.router.add_get("/api/miniapp/admin/longterm/current", admin_longterm_current)
     app.router.add_post("/api/miniapp/admin/longterm/set", admin_longterm_set)
     return app

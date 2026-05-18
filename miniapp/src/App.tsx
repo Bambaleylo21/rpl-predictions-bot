@@ -1790,6 +1790,39 @@ function App() {
     }
   }
 
+  const clearAdminPlayoffSlot = async (matchId: number) => {
+    const confirmed = window.confirm('Очистить слот? Команды, результат, прогнозы и очки по матчу будут удалены.')
+    if (!confirmed) return
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    setAdminPlayoffSavingMatchId(matchId)
+    setAdminNotice(null)
+    try {
+      const tParam = encodeURIComponent(selectedTournamentCode || 'RPL')
+      const res = await fetch(`${apiBase}/api/miniapp/admin/playoff_slots/clear?t=${tParam}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Telegram-Init-Data': initData,
+        },
+        body: JSON.stringify({ match_id: matchId }),
+      })
+      const data = (await res.json()) as { ok?: boolean; error?: string; reason?: string }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      setAdminNotice('Слот очищен.')
+      await loadAdminPlayoffSlots(apiBase, initData, selectedTournamentCode)
+      if (adminRound != null) {
+        await loadAdminResults(apiBase, initData, selectedTournamentCode, adminRound, adminMode)
+      }
+    } catch (err) {
+      setAdminNotice(`Ошибка очистки слота: ${String(err)}`)
+    } finally {
+      setAdminPlayoffSavingMatchId(null)
+    }
+  }
+
   useEffect(() => {
     if (!meData?.is_admin) {
       setAdminRounds([])
@@ -3592,6 +3625,13 @@ function App() {
                               disabled={adminPlayoffSavingMatchId === m.match_id}
                             >
                               {adminPlayoffSavingMatchId === m.match_id ? '…' : '✓'}
+                            </button>
+                            <button
+                              className="admin-playoff-clear-btn"
+                              onClick={() => clearAdminPlayoffSlot(m.match_id)}
+                              disabled={adminPlayoffSavingMatchId === m.match_id}
+                            >
+                              Очистить
                             </button>
                           </div>
                           <div className="compact-note">
