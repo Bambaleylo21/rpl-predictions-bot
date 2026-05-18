@@ -1060,6 +1060,162 @@ async def admin_result_reset(request: web.Request) -> web.Response:
         )
 
 
+async def admin_participants_current(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_admin_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = int(user.get("id"))
+
+        async with SessionLocal() as session:
+            tournament = await _resolve_tournament(session, tg_user_id, requested_code=request.query.get("t"))
+            rows = (
+                await session.execute(
+                    select(
+                        UserTournament.tg_user_id,
+                        UserTournament.display_name,
+                        UserTournament.bonus_points,
+                        UserTournament.created_at,
+                    )
+                    .where(UserTournament.tournament_id == int(tournament.id))
+                    .order_by(UserTournament.created_at.asc(), UserTournament.id.asc())
+                )
+            ).all()
+            await session.commit()
+
+        items = [
+            {
+                "tg_user_id": int(uid),
+                "display_name": str(name or f"ID {int(uid)}"),
+                "bonus_points": int(bonus or 0),
+                "joined_at": created_at.strftime("%d.%m %H:%M") if created_at is not None else "",
+            }
+            for uid, name, bonus, created_at in rows
+        ]
+        return web.json_response(
+            {
+                "ok": True,
+                "trusted": True,
+                "is_admin": True,
+                "tournament_code": tournament.code,
+                "tournament_name": tournament.name,
+                "items": items,
+            }
+        )
+    except Exception as e:
+        logger.exception("miniapp admin_participants_current error")
+        return web.json_response(
+            {"ok": False, "error": "admin_participants_current_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
+async def admin_participant_remove(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_admin_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        admin_tg_user_id = int(user.get("id"))
+
+        body = await request.json()
+        target_tg_user_id = int(body.get("tg_user_id") or 0)
+        if target_tg_user_id <= 0:
+            return web.json_response({"ok": False, "error": "invalid_payload"}, status=400)
+
+        async with SessionLocal() as session:
+            tournament = await _resolve_tournament(session, admin_tg_user_id, requested_code=request.query.get("t"))
+
+            ut = (
+                await session.execute(
+                    select(UserTournament).where(
+                        UserTournament.tournament_id == int(tournament.id),
+                        UserTournament.tg_user_id == int(target_tg_user_id),
+                    )
+                )
+            ).scalar_one_or_none()
+            if ut is None:
+                return web.json_response({"ok": False, "error": "participant_not_found"}, status=404)
+
+            tournament_match_ids_q = await session.execute(
+                select(Match.id).where(Match.tournament_id == int(tournament.id))
+            )
+            tournament_match_ids = [int(r[0]) for r in tournament_match_ids_q.all()]
+
+            deleted_points = 0
+            deleted_predictions = 0
+            deleted_longterm = 0
+            deleted_duels = 0
+            deleted_elo = 0
+            if tournament_match_ids:
+                del_pts = await session.execute(
+                    Point.__table__.delete().where(
+                        Point.tg_user_id == int(target_tg_user_id),
+                        Point.match_id.in_(tournament_match_ids),
+                    )
+                )
+                deleted_points = int(getattr(del_pts, "rowcount", 0) or 0)
+
+                del_preds = await session.execute(
+                    Prediction.__table__.delete().where(
+                        Prediction.tg_user_id == int(target_tg_user_id),
+                        Prediction.match_id.in_(tournament_match_ids),
+                    )
+                )
+                deleted_predictions = int(getattr(del_preds, "rowcount", 0) or 0)
+
+                del_duels = await session.execute(
+                    Duel.__table__.delete().where(
+                        Duel.tournament_id == int(tournament.id),
+                        Duel.match_id.in_(tournament_match_ids),
+                        ((Duel.challenger_tg_user_id == int(target_tg_user_id)) | (Duel.opponent_tg_user_id == int(target_tg_user_id))),
+                    )
+                )
+                deleted_duels = int(getattr(del_duels, "rowcount", 0) or 0)
+
+            del_longterm = await session.execute(
+                LongtermPrediction.__table__.delete().where(
+                    LongtermPrediction.tournament_id == int(tournament.id),
+                    LongtermPrediction.tg_user_id == int(target_tg_user_id),
+                )
+            )
+            deleted_longterm = int(getattr(del_longterm, "rowcount", 0) or 0)
+
+            del_elo = await session.execute(
+                DuelElo.__table__.delete().where(
+                    DuelElo.tournament_id == int(tournament.id),
+                    DuelElo.tg_user_id == int(target_tg_user_id),
+                )
+            )
+            deleted_elo = int(getattr(del_elo, "rowcount", 0) or 0)
+
+            await session.delete(ut)
+            await session.commit()
+
+        return web.json_response(
+            {
+                "ok": True,
+                "trusted": True,
+                "is_admin": True,
+                "removed_tg_user_id": int(target_tg_user_id),
+                "deleted_points": deleted_points,
+                "deleted_predictions": deleted_predictions,
+                "deleted_longterm": deleted_longterm,
+                "deleted_duels": deleted_duels,
+                "deleted_elo": deleted_elo,
+            }
+        )
+    except (ValueError, TypeError):
+        return web.json_response({"ok": False, "error": "invalid_payload"}, status=400)
+    except Exception as e:
+        logger.exception("miniapp admin_participant_remove error")
+        return web.json_response(
+            {"ok": False, "error": "admin_participant_remove_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
 async def admin_recalc_round(request: web.Request) -> web.Response:
     try:
         auth_result = _extract_verified_admin_user(request)
@@ -4441,6 +4597,8 @@ def build_app() -> web.Application:
     app.router.add_post("/api/miniapp/duels/respond", duels_respond)
     app.router.add_get("/api/miniapp/admin/rounds", admin_rounds)
     app.router.add_get("/api/miniapp/admin/results/current", admin_results_current)
+    app.router.add_get("/api/miniapp/admin/participants/current", admin_participants_current)
+    app.router.add_post("/api/miniapp/admin/participant/remove", admin_participant_remove)
     app.router.add_post("/api/miniapp/admin/result/set", admin_result_set)
     app.router.add_post("/api/miniapp/admin/result/reset", admin_result_reset)
     app.router.add_post("/api/miniapp/admin/recalc_round", admin_recalc_round)

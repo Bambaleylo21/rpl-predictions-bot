@@ -671,6 +671,10 @@ body {
   grid-template-columns: 1fr 58px 1fr 34px auto;
 }
 
+.admin-participant-main {
+  grid-template-columns: 1fr auto auto;
+}
+
 .team-name {
   font-size: 15px;
   color: var(--text-strong);

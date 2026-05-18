@@ -393,6 +393,20 @@ type AdminPlayoffSlotsCurrentResponse = {
   items?: AdminPlayoffSlotItem[]
 }
 
+type AdminParticipantItem = {
+  tg_user_id: number
+  display_name: string
+  bonus_points: number
+  joined_at: string
+}
+
+type AdminParticipantsCurrentResponse = {
+  ok: boolean
+  error?: string
+  reason?: string
+  items?: AdminParticipantItem[]
+}
+
 const ENGLAND_FLAG = String.fromCodePoint(
   0x1f3f4,
   0xe0067,
@@ -754,7 +768,7 @@ function App() {
   const [currentInsight, setCurrentInsight] = useState<string | null>(null)
   const [adminRounds, setAdminRounds] = useState<AdminRound[]>([])
   const [adminRound, setAdminRound] = useState<number | null>(null)
-  const [adminViewMode, setAdminViewMode] = useState<'matches' | 'playoff' | 'longterm'>('matches')
+  const [adminViewMode, setAdminViewMode] = useState<'matches' | 'playoff' | 'longterm' | 'participants'>('matches')
   const [adminMode, setAdminMode] = useState<'open' | 'all'>('open')
   const [adminResults, setAdminResults] = useState<AdminResultItem[]>([])
   const [adminRoundName, setAdminRoundName] = useState<string>('')
@@ -772,6 +786,8 @@ function App() {
   const [adminPlayoffInitLoading, setAdminPlayoffInitLoading] = useState<boolean>(false)
   const [adminPlayoffSavingMatchId, setAdminPlayoffSavingMatchId] = useState<number | null>(null)
   const [adminPlayoffTeamInputs, setAdminPlayoffTeamInputs] = useState<Record<number, { home_team: string; away_team: string }>>({})
+  const [adminParticipants, setAdminParticipants] = useState<AdminParticipantItem[]>([])
+  const [adminRemovingUserId, setAdminRemovingUserId] = useState<number | null>(null)
   const [adminError, setAdminError] = useState<string | null>(null)
   const [adminNotice, setAdminNotice] = useState<string | null>(null)
   const [adminSavingMatchId, setAdminSavingMatchId] = useState<number | null>(null)
@@ -1609,6 +1625,17 @@ function App() {
     setAdminPlayoffTeamInputs(nextInputs)
   }
 
+  const loadAdminParticipants = async (apiBase: string, initData: string, tournamentCode: string) => {
+    const headers = { 'X-Telegram-Init-Data': initData }
+    const tParam = encodeURIComponent(tournamentCode || 'RPL')
+    const res = await fetch(`${apiBase}/api/miniapp/admin/participants/current?t=${tParam}`, { headers })
+    const data = (await res.json()) as AdminParticipantsCurrentResponse
+    if (!res.ok || !data.ok) {
+      throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+    }
+    setAdminParticipants(data.items || [])
+  }
+
   const saveAdminResult = async (matchId: number) => {
     const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
     const initData = getInitData()
@@ -1885,6 +1912,47 @@ function App() {
     }
   }
 
+  const removeAdminParticipant = async (targetTgUserId: number) => {
+    const target = adminParticipants.find((u) => Number(u.tg_user_id) === Number(targetTgUserId))
+    const label = target?.display_name || `ID ${targetTgUserId}`
+    const confirmed = window.confirm(`Удалить ${label} из турнира ${selectedTournamentCode}?`)
+    if (!confirmed) return
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    setAdminRemovingUserId(targetTgUserId)
+    setAdminNotice(null)
+    try {
+      const tParam = encodeURIComponent(selectedTournamentCode || 'RPL')
+      const res = await fetch(`${apiBase}/api/miniapp/admin/participant/remove?t=${tParam}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Telegram-Init-Data': initData,
+        },
+        body: JSON.stringify({ tg_user_id: targetTgUserId }),
+      })
+      const data = (await res.json()) as {
+        ok?: boolean
+        error?: string
+        reason?: string
+        deleted_predictions?: number
+        deleted_points?: number
+        deleted_duels?: number
+      }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      setAdminNotice(
+        `Участник удалён из турнира. Прогнозы: ${data.deleted_predictions ?? 0}, очки: ${data.deleted_points ?? 0}, дуэли: ${data.deleted_duels ?? 0}`
+      )
+      await loadAdminParticipants(apiBase, initData, selectedTournamentCode)
+    } catch (err) {
+      setAdminNotice(`Ошибка удаления участника: ${String(err)}`)
+    } finally {
+      setAdminRemovingUserId(null)
+    }
+  }
+
   useEffect(() => {
     if (!meData?.is_admin) {
       setAdminRounds([])
@@ -1950,6 +2018,21 @@ function App() {
     loadAdminPlayoffSlots(apiBase, initData, selectedTournamentCode)
       .then(() => setAdminError(null))
       .catch((err) => setAdminError(String(err)))
+  }, [meData?.is_admin, selectedTournamentCode, adminViewMode])
+
+  useEffect(() => {
+    if (!meData?.is_admin) return
+    if (adminViewMode !== 'participants') return
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    if (!initData || !selectedTournamentCode) return
+
+    loadAdminParticipants(apiBase, initData, selectedTournamentCode)
+      .then(() => setAdminError(null))
+      .catch((err) => {
+        setAdminError(String(err))
+        setAdminParticipants([])
+      })
   }, [meData?.is_admin, selectedTournamentCode, adminViewMode])
 
   useEffect(() => {
@@ -3527,6 +3610,12 @@ function App() {
                       Доп. прогнозы
                     </button>
                   ) : null}
+                  <button
+                    className={`tournament-chip ${adminViewMode === 'participants' ? 'is-active' : ''}`}
+                    onClick={() => setAdminViewMode('participants')}
+                  >
+                    Участники
+                  </button>
                 </div>
 
                 {adminViewMode === 'matches' ? (
@@ -3570,6 +3659,10 @@ function App() {
                     <>
                       Доп. прогнозы: участников <b>{adminLongtermParticipants}</b> · угадали победителя: <b>{adminLongtermWinnerAwarded}</b> · угадали
                       бомбардира: <b>{adminLongtermScorerAwarded}</b>
+                    </>
+                  ) : adminViewMode === 'participants' ? (
+                    <>
+                      Участников в турнире: <b>{adminParticipants.length}</b>
                     </>
                   ) : (
                     'Выбери тур.'
@@ -3712,7 +3805,7 @@ function App() {
                   )}
                 </div>
               </section>
-            ) : (
+            ) : adminViewMode === 'longterm' ? (
               <section className="cards space-top">
                 <div className="card">
                   <div className="card-title">Итоги доп. прогнозов</div>
@@ -3765,6 +3858,33 @@ function App() {
                   >
                     Сбросить итоги доп. прогнозов
                   </button>
+                </div>
+              </section>
+            ) : (
+              <section className="cards space-top">
+                <div className="card compact-list-card">
+                  {adminParticipants.length === 0 ? (
+                    <div className="card-text">Участников в выбранном турнире пока нет.</div>
+                  ) : (
+                    adminParticipants.map((u) => (
+                      <div className="compact-match" key={`admin-p-${u.tg_user_id}`}>
+                        <div className="compact-main admin-participant-main">
+                          <span className="team-name team-left">{u.display_name}</span>
+                          <span className="group-small">ID {u.tg_user_id}</span>
+                          <button
+                            className="admin-reset-btn"
+                            onClick={() => removeAdminParticipant(u.tg_user_id)}
+                            disabled={adminRemovingUserId === u.tg_user_id}
+                          >
+                            {adminRemovingUserId === u.tg_user_id ? '…' : 'Удалить'}
+                          </button>
+                        </div>
+                        <div className="compact-note">
+                          Вступил: <b>{u.joined_at || '—'}</b> · Бонус: <b>{u.bonus_points || 0}</b>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </section>
             )}
