@@ -30,7 +30,7 @@ from app.display import display_round_name
 from app.duels import create_duel, finalize_duels_for_match, get_duel_hub, respond_duel
 from app.league_table import build_active_stage_league_table
 from app.models import Duel, DuelElo, League, LeagueParticipant, LongtermPrediction, Match, Point, Prediction, Setting, Stage, Tournament, User, UserTournament
-from app.scoring import calculate_points
+from app.scoring import calculate_points, get_stage_points_multiplier
 
 logger = logging.getLogger(__name__)
 MSK_TZ = timezone(timedelta(hours=3))
@@ -620,6 +620,13 @@ async def _recalc_points_for_match_in_session(session, match_id: int) -> int:
     match = (await session.execute(select(Match).where(Match.id == int(match_id)))).scalar_one_or_none()
     if match is None or match.home_score is None or match.away_score is None:
         return 0
+    tournament = (
+        await session.execute(select(Tournament).where(Tournament.id == int(match.tournament_id)))
+    ).scalar_one_or_none()
+    multiplier = get_stage_points_multiplier(
+        tournament_code=(tournament.code if tournament else None),
+        round_number=int(match.round_number or 0),
+    )
 
     preds = (await session.execute(select(Prediction).where(Prediction.match_id == int(match_id)))).scalars().all()
     for p in preds:
@@ -629,6 +636,7 @@ async def _recalc_points_for_match_in_session(session, match_id: int) -> int:
             real_home=int(match.home_score),
             real_away=int(match.away_score),
         )
+        weighted_points = int(calc.points) * int(multiplier)
         point = (
             await session.execute(
                 select(Point).where(
@@ -642,13 +650,13 @@ async def _recalc_points_for_match_in_session(session, match_id: int) -> int:
                 Point(
                     match_id=int(match_id),
                     tg_user_id=int(p.tg_user_id),
-                    points=int(calc.points),
+                    points=int(weighted_points),
                     category=str(calc.category),
                 )
             )
             updates += 1
-        elif int(point.points or 0) != int(calc.points) or str(point.category or "") != str(calc.category):
-            point.points = int(calc.points)
+        elif int(point.points or 0) != int(weighted_points) or str(point.category or "") != str(calc.category):
+            point.points = int(weighted_points)
             point.category = str(calc.category)
             updates += 1
     return updates

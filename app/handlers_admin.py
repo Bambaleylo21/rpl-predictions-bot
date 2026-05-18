@@ -36,7 +36,7 @@ from app.models import (
     UserTournament,
 )
 from app.league_table import build_active_stage_league_table
-from app.scoring import calculate_points
+from app.scoring import calculate_points, get_stage_points_multiplier
 from app.season_setup import (
     DEFAULT_SEASON_NAME,
     DEFAULT_STAGE_1_NAME,
@@ -191,6 +191,12 @@ async def recalc_points_for_match_in_session(session, match_id: int) -> int:
 
     if match.home_score is None or match.away_score is None:
         return 0
+    res_tournament = await session.execute(select(Tournament).where(Tournament.id == int(match.tournament_id)))
+    tournament = res_tournament.scalar_one_or_none()
+    multiplier = get_stage_points_multiplier(
+        tournament_code=(tournament.code if tournament else None),
+        round_number=int(match.round_number or 0),
+    )
 
     res_preds = await session.execute(select(Prediction).where(Prediction.match_id == match_id))
     preds = res_preds.scalars().all()
@@ -202,7 +208,7 @@ async def recalc_points_for_match_in_session(session, match_id: int) -> int:
             real_home=match.home_score,
             real_away=match.away_score,
         )
-        pts = calc.points
+        pts = int(calc.points) * int(multiplier)
         cat = calc.category
 
         res_point = await session.execute(
