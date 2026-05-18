@@ -3022,6 +3022,7 @@ async def _build_overall_table_rows(
                 "tg_user_id": int(tg_user_id),
                 "name": str(name),
                 "total": int(total or 0) + int(bonus_points or 0),
+                "bonus_points": int(bonus_points or 0),
                 "exact": int(exact or 0),
                 "diff": int(diff or 0),
                 "outcome": int(outcome or 0),

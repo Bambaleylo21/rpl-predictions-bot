@@ -318,6 +318,7 @@ async def build_active_stage_league_table(
                     "tg_user_id": tgid,
                     "name": _resolve_name(lp_name, ut_name, u_name, username, full_name, tgid),
                     "total": total,
+                    "bonus_points": int(ut_bonus or 0),
                     "exact": exact,
                     "diff": diff,
                     "outcome": outcome,

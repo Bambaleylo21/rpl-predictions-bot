@@ -183,6 +183,7 @@ type TableResponse = {
     place: number
     name: string
     total: number
+    bonus_points?: number
     exact: number
     diff: number
     outcome: number
@@ -3189,8 +3190,7 @@ function App() {
                   </div>
 
                   {tableRowsSorted.map((r) => {
-                    const basePoints = (r.exact * 4) + (r.diff * 2) + (r.outcome * 1)
-                    const bonusPoints = Math.max(0, (r.total ?? 0) - basePoints)
+                    const bonusPoints = Math.max(0, Number(r.bonus_points ?? 0))
                     return (
                       <div
                         className={`table-grid table-grid-row ${tableData?.user_place === r.place ? 'is-user' : ''}`}
