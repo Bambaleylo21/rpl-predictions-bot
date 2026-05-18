@@ -1644,6 +1644,38 @@ function App() {
     }
   }
 
+  const resetAdminResult = async (matchId: number) => {
+    const confirmed = window.confirm('Сбросить итог этого матча? Начисленные очки по матчу будут удалены.')
+    if (!confirmed) return
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    setAdminSavingMatchId(matchId)
+    setAdminNotice(null)
+    try {
+      const tParam = encodeURIComponent(selectedTournamentCode || 'RPL')
+      const res = await fetch(`${apiBase}/api/miniapp/admin/result/reset?t=${tParam}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Telegram-Init-Data': initData,
+        },
+        body: JSON.stringify({ match_id: matchId }),
+      })
+      const data = (await res.json()) as { ok?: boolean; error?: string; reason?: string; deleted_points?: number }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      setAdminNotice(`Итог матча сброшен. Удалено очков: ${data.deleted_points ?? 0}`)
+      if (adminRound != null) {
+        await loadAdminResults(apiBase, initData, selectedTournamentCode, adminRound, adminMode)
+      }
+    } catch (err) {
+      setAdminNotice(`Ошибка сброса: ${String(err)}`)
+    } finally {
+      setAdminSavingMatchId(null)
+    }
+  }
+
   const recalcAdminRound = async () => {
     if (adminRound == null) return
     const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
@@ -1719,6 +1751,36 @@ function App() {
       await loadAdminLongtermCurrent(apiBase, initData, selectedTournamentCode)
     } catch (err) {
       setAdminNotice(`Ошибка сохранения доп. прогнозов: ${String(err)}`)
+    } finally {
+      setAdminLongtermSaving(false)
+    }
+  }
+
+  const resetAdminLongterm = async () => {
+    const confirmed = window.confirm('Сбросить факт доп. прогнозов? Это очистит бонусные очки у всех участников.')
+    if (!confirmed) return
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    setAdminLongtermSaving(true)
+    setAdminNotice(null)
+    try {
+      const tParam = encodeURIComponent(selectedTournamentCode || 'RPL')
+      const res = await fetch(`${apiBase}/api/miniapp/admin/longterm/reset?t=${tParam}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Telegram-Init-Data': initData,
+        },
+      })
+      const data = (await res.json()) as { ok?: boolean; error?: string; reason?: string; reset_participants?: number }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      setAdminNotice(`Доп. прогнозы сброшены. Обновлено участников: ${data.reset_participants ?? 0}`)
+      await loadAdminLongtermCurrent(apiBase, initData, selectedTournamentCode)
+      await loadAdminResults(apiBase, initData, selectedTournamentCode, adminRound || 1, adminMode)
+    } catch (err) {
+      setAdminNotice(`Ошибка сброса доп. прогнозов: ${String(err)}`)
     } finally {
       setAdminLongtermSaving(false)
     }
@@ -3564,6 +3626,13 @@ function App() {
                           >
                             {adminSavingMatchId === m.match_id ? '…' : '✓'}
                           </button>
+                          <button
+                            className="admin-reset-btn"
+                            onClick={() => resetAdminResult(m.match_id)}
+                            disabled={adminSavingMatchId === m.match_id || !m.result}
+                          >
+                            Сброс
+                          </button>
                         </div>
                         <div className="compact-note">
                           Итог: <b>{m.result || 'не задан'}</b> · Прогнозов: <b>{m.predictions_count ?? 0}</b>
@@ -3688,6 +3757,13 @@ function App() {
                     disabled={adminLongtermSaving || !adminLongtermWinner || !adminLongtermScorer}
                   >
                     {adminLongtermSaving ? 'Сохраняю…' : 'Сохранить и пересчитать'}
+                  </button>
+                  <button
+                    className="admin-reset-btn admin-reset-btn-wide"
+                    onClick={resetAdminLongterm}
+                    disabled={adminLongtermSaving}
+                  >
+                    Сбросить итоги доп. прогнозов
                   </button>
                 </div>
               </section>

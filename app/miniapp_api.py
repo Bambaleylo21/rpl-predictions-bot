@@ -988,6 +988,78 @@ async def admin_result_set(request: web.Request) -> web.Response:
         )
 
 
+async def admin_result_reset(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_admin_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = int(user.get("id"))
+
+        body = await request.json()
+        match_id = int(body.get("match_id") or 0)
+        if match_id <= 0:
+            return web.json_response({"ok": False, "error": "invalid_payload"}, status=400)
+
+        async with SessionLocal() as session:
+            tournament = await _resolve_tournament(session, tg_user_id, requested_code=request.query.get("t"))
+            match = (
+                await session.execute(
+                    select(Match).where(
+                        Match.id == int(match_id),
+                        Match.tournament_id == int(tournament.id),
+                        Match.is_placeholder == 0,
+                    )
+                )
+            ).scalar_one_or_none()
+            if match is None:
+                return web.json_response({"ok": False, "error": "match_not_found"}, status=404)
+
+            duel_finished_cnt = int(
+                (
+                    await session.execute(
+                        select(func.count(Duel.id)).where(
+                            Duel.match_id == int(match_id),
+                            Duel.status == "finished",
+                        )
+                    )
+                ).scalar_one()
+                or 0
+            )
+            if duel_finished_cnt > 0:
+                return web.json_response(
+                    {
+                        "ok": False,
+                        "error": "duels_finished_present",
+                        "reason": "По матчу есть завершённые дуэли 1x1. Сброс результата заблокирован для защиты Elo.",
+                    },
+                    status=400,
+                )
+
+            deleted_points = await session.execute(Point.__table__.delete().where(Point.match_id == int(match_id)))
+            match.home_score = None
+            match.away_score = None
+            await session.commit()
+
+        return web.json_response(
+            {
+                "ok": True,
+                "trusted": True,
+                "is_admin": True,
+                "match_id": int(match_id),
+                "deleted_points": int(getattr(deleted_points, "rowcount", 0) or 0),
+            }
+        )
+    except (ValueError, TypeError):
+        return web.json_response({"ok": False, "error": "invalid_payload"}, status=400)
+    except Exception as e:
+        logger.exception("miniapp admin_result_reset error")
+        return web.json_response(
+            {"ok": False, "error": "admin_result_reset_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
 async def admin_recalc_round(request: web.Request) -> web.Response:
     try:
         auth_result = _extract_verified_admin_user(request)
@@ -1470,6 +1542,50 @@ async def admin_longterm_set(request: web.Request) -> web.Response:
         logger.exception("miniapp admin_longterm_set error")
         return web.json_response(
             {"ok": False, "error": "admin_longterm_set_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
+async def admin_longterm_reset(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_admin_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = int(user.get("id"))
+
+        async with SessionLocal() as session:
+            tournament = await _resolve_tournament(session, tg_user_id, requested_code=request.query.get("t"))
+            if (tournament.code or "").strip().upper() != WC_TOURNAMENT_CODE:
+                return web.json_response({"ok": False, "error": "longterm_not_enabled_for_tournament"}, status=400)
+
+            await _set_setting(session, _longterm_actual_winner_key(int(tournament.id)), "")
+            await _set_setting(session, _longterm_actual_scorer_key(int(tournament.id)), "")
+
+            rows = (
+                await session.execute(
+                    select(UserTournament).where(UserTournament.tournament_id == int(tournament.id))
+                )
+            ).scalars().all()
+            for row in rows:
+                row.bonus_winner = 0
+                row.bonus_scorer = 0
+                row.bonus_points = 0
+
+            await session.commit()
+
+        return web.json_response(
+            {
+                "ok": True,
+                "trusted": True,
+                "is_admin": True,
+                "reset_participants": int(len(rows)),
+            }
+        )
+    except Exception as e:
+        logger.exception("miniapp admin_longterm_reset error")
+        return web.json_response(
+            {"ok": False, "error": "admin_longterm_reset_failed", "reason": str(e), "signature_checked": True},
             status=500,
         )
 
@@ -4326,6 +4442,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/miniapp/admin/rounds", admin_rounds)
     app.router.add_get("/api/miniapp/admin/results/current", admin_results_current)
     app.router.add_post("/api/miniapp/admin/result/set", admin_result_set)
+    app.router.add_post("/api/miniapp/admin/result/reset", admin_result_reset)
     app.router.add_post("/api/miniapp/admin/recalc_round", admin_recalc_round)
     app.router.add_get("/api/miniapp/admin/playoff_slots/current", admin_playoff_slots_current)
     app.router.add_post("/api/miniapp/admin/playoff_slots/init", admin_playoff_slots_init)
@@ -4333,6 +4450,7 @@ def build_app() -> web.Application:
     app.router.add_post("/api/miniapp/admin/playoff_slots/clear", admin_playoff_slot_clear)
     app.router.add_get("/api/miniapp/admin/longterm/current", admin_longterm_current)
     app.router.add_post("/api/miniapp/admin/longterm/set", admin_longterm_set)
+    app.router.add_post("/api/miniapp/admin/longterm/reset", admin_longterm_reset)
     return app
 
 
