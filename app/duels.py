@@ -5,12 +5,38 @@ from typing import Any
 
 from sqlalchemy import or_, select
 
-from app.models import Duel, DuelElo, Match, UserTournament
+from app.models import Duel, DuelElo, Match, Tournament, UserTournament
 from app.scoring import calculate_points
 
 ELO_DEFAULT_RATING = 1000
 ELO_K_FACTOR = 24
-GLOBAL_ELO_TOURNAMENT_ID = 0
+GLOBAL_ELO_TOURNAMENT_CODE = "ELO_GLOBAL"
+
+
+async def _ensure_global_elo_tournament_id(session) -> int:
+    row = (
+        await session.execute(
+            select(Tournament).where(Tournament.code == GLOBAL_ELO_TOURNAMENT_CODE).limit(1)
+        )
+    ).scalar_one_or_none()
+    if row is not None:
+        return int(row.id)
+    row = Tournament(
+        code=GLOBAL_ELO_TOURNAMENT_CODE,
+        name="Global Elo",
+        round_min=0,
+        round_max=0,
+        status="hidden",
+        visible_in_miniapp=0,
+        join_open=0,
+        predict_open=0,
+        sort_order=9999,
+        planned_matches_total=0,
+        is_active=0,
+    )
+    session.add(row)
+    await session.flush()
+    return int(row.id)
 
 
 def outcome_sign(home: int, away: int) -> int:
@@ -45,11 +71,12 @@ async def ensure_duel_elo(session, tournament_id: int, tg_user_id: int) -> DuelE
     """
     _ = tournament_id  # kept for backward-compatible call sites
     uid = int(tg_user_id)
+    global_tid = await _ensure_global_elo_tournament_id(session)
 
     global_row = (
         await session.execute(
             select(DuelElo).where(
-                DuelElo.tournament_id == int(GLOBAL_ELO_TOURNAMENT_ID),
+                DuelElo.tournament_id == int(global_tid),
                 DuelElo.tg_user_id == uid,
             )
         )
@@ -68,7 +95,7 @@ async def ensure_duel_elo(session, tournament_id: int, tg_user_id: int) -> DuelE
     if legacy_rows:
         base = legacy_rows[0]
         row = DuelElo(
-            tournament_id=int(GLOBAL_ELO_TOURNAMENT_ID),
+            tournament_id=int(global_tid),
             tg_user_id=uid,
             rating=int(base.rating or ELO_DEFAULT_RATING),
             duels_total=sum(int(x.duels_total or 0) for x in legacy_rows),
@@ -81,7 +108,7 @@ async def ensure_duel_elo(session, tournament_id: int, tg_user_id: int) -> DuelE
         return row
 
     row = DuelElo(
-        tournament_id=int(GLOBAL_ELO_TOURNAMENT_ID),
+        tournament_id=int(global_tid),
         tg_user_id=uid,
         rating=ELO_DEFAULT_RATING,
         duels_total=0,
@@ -102,6 +129,7 @@ async def get_duel_elo_rating_map(session, tg_user_ids: list[int]) -> dict[int, 
     ids = sorted({int(x) for x in tg_user_ids if int(x) > 0})
     if not ids:
         return {}
+    global_tid = await _ensure_global_elo_tournament_id(session)
     rows = (
         await session.execute(
             select(DuelElo.tg_user_id, DuelElo.tournament_id, DuelElo.rating, DuelElo.updated_at, DuelElo.id)
@@ -116,7 +144,7 @@ async def get_duel_elo_rating_map(session, tg_user_ids: list[int]) -> dict[int, 
         uid = int(uid_raw)
         rating = int(rating_raw or ELO_DEFAULT_RATING)
         tid = int(tournament_id_raw or 0)
-        if tid == int(GLOBAL_ELO_TOURNAMENT_ID):
+        if tid == int(global_tid):
             out[uid] = rating
             continue
         # fallback only if global not set yet
