@@ -27,7 +27,7 @@ from app.duel_notify import (
     send_new_duel_challenge_push,
 )
 from app.display import display_round_name
-from app.duels import create_duel, finalize_duels_for_match, get_duel_hub, respond_duel
+from app.duels import create_duel, ensure_duel_elo, finalize_duels_for_match, get_duel_hub, respond_duel
 from app.league_table import build_active_stage_league_table
 from app.models import Duel, DuelElo, League, LeagueParticipant, LongtermPrediction, Match, Point, Prediction, Setting, Stage, Tournament, User, UserTournament
 from app.notify_prefs import get_user_notification_prefs, set_user_notification_pref, should_send_notification
@@ -2671,15 +2671,8 @@ async def profile(request: web.Request) -> web.Response:
                     }
                 )
 
-            duel_rating_row = (
-                await session.execute(
-                    select(DuelElo.rating).where(
-                        DuelElo.tournament_id == int(tournament.id),
-                        DuelElo.tg_user_id == int(target_tg_user_id),
-                    )
-                )
-            ).scalar_one_or_none()
-            duel_rating = int(duel_rating_row or 1000)
+            duel_elo_row = await ensure_duel_elo(session, int(tournament.id), int(target_tg_user_id))
+            duel_rating = int(duel_elo_row.rating or 1000)
 
             stats_row = (
                 await session.execute(

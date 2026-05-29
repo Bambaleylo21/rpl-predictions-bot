@@ -9,7 +9,8 @@ from aiogram import Bot, types
 from sqlalchemy import select
 
 from app.audience import is_blocked_send_error, mark_user_blocked
-from app.models import Duel, DuelElo, Match, UserTournament
+from app.duels import get_duel_elo_rating_map
+from app.models import Duel, Match, UserTournament
 from app.notify_prefs import should_send_notification
 
 logger = logging.getLogger(__name__)
@@ -94,15 +95,8 @@ async def send_new_duel_challenge_push(bot: Bot, session, *, duel_id: int) -> No
     duel: Duel = ctx["duel"]
     match: Match = ctx["match"]
 
-    challenger_elo = (
-        await session.execute(
-            select(DuelElo.rating).where(
-                DuelElo.tournament_id == int(duel.tournament_id),
-                DuelElo.tg_user_id == int(duel.challenger_tg_user_id),
-            )
-        )
-    ).scalar_one_or_none()
-    challenger_rating = int(challenger_elo or 1000)
+    rating_map = await get_duel_elo_rating_map(session, [int(duel.challenger_tg_user_id)])
+    challenger_rating = int(rating_map.get(int(duel.challenger_tg_user_id), 1000))
 
     text = (
         f"⚔️ Тебе бросил вызов {ctx['challenger_name']} ({challenger_rating})\n"
@@ -126,15 +120,8 @@ async def send_duel_accepted_push(bot: Bot, session, *, duel_id: int) -> None:
     duel: Duel = ctx["duel"]
     match: Match = ctx["match"]
 
-    opponent_elo = (
-        await session.execute(
-            select(DuelElo.rating).where(
-                DuelElo.tournament_id == int(duel.tournament_id),
-                DuelElo.tg_user_id == int(duel.opponent_tg_user_id),
-            )
-        )
-    ).scalar_one_or_none()
-    opponent_rating = int(opponent_elo or 1000)
+    rating_map = await get_duel_elo_rating_map(session, [int(duel.opponent_tg_user_id)])
+    opponent_rating = int(rating_map.get(int(duel.opponent_tg_user_id), 1000))
 
     text = (
         f"✅ {ctx['opponent_name']} ({opponent_rating}) принял твой вызов\n"

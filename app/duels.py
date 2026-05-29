@@ -10,6 +10,7 @@ from app.scoring import calculate_points
 
 ELO_DEFAULT_RATING = 1000
 ELO_K_FACTOR = 24
+GLOBAL_ELO_TOURNAMENT_ID = 0
 
 
 def outcome_sign(home: int, away: int) -> int:
@@ -37,19 +38,51 @@ def risk_multiplier_bp(challenger_home: int, challenger_away: int, opponent_home
 
 
 async def ensure_duel_elo(session, tournament_id: int, tg_user_id: int) -> DuelElo:
-    row = (
+    """
+    Global cross-tournament Elo:
+    - main row uses tournament_id=0
+    - legacy per-tournament rows are merged on first touch
+    """
+    _ = tournament_id  # kept for backward-compatible call sites
+    uid = int(tg_user_id)
+
+    global_row = (
         await session.execute(
             select(DuelElo).where(
-                DuelElo.tournament_id == int(tournament_id),
-                DuelElo.tg_user_id == int(tg_user_id),
+                DuelElo.tournament_id == int(GLOBAL_ELO_TOURNAMENT_ID),
+                DuelElo.tg_user_id == uid,
             )
         )
     ).scalar_one_or_none()
-    if row is not None:
+    if global_row is not None:
+        return global_row
+
+    legacy_rows = (
+        await session.execute(
+            select(DuelElo)
+            .where(DuelElo.tg_user_id == uid)
+            .order_by(DuelElo.updated_at.desc().nullslast(), DuelElo.id.desc())
+        )
+    ).scalars().all()
+
+    if legacy_rows:
+        base = legacy_rows[0]
+        row = DuelElo(
+            tournament_id=int(GLOBAL_ELO_TOURNAMENT_ID),
+            tg_user_id=uid,
+            rating=int(base.rating or ELO_DEFAULT_RATING),
+            duels_total=sum(int(x.duels_total or 0) for x in legacy_rows),
+            wins=sum(int(x.wins or 0) for x in legacy_rows),
+            losses=sum(int(x.losses or 0) for x in legacy_rows),
+            draws=sum(int(x.draws or 0) for x in legacy_rows),
+        )
+        session.add(row)
+        await session.flush()
         return row
+
     row = DuelElo(
-        tournament_id=int(tournament_id),
-        tg_user_id=int(tg_user_id),
+        tournament_id=int(GLOBAL_ELO_TOURNAMENT_ID),
+        tg_user_id=uid,
         rating=ELO_DEFAULT_RATING,
         duels_total=0,
         wins=0,
@@ -59,6 +92,37 @@ async def ensure_duel_elo(session, tournament_id: int, tg_user_id: int) -> DuelE
     session.add(row)
     await session.flush()
     return row
+
+
+async def get_duel_elo_rating_map(session, tg_user_ids: list[int]) -> dict[int, int]:
+    """
+    Returns best-known rating per user:
+    prefer global row (tournament_id=0), fallback to latest legacy row.
+    """
+    ids = sorted({int(x) for x in tg_user_ids if int(x) > 0})
+    if not ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(DuelElo.tg_user_id, DuelElo.tournament_id, DuelElo.rating, DuelElo.updated_at, DuelElo.id)
+            .where(DuelElo.tg_user_id.in_(ids))
+            .order_by(DuelElo.updated_at.desc().nullslast(), DuelElo.id.desc())
+        )
+    ).all()
+    out: dict[int, int] = {}
+    for uid in ids:
+        out[uid] = ELO_DEFAULT_RATING
+    for uid_raw, tournament_id_raw, rating_raw, _updated_at, _row_id in rows:
+        uid = int(uid_raw)
+        rating = int(rating_raw or ELO_DEFAULT_RATING)
+        tid = int(tournament_id_raw or 0)
+        if tid == int(GLOBAL_ELO_TOURNAMENT_ID):
+            out[uid] = rating
+            continue
+        # fallback only if global not set yet
+        if out.get(uid, ELO_DEFAULT_RATING) == ELO_DEFAULT_RATING:
+            out[uid] = rating
+    return out
 
 
 async def _is_joined(session, tournament_id: int, tg_user_id: int) -> bool:
@@ -270,12 +334,6 @@ async def get_duel_hub(session, *, tournament_id: int, tg_user_id: int) -> dict[
             select(
                 UserTournament.tg_user_id,
                 UserTournament.display_name,
-                DuelElo.rating,
-            )
-            .outerjoin(
-                DuelElo,
-                (DuelElo.tournament_id == UserTournament.tournament_id)
-                & (DuelElo.tg_user_id == UserTournament.tg_user_id),
             )
             .where(
                 UserTournament.tournament_id == int(tournament_id),
@@ -284,25 +342,20 @@ async def get_duel_hub(session, *, tournament_id: int, tg_user_id: int) -> dict[
             .order_by(UserTournament.display_name.asc().nullslast(), UserTournament.tg_user_id.asc())
         )
     ).all()
+    opponent_ids = [int(uid) for uid, _dn in opponents_raw]
+    ratings_map = await get_duel_elo_rating_map(session, opponent_ids + [int(tg_user_id)])
     opponents = [
         {
             "tg_user_id": int(uid),
             "display_name": str(dn or f"ID {int(uid)}"),
-            "elo_rating": int(rating or ELO_DEFAULT_RATING),
+            "elo_rating": int(ratings_map.get(int(uid), ELO_DEFAULT_RATING)),
         }
-        for uid, dn, rating in opponents_raw
+        for uid, dn in opponents_raw
     ]
 
     match_options = await list_duel_match_options(session, int(tournament_id), int(tg_user_id), limit=200)
 
-    elo_rows = (
-        await session.execute(
-            select(DuelElo.tg_user_id, DuelElo.rating).where(
-                DuelElo.tournament_id == int(tournament_id)
-            )
-        )
-    ).all()
-    elo_map: dict[int, int] = {int(uid): int(rating or ELO_DEFAULT_RATING) for uid, rating in elo_rows}
+    duel_user_ids: set[int] = {int(tg_user_id)}
 
     # Head-to-head map from perspective of current user:
     # key = opponent tg_user_id, value = (wins, draws, losses)
@@ -320,6 +373,8 @@ async def get_duel_hub(session, *, tournament_id: int, tg_user_id: int) -> dict[
         )
     ).scalars().all()
     for d in h2h_rows:
+        duel_user_ids.add(int(d.challenger_tg_user_id))
+        duel_user_ids.add(int(d.opponent_tg_user_id))
         opp_id = (
             int(d.opponent_tg_user_id)
             if int(d.challenger_tg_user_id) == int(tg_user_id)
@@ -366,6 +421,14 @@ async def get_duel_hub(session, *, tournament_id: int, tg_user_id: int) -> dict[
             .limit(30)
         )
     ).all()
+
+    for duel, _match in active_rows:
+        duel_user_ids.add(int(duel.challenger_tg_user_id))
+        duel_user_ids.add(int(duel.opponent_tg_user_id))
+    for duel, _match in finished_rows:
+        duel_user_ids.add(int(duel.challenger_tg_user_id))
+        duel_user_ids.add(int(duel.opponent_tg_user_id))
+    elo_map = await get_duel_elo_rating_map(session, list(duel_user_ids))
 
     def _duel_item(duel: Duel, match: Match) -> dict[str, Any]:
         opp_id = (
