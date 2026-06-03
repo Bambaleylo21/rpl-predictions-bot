@@ -1629,6 +1629,10 @@ body {
   white-space: nowrap;
 }
 
+.duel-challenge-submit-btn.is-empty {
+  color: #dce9ff;
+}
+
 .duel-notice {
   margin-top: var(--vr-md);
 }
