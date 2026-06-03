@@ -1617,6 +1617,16 @@ body {
 
 .duel-predict-row {
   margin-top: var(--vr-sm);
+  align-items: stretch;
+}
+
+.duel-challenge-submit-btn {
+  min-width: 128px;
+  padding: 8px 12px;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .duel-notice {

@@ -3196,11 +3196,11 @@ function App() {
                         inputMode="numeric"
                       />
                       <button
-                        className={`save-btn ${normalizeScore(duelScoreInput) ? 'is-dirty' : 'is-empty'}`}
+                        className={`save-btn duel-challenge-submit-btn ${normalizeScore(duelScoreInput) ? 'is-dirty' : 'is-empty'}`}
                         onClick={createDuelChallenge}
                         disabled={duelBusyId === -1}
                       >
-                        {duelBusyId === -1 ? '…' : normalizeScore(duelScoreInput) ? '✓' : ''}
+                        {duelBusyId === -1 ? 'Отправляю...' : 'Бросить вызов'}
                       </button>
                     </div>
                     {duelsNotice ? <div className="card-text duel-notice">{duelsNotice}</div> : null}
