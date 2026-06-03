@@ -387,6 +387,12 @@ body {
   background: #171717;
 }
 
+.tournament-chip.is-active:hover {
+  border-color: var(--accent);
+  background: linear-gradient(180deg, #d4b460 0%, #9f7b31 100%);
+  color: #ffffff;
+}
+
 .tournament-chip:active {
   transform: translateY(1px);
 }
@@ -1644,7 +1650,7 @@ body {
   position: fixed;
   inset: 0;
   z-index: 1200;
-  background: rgba(3, 8, 18, 0.78);
+  background: rgba(0, 0, 0, 0.78);
   backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
@@ -1655,9 +1661,11 @@ body {
 .achievement-modal-card {
   width: min(360px, calc(100vw - 24px));
   border-radius: 16px;
-  border: 1px solid #ccd6ea;
-  background: #f8fbff;
-  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(185, 154, 85, 0.48);
+  background:
+    radial-gradient(circle at 50% 0%, rgba(185, 154, 85, 0.14), transparent 36%),
+    #ffffff;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.42);
   padding: 14px 14px 16px;
   position: relative;
 }
@@ -1668,10 +1676,10 @@ body {
   right: 8px;
   width: 28px;
   height: 28px;
-  border: 1px solid #cad4e8;
+  border: 1px solid rgba(185, 154, 85, 0.52);
   border-radius: 999px;
   background: #ffffff;
-  color: #4f5a70;
+  color: #111111;
   font-size: 14px;
   line-height: 1;
   cursor: pointer;
@@ -1702,7 +1710,7 @@ body {
 }
 
 .achievement-modal-title {
-  color: #1c2432;
+  color: #000000;
   text-align: center;
   font-size: 16px;
   font-weight: 700;
@@ -1712,14 +1720,14 @@ body {
 .achievement-modal-meta {
   text-align: center;
   margin-top: 6px;
-  color: #6a768f;
+  color: #6f6250;
   font-size: 12px;
   font-weight: 600;
 }
 
 .achievement-modal-description {
   margin-top: 10px;
-  color: #2d374b;
+  color: #111111;
   font-size: 13px;
   line-height: 1.45;
   text-align: center;
@@ -1728,9 +1736,9 @@ body {
 .achievement-modal-unique {
   margin: 8px auto 0;
   width: fit-content;
-  border: 1px solid #c5d7a8;
-  background: #eef8db;
-  color: #536c2b;
+  border: 1px solid rgba(185, 154, 85, 0.55);
+  background: rgba(185, 154, 85, 0.14);
+  color: #8d7132;
   font-size: 12px;
   font-weight: 700;
   border-radius: 999px;
@@ -1739,7 +1747,7 @@ body {
 
 .achievement-levels {
   margin-top: 12px;
-  border-top: 1px solid #dce4f2;
+  border-top: 1px solid rgba(185, 154, 85, 0.28);
   padding-top: 10px;
   display: grid;
   gap: 10px;
@@ -1750,7 +1758,7 @@ body {
   align-items: center;
   gap: 10px;
   border-radius: 12px;
-  border: 1px solid #dbe4f2;
+  border: 1px solid rgba(185, 154, 85, 0.24);
   background: #ffffff;
   padding: 8px;
 }
@@ -1786,13 +1794,13 @@ body {
 }
 
 .achievement-level-title {
-  color: #263247;
+  color: #000000;
   font-size: 15px;
   font-weight: 700;
 }
 
 .achievement-level-counter {
-  color: #6b7891;
+  color: #8d7132;
   font-size: 14px;
   font-weight: 700;
 }
