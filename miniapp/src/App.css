@@ -668,6 +668,10 @@ body {
   gap: 6px;
 }
 
+.compact-main-predict {
+  grid-template-columns: minmax(0, 1fr) 58px minmax(0, 1fr) 78px;
+}
+
 .community-small {
   margin-bottom: 5px;
   color: var(--text-dim);
@@ -836,10 +840,41 @@ body {
   line-height: 1;
 }
 
+.prediction-save-btn {
+  width: 78px;
+  min-width: 78px;
+  padding: 0 8px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.save-all-predictions-btn {
+  width: 100%;
+  min-height: 38px;
+  margin-top: var(--vr-md);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.prediction-save-btn.is-dirty,
+.save-all-predictions-btn.is-dirty {
+  background: linear-gradient(180deg, #d4b460 0%, #9f7b31 100%);
+  border-color: var(--accent);
+  color: #ffffff;
+}
+
+.prediction-save-btn.is-saved,
+.save-all-predictions-btn.is-saved {
+  background: #151515;
+  border-color: var(--line-2);
+  color: var(--text-dim);
+}
+
 .save-btn.is-empty {
   background: #151515;
   border-color: var(--line-2);
-  color: transparent;
+  color: var(--text-dim);
   opacity: 0.9;
 }
 

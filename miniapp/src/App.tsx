@@ -734,6 +734,7 @@ function App() {
   const [predictError, setPredictError] = useState<string | null>(null)
   const [scoreInputs, setScoreInputs] = useState<Record<number, string>>({})
   const [savingMatchId, setSavingMatchId] = useState<number | null>(null)
+  const [savingAllPredictions, setSavingAllPredictions] = useState<boolean>(false)
   const [predictNotice, setPredictNotice] = useState<string | null>(null)
   const [tableData, setTableData] = useState<TableResponse | null>(null)
   const [tableError, setTableError] = useState<string | null>(null)
@@ -1380,43 +1381,91 @@ function App() {
     }
   }
 
-  const savePrediction = async (matchId: number) => {
-    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
-    const initData = getInitData()
-    const raw = (scoreInputs[matchId] || '').trim().replace('-', ':')
+  const savePredictionRequest = async (
+    apiBase: string,
+    initData: string,
+    tournamentCode: string,
+    matchId: number,
+    score: string
+  ) => {
+    const raw = (score || '').trim().replace('-', ':')
     const m = raw.match(/^(\d+):(\d+)$/)
     if (!m) {
-      setPredictNotice('Счёт введи в формате 2:1 или 2-1.')
-      return
+      throw new Error('invalid_score')
     }
     const predHome = Number(m[1])
     const predAway = Number(m[2])
+    const tParam = encodeURIComponent(tournamentCode || 'RPL')
+    const res = await fetch(`${apiBase}/api/miniapp/predict/set?t=${tParam}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Telegram-Init-Data': initData,
+      },
+      body: JSON.stringify({
+        match_id: matchId,
+        pred_home: predHome,
+        pred_away: predAway,
+      }),
+    })
+    const data = (await res.json()) as { ok?: boolean; error?: string; reason?: string; prediction?: string }
+    if (!res.ok || !data.ok) {
+      throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+    }
+    return data.prediction || `${predHome}:${predAway}`
+  }
+
+  const savePrediction = async (matchId: number) => {
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    const score = normalizeScore(scoreInputs[matchId] || '')
+    if (!score) {
+      setPredictNotice('Счёт введи в формате 2:1 или 2-1.')
+      return
+    }
     setSavingMatchId(matchId)
     setPredictNotice(null)
     try {
-      const tParam = encodeURIComponent(selectedTournamentCode || 'RPL')
-      const res = await fetch(`${apiBase}/api/miniapp/predict/set?t=${tParam}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Telegram-Init-Data': initData,
-        },
-        body: JSON.stringify({
-          match_id: matchId,
-          pred_home: predHome,
-          pred_away: predAway,
-        }),
-      })
-      const data = (await res.json()) as { ok?: boolean; error?: string; reason?: string; prediction?: string }
-      if (!res.ok || !data.ok) {
-        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
-      }
-      setPredictNotice(`Ставка сохранена: ${data.prediction}`)
+      const saved = await savePredictionRequest(apiBase, initData, selectedTournamentCode, matchId, score)
+      setPredictNotice(`Прогноз сохранён: ${saved}`)
       await loadPredictCurrent(apiBase, initData, selectedTournamentCode, selectedRoundNumber)
     } catch (_err) {
       setPredictNotice('Не удалось сохранить прогноз. Попробуй ещё раз.')
     } finally {
       setSavingMatchId(null)
+    }
+  }
+
+  const saveAllPredictions = async () => {
+    const itemsToSave = (predictData?.items || [])
+      .filter((item) => !item.is_placeholder)
+      .map((item) => {
+        const currentInput = normalizeScore(scoreInputs[item.match_id] || '')
+        const savedInput = normalizeScore(item.prediction || '')
+        return { item, currentInput, savedInput }
+      })
+      .filter(({ currentInput, savedInput }) => currentInput && currentInput !== savedInput)
+
+    if (itemsToSave.length === 0) {
+      setPredictNotice('Нет новых изменений для сохранения.')
+      return
+    }
+
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    setSavingAllPredictions(true)
+    setSavingMatchId(null)
+    setPredictNotice(null)
+    try {
+      for (const { item, currentInput } of itemsToSave) {
+        await savePredictionRequest(apiBase, initData, selectedTournamentCode, item.match_id, currentInput)
+      }
+      setPredictNotice(`Сохранено прогнозов: ${itemsToSave.length}`)
+      await loadPredictCurrent(apiBase, initData, selectedTournamentCode, selectedRoundNumber)
+    } catch (_err) {
+      setPredictNotice('Не удалось сохранить все прогнозы. Проверь счета и попробуй ещё раз.')
+    } finally {
+      setSavingAllPredictions(false)
     }
   }
 
@@ -2099,6 +2148,12 @@ function App() {
   const scorerFilteredOptions = scorerOptions.filter((name) => name.toLowerCase().includes(scorerSearchNorm))
 
   const predictItems = predictData?.items || []
+  const dirtyPredictItemsCount = predictItems.filter((item) => {
+    if (item.is_placeholder) return false
+    const currentInput = normalizeScore(scoreInputs[item.match_id] || '')
+    const savedInput = normalizeScore(item.prediction || '')
+    return Boolean(currentInput && currentInput !== savedInput)
+  }).length
   const predictGroups = (() => {
     const grouped: Record<string, typeof predictItems> = {}
     for (const item of predictItems) {
@@ -2659,7 +2714,7 @@ function App() {
                                         <span className="kickoff-small">{(m.kickoff || '').split(' ')[1] || ''} МСК</span>
                                       </div>
                                       {crowdText(m) ? <div className="community-small">{crowdText(m)}</div> : null}
-                                      <div className="compact-main">
+                                      <div className="compact-main compact-main-predict">
                                         <span className="team-name team-left">{teamWithFlag(m.home_team)}</span>
                                         <input
                                           className="score-inline-input"
@@ -2675,11 +2730,15 @@ function App() {
                                         />
                                         <span className="team-name team-right">{teamWithFlag(m.away_team)}</span>
                                         <button
-                                          className={`save-btn compact-save-btn ${saveVisualState}`}
+                                          className={`save-btn compact-save-btn prediction-save-btn ${saveVisualState}`}
                                           onClick={() => savePrediction(m.match_id)}
-                                          disabled={isSaving || !canSave}
+                                          disabled={savingAllPredictions || isSaving || !canSave}
                                         >
-                                          {isSaving ? '…' : saveVisualState === 'is-empty' ? '' : '✓'}
+                                          {isSaving
+                                            ? '...'
+                                            : saveVisualState === 'is-saved'
+                                              ? 'Сохранено'
+                                              : 'Сохранить'}
                                         </button>
                                       </div>
                                     </>
@@ -2690,6 +2749,17 @@ function App() {
                           </div>
                         ))
                       )}
+                      <button
+                        className={`save-btn save-all-predictions-btn ${dirtyPredictItemsCount > 0 ? 'is-dirty' : 'is-saved'}`}
+                        onClick={saveAllPredictions}
+                        disabled={savingAllPredictions || dirtyPredictItemsCount === 0}
+                      >
+                        {savingAllPredictions
+                          ? 'Сохраняю...'
+                          : dirtyPredictItemsCount > 0
+                            ? `Сохранить все матчи (${dirtyPredictItemsCount})`
+                            : 'Все матчи сохранены'}
+                      </button>
                     </div>
                   ) : closedPredictionGroups.length === 0 ? (
                     <div className="card">
