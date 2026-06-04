@@ -768,7 +768,7 @@ function App() {
   const [currentInsight, setCurrentInsight] = useState<string | null>(null)
   const [adminRounds, setAdminRounds] = useState<AdminRound[]>([])
   const [adminRound, setAdminRound] = useState<number | null>(null)
-  const [adminViewMode, setAdminViewMode] = useState<'matches' | 'playoff' | 'longterm' | 'participants'>('matches')
+  const [adminViewMode, setAdminViewMode] = useState<'matches' | 'playoff' | 'longterm' | 'participants' | 'duels'>('matches')
   const [adminMode, setAdminMode] = useState<'open' | 'all'>('open')
   const [adminResults, setAdminResults] = useState<AdminResultItem[]>([])
   const [adminRoundName, setAdminRoundName] = useState<string>('')
@@ -3579,46 +3579,93 @@ function App() {
           <>
             <section className="cards">
               <div className="card card-static">
-                <div className="card-title">Этап для внесения итогов</div>
-                <div className="segment-hint">Нажми, чтобы выбрать тур/этап</div>
-                <div className="tournament-row">
-                  {adminRounds.map((r) => (
-                    <button
-                      key={r.round}
-                      className={`tournament-chip ${adminViewMode === 'matches' && adminRound === r.round ? 'is-active' : ''}`}
-                      onClick={() => {
-                        setAdminViewMode('matches')
-                        setAdminRound(r.round)
-                      }}
-                    >
-                      {r.round_name || `Тур ${r.round}`} · {r.without_result}/{r.total}
-                    </button>
-                  ))}
+                <div className="card-title">Панель управления</div>
+                <div className="segment-hint">Выбери блок, который нужно открыть</div>
+
+                <div className="admin-accordion-list">
+                  <button
+                    className={`admin-accordion-head ${adminViewMode === 'matches' ? 'is-active' : ''}`}
+                    onClick={() => setAdminViewMode('matches')}
+                  >
+                    <span>
+                      <b>Матчи</b>
+                      <small>
+                        {adminRoundName
+                          ? `${adminRoundName} · без итогов ${adminWithoutResult}`
+                          : `раундов ${adminRounds.length}`}
+                      </small>
+                    </span>
+                    <span className="admin-accordion-caret">{adminViewMode === 'matches' ? '⌃' : '⌄'}</span>
+                  </button>
+
                   {selectedTournamentCode === 'WC2026' ? (
                     <button
-                      className={`tournament-chip ${adminViewMode === 'playoff' ? 'is-active' : ''}`}
-                      onClick={() => setAdminViewMode('playoff')}
-                    >
-                      Плей-офф слоты
-                    </button>
-                  ) : null}
-                  {selectedTournamentCode === 'WC2026' ? (
-                    <button
-                      className={`tournament-chip ${adminViewMode === 'longterm' ? 'is-active' : ''}`}
+                      className={`admin-accordion-head ${adminViewMode === 'longterm' ? 'is-active' : ''}`}
                       onClick={() => setAdminViewMode('longterm')}
                     >
-                      Доп. прогнозы
+                      <span>
+                        <b>Доп. прогнозы</b>
+                        <small>
+                          участников {adminLongtermParticipants} · очки {adminLongtermWinnerAwarded + adminLongtermScorerAwarded}
+                        </small>
+                      </span>
+                      <span className="admin-accordion-caret">{adminViewMode === 'longterm' ? '⌃' : '⌄'}</span>
                     </button>
                   ) : null}
+
                   <button
-                    className={`tournament-chip ${adminViewMode === 'participants' ? 'is-active' : ''}`}
+                    className={`admin-accordion-head ${adminViewMode === 'participants' ? 'is-active' : ''}`}
                     onClick={() => setAdminViewMode('participants')}
                   >
-                    Участники
+                    <span>
+                      <b>Участники</b>
+                      <small>{adminParticipants.length ? `${adminParticipants.length} в турнире` : 'список для удаления'}</small>
+                    </span>
+                    <span className="admin-accordion-caret">{adminViewMode === 'participants' ? '⌃' : '⌄'}</span>
+                  </button>
+
+                  <button
+                    className={`admin-accordion-head ${adminViewMode === 'duels' ? 'is-active' : ''}`}
+                    onClick={() => setAdminViewMode('duels')}
+                  >
+                    <span>
+                      <b>Битвы 1x1</b>
+                      <small>активные и завершённые дуэли</small>
+                    </span>
+                    <span className="admin-accordion-caret">{adminViewMode === 'duels' ? '⌃' : '⌄'}</span>
                   </button>
                 </div>
 
-                {adminViewMode === 'matches' ? (
+                {adminError ? <div className="card-text admin-status-line">Ошибка: {adminError}</div> : null}
+                {adminNotice ? <div className="card-text admin-status-line">{adminNotice}</div> : null}
+              </div>
+            </section>
+
+            {adminViewMode === 'matches' ? (
+              <section className="cards space-top">
+                <div className="card card-static admin-controls-card">
+                  <div className="card-title">Матчи</div>
+                  <div className="segment-hint">Пока выбираем тур/стадию, следующий этап — общий список матчей</div>
+                  <div className="tournament-row admin-round-row">
+                    {adminRounds.map((r) => (
+                      <button
+                        key={r.round}
+                        className={`tournament-chip ${adminRound === r.round ? 'is-active' : ''}`}
+                        onClick={() => setAdminRound(r.round)}
+                      >
+                        {r.round_name || `Тур ${r.round}`} · {r.without_result}/{r.total}
+                      </button>
+                    ))}
+                    {selectedTournamentCode === 'WC2026' ? (
+                      <button
+                        className="tournament-chip"
+                        onClick={() => setAdminViewMode('playoff')}
+                      >
+                        Плей-офф слоты
+                      </button>
+                    ) : null}
+                  </div>
+
                   <div className="admin-top-row">
                     <div className="match-toggle">
                       <button
@@ -3640,51 +3687,19 @@ function App() {
                       onClick={recalcAdminRound}
                       disabled={adminRecalcLoading || adminRound == null}
                     >
-                      {adminRecalcLoading ? 'Пересчёт…' : 'Пересчитать тур'}
+                      {adminRecalcLoading ? 'Пересчёт…' : 'Пересчитать'}
                     </button>
                   </div>
-                ) : null}
-
-                <div className="card-text">
-                  {adminViewMode === 'matches' && adminRoundName ? (
-                    <>
-                      Выбран: <b>{adminRoundName}</b> · матчей: <b>{adminRoundTotal}</b> · без итогов: <b>{adminWithoutResult}</b>
-                    </>
-                  ) : adminViewMode === 'playoff' ? (
-                    <>
-                      Шаблоны плей-офф: <b>{adminPlayoffSlots.length}</b> · заполнено пар:{' '}
-                      <b>{adminPlayoffSlots.filter((x) => x.is_filled).length}</b>
-                    </>
-                  ) : adminViewMode === 'longterm' ? (
-                    <>
-                      Доп. прогнозы: участников <b>{adminLongtermParticipants}</b> · угадали победителя: <b>{adminLongtermWinnerAwarded}</b> · угадали
-                      бомбардира: <b>{adminLongtermScorerAwarded}</b>
-                    </>
-                  ) : adminViewMode === 'participants' ? (
-                    <>
-                      Участников в турнире: <b>{adminParticipants.length}</b>
-                    </>
-                  ) : (
-                    'Выбери тур.'
-                  )}
-                  {adminError ? (
-                    <>
-                      <br />
-                      Ошибка: {adminError}
-                    </>
-                  ) : null}
-                  {adminNotice ? (
-                    <>
-                      <br />
-                      {adminNotice}
-                    </>
-                  ) : null}
+                  <div className="card-text">
+                    {adminRoundName ? (
+                      <>
+                        Выбран: <b>{adminRoundName}</b> · матчей: <b>{adminRoundTotal}</b> · без итогов: <b>{adminWithoutResult}</b>
+                      </>
+                    ) : (
+                      'Выбери тур.'
+                    )}
+                  </div>
                 </div>
-              </div>
-            </section>
-
-            {adminViewMode === 'matches' ? (
-              <section className="cards space-top">
                 <div className="card compact-list-card">
                   {adminResults.length === 0 ? (
                     <div className="card-text">Матчей для показа нет.</div>
@@ -3860,7 +3875,7 @@ function App() {
                   </button>
                 </div>
               </section>
-            ) : (
+            ) : adminViewMode === 'participants' ? (
               <section className="cards space-top">
                 <div className="card compact-list-card">
                   {adminParticipants.length === 0 ? (
@@ -3885,6 +3900,17 @@ function App() {
                       </div>
                     ))
                   )}
+                </div>
+              </section>
+            ) : (
+              <section className="cards space-top">
+                <div className="card">
+                  <div className="card-title">Битвы 1x1</div>
+                  <div className="card-text">
+                    Этот блок подготовлен для следующего этапа. Здесь появятся активные принятые и завершённые дуэли 1x1.
+                    <br />
+                    Сейчас пользовательский раздел 1x1 работает без изменений.
+                  </div>
                 </div>
               </section>
             )}

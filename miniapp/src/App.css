@@ -917,6 +917,74 @@ body {
   align-items: center;
 }
 
+.admin-accordion-list {
+  margin-top: var(--vr-md);
+  display: grid;
+  gap: 8px;
+}
+
+.admin-accordion-head {
+  width: 100%;
+  border: 1px solid var(--line-1);
+  border-radius: 12px;
+  background: #050505;
+  color: var(--text-main);
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background-color 0.16s ease, transform 0.12s ease;
+}
+
+.admin-accordion-head > span:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.admin-accordion-head b {
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.admin-accordion-head small {
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.admin-accordion-head.is-active {
+  border-color: rgba(185, 154, 85, 0.75);
+  background: linear-gradient(180deg, rgba(185, 154, 85, 0.2), rgba(17, 17, 17, 0.95));
+  box-shadow: 0 0 0 1px rgba(185, 154, 85, 0.18) inset;
+}
+
+.admin-accordion-head:active {
+  transform: translateY(1px);
+}
+
+.admin-accordion-caret {
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.admin-status-line {
+  margin-top: var(--vr-md);
+}
+
+.admin-controls-card {
+  padding: 12px;
+}
+
+.admin-round-row {
+  gap: 6px;
+}
+
 .admin-recalc-btn {
   border: 1px solid var(--accent);
   border-radius: 10px;
