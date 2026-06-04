@@ -832,6 +832,7 @@ async def admin_results_current(request: web.Request) -> web.Response:
                 )
             ).all()
 
+            include_placeholders = requested_round is None
             current_round = int(tournament.round_min)
             if rounds_rows:
                 current_round = int(rounds_rows[-1].round_number)
@@ -845,11 +846,19 @@ async def admin_results_current(request: web.Request) -> web.Response:
 
             filters = [
                 Match.tournament_id == int(tournament.id),
-                Match.is_placeholder == 0,
             ]
+            if not include_placeholders:
+                filters.append(Match.is_placeholder == 0)
             if not list_all_rounds:
                 filters.append(Match.round_number == int(current_round))
-            if mode == "open":
+            if mode == "open" and include_placeholders:
+                filters.append(
+                    or_(
+                        Match.is_placeholder == 1,
+                        (Match.home_score.is_(None)) | (Match.away_score.is_(None)),
+                    )
+                )
+            elif mode == "open":
                 filters.append((Match.home_score.is_(None)) | (Match.away_score.is_(None)))
 
             matches = (
@@ -862,8 +871,9 @@ async def admin_results_current(request: web.Request) -> web.Response:
 
             total_filters = [
                 Match.tournament_id == int(tournament.id),
-                Match.is_placeholder == 0,
             ]
+            if not include_placeholders:
+                total_filters.append(Match.is_placeholder == 0)
             if not list_all_rounds:
                 total_filters.append(Match.round_number == int(current_round))
 
@@ -893,6 +903,7 @@ async def admin_results_current(request: web.Request) -> web.Response:
                         "away_team": str(m.away_team),
                         "group_label": m.group_label,
                         "kickoff": m.kickoff_time.strftime("%d.%m %H:%M"),
+                        "is_placeholder": int(m.is_placeholder or 0) == 1,
                         "has_result": bool(has_result),
                         "result": f"{int(m.home_score)}:{int(m.away_score)}" if has_result else None,
                         "predictions_count": preds_cnt,

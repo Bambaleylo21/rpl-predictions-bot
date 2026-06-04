@@ -1062,6 +1062,10 @@ body {
   font-weight: 700;
 }
 
+.admin-secondary-btn:disabled {
+  opacity: 0.65;
+}
+
 .admin-longterm-grid {
   display: grid;
   gap: 10px;
@@ -1101,6 +1105,50 @@ body {
   grid-template-columns: 1fr 1fr auto auto;
   gap: 8px;
   align-items: center;
+}
+
+.admin-playoff-inline {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.admin-team-select {
+  min-width: 0;
+  width: 100%;
+  border: 1px solid var(--line-2);
+  border-radius: 9px;
+  background: var(--surface-input);
+  color: var(--text-main);
+  min-height: 34px;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.admin-playoff-save-inline {
+  min-height: 34px;
+  border-radius: 9px;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.admin-note-action {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  padding: 0;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.admin-note-action:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .admin-playoff-clear-btn {

@@ -343,6 +343,7 @@ type AdminResultItem = {
   round_name?: string
   home_team: string
   away_team: string
+  is_placeholder?: boolean
   group_label?: string | null
   kickoff: string
   has_result: boolean
@@ -521,6 +522,8 @@ const teamWithFlag = (team: string): string => {
   const found = flag || fallbackFlag
   return found ? `${found} ${name}` : name
 }
+
+const teamOptionsWithFlags = Object.keys(TEAM_FLAGS).sort((a, b) => a.localeCompare(b, 'ru'))
 
 const crowdText = (item: {
   crowd_count?: number
@@ -1633,10 +1636,18 @@ function App() {
     setAdminRoundTotal(data.round_total || 0)
     setAdminWithoutResult(data.without_result || 0)
     const nextInputs: Record<number, string> = {}
+    const nextPlayoffInputs: Record<number, { home_team: string; away_team: string }> = {}
     for (const item of items) {
       nextInputs[item.match_id] = item.result || ''
+      if (item.is_placeholder) {
+        nextPlayoffInputs[item.match_id] = {
+          home_team: item.home_team === '—' ? '' : item.home_team,
+          away_team: item.away_team === '—' ? '' : item.away_team,
+        }
+      }
     }
     setAdminScoreInputs(nextInputs)
+    setAdminPlayoffTeamInputs((prev) => ({ ...prev, ...nextPlayoffInputs }))
   }
 
   const loadAdminLongtermCurrent = async (apiBase: string, initData: string, tournamentCode: string) => {
@@ -1844,6 +1855,7 @@ function App() {
       }
       setAdminNotice(`Шаблоны готовы: добавлено ${data.created ?? 0}, уже существовало ${data.skipped ?? 0}`)
       await loadAdminPlayoffSlots(apiBase, initData, selectedTournamentCode)
+      await loadAdminResults(apiBase, initData, selectedTournamentCode, null, adminMode)
     } catch (err) {
       setAdminNotice(`Ошибка инициализации: ${String(err)}`)
     } finally {
@@ -1857,6 +1869,10 @@ function App() {
     const away_team = (teams.away_team || '').trim()
     if (!home_team || !away_team) {
       setAdminNotice('Заполни обе команды для пары.')
+      return
+    }
+    if (home_team === away_team) {
+      setAdminNotice('В паре должны быть разные команды.')
       return
     }
     const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
@@ -1879,9 +1895,7 @@ function App() {
       }
       setAdminNotice('Пара сохранена.')
       await loadAdminPlayoffSlots(apiBase, initData, selectedTournamentCode)
-      if (adminRound != null) {
-        await loadAdminResults(apiBase, initData, selectedTournamentCode, adminRound, adminMode)
-      }
+      await loadAdminResults(apiBase, initData, selectedTournamentCode, null, adminMode)
     } catch (err) {
       setAdminNotice(`Ошибка сохранения пары: ${String(err)}`)
     } finally {
@@ -1912,9 +1926,7 @@ function App() {
       }
       setAdminNotice('Слот очищен.')
       await loadAdminPlayoffSlots(apiBase, initData, selectedTournamentCode)
-      if (adminRound != null) {
-        await loadAdminResults(apiBase, initData, selectedTournamentCode, adminRound, adminMode)
-      }
+      await loadAdminResults(apiBase, initData, selectedTournamentCode, null, adminMode)
     } catch (err) {
       setAdminNotice(`Ошибка очистки слота: ${String(err)}`)
     } finally {
@@ -3712,9 +3724,10 @@ function App() {
                     {selectedTournamentCode === 'WC2026' ? (
                       <button
                         className="admin-secondary-btn"
-                        onClick={() => setAdminViewMode('playoff')}
+                        onClick={initAdminPlayoffSlots}
+                        disabled={adminPlayoffInitLoading}
                       >
-                        Плей-офф слоты
+                        {adminPlayoffInitLoading ? 'Создаю...' : 'Создать слоты плей-офф'}
                       </button>
                     ) : null}
                   </div>
@@ -3740,41 +3753,112 @@ function App() {
                             {m.group_label ? <span className="group-small">[{m.group_label}]</span> : <span className="group-small">—</span>}
                             <span className="kickoff-small">{m.kickoff || '—'}</span>
                           </div>
-                          <div className="compact-main admin-main">
-                            <span className="team-name team-left">{teamWithFlag(m.home_team)}</span>
-                            <input
-                              className="score-inline-input"
-                              value={adminScoreInputs[m.match_id] || ''}
-                              onChange={(e) =>
-                                setAdminScoreInputs((prev) => ({
-                                  ...prev,
-                                  [m.match_id]: formatScoreInput(e.target.value),
-                                }))
-                              }
-                              placeholder="-:-"
-                              inputMode="numeric"
-                            />
-                            <span className="team-name team-right">{teamWithFlag(m.away_team)}</span>
-                            <button
-                              className={`save-btn compact-save-btn ${
-                                normalizeScore(adminScoreInputs[m.match_id] || '') ? 'is-dirty' : 'is-empty'
-                              }`}
-                              onClick={() => saveAdminResult(m.match_id)}
-                              disabled={adminSavingMatchId === m.match_id}
-                            >
-                              {adminSavingMatchId === m.match_id ? '…' : '✓'}
-                            </button>
-                            <button
-                              className="admin-reset-btn"
-                              onClick={() => resetAdminResult(m.match_id)}
-                              disabled={adminSavingMatchId === m.match_id || !m.result}
-                            >
-                              Сброс
-                            </button>
-                          </div>
-                          <div className="compact-note">
-                            Итог: <b>{m.result || 'не задан'}</b> · Прогнозов: <b>{m.predictions_count ?? 0}</b>
-                          </div>
+                          {m.is_placeholder ? (
+                            <>
+                              <div className="admin-playoff-inline">
+                                <select
+                                  className="admin-team-select"
+                                  value={adminPlayoffTeamInputs[m.match_id]?.home_team || ''}
+                                  onChange={(e) =>
+                                    setAdminPlayoffTeamInputs((prev) => ({
+                                      ...prev,
+                                      [m.match_id]: {
+                                        ...(prev[m.match_id] || { home_team: '', away_team: '' }),
+                                        home_team: e.target.value,
+                                      },
+                                    }))
+                                  }
+                                >
+                                  <option value="">Команда A</option>
+                                  {teamOptionsWithFlags.map((team) => (
+                                    <option value={team} key={`home-${m.match_id}-${team}`}>
+                                      {teamWithFlag(team)}
+                                    </option>
+                                  ))}
+                                </select>
+                                <select
+                                  className="admin-team-select"
+                                  value={adminPlayoffTeamInputs[m.match_id]?.away_team || ''}
+                                  onChange={(e) =>
+                                    setAdminPlayoffTeamInputs((prev) => ({
+                                      ...prev,
+                                      [m.match_id]: {
+                                        ...(prev[m.match_id] || { home_team: '', away_team: '' }),
+                                        away_team: e.target.value,
+                                      },
+                                    }))
+                                  }
+                                >
+                                  <option value="">Команда B</option>
+                                  {teamOptionsWithFlags.map((team) => (
+                                    <option value={team} key={`away-${m.match_id}-${team}`}>
+                                      {teamWithFlag(team)}
+                                    </option>
+                                  ))}
+                                </select>
+                                <button
+                                  className="save-btn admin-playoff-save-inline is-dirty"
+                                  onClick={() => saveAdminPlayoffSlot(m.match_id)}
+                                  disabled={adminPlayoffSavingMatchId === m.match_id}
+                                >
+                                  {adminPlayoffSavingMatchId === m.match_id ? '...' : 'Сохранить пару'}
+                                </button>
+                              </div>
+                              <div className="compact-note">
+                                Пара ещё не заполнена. После сохранения матч появится пользователям.
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="compact-main admin-main">
+                                <span className="team-name team-left">{teamWithFlag(m.home_team)}</span>
+                                <input
+                                  className="score-inline-input"
+                                  value={adminScoreInputs[m.match_id] || ''}
+                                  onChange={(e) =>
+                                    setAdminScoreInputs((prev) => ({
+                                      ...prev,
+                                      [m.match_id]: formatScoreInput(e.target.value),
+                                    }))
+                                  }
+                                  placeholder="-:-"
+                                  inputMode="numeric"
+                                />
+                                <span className="team-name team-right">{teamWithFlag(m.away_team)}</span>
+                                <button
+                                  className={`save-btn compact-save-btn ${
+                                    normalizeScore(adminScoreInputs[m.match_id] || '') ? 'is-dirty' : 'is-empty'
+                                  }`}
+                                  onClick={() => saveAdminResult(m.match_id)}
+                                  disabled={adminSavingMatchId === m.match_id}
+                                >
+                                  {adminSavingMatchId === m.match_id ? '…' : '✓'}
+                                </button>
+                                <button
+                                  className="admin-reset-btn"
+                                  onClick={() => resetAdminResult(m.match_id)}
+                                  disabled={adminSavingMatchId === m.match_id || !m.result}
+                                >
+                                  Сброс
+                                </button>
+                              </div>
+                              <div className="compact-note">
+                                Итог: <b>{m.result || 'не задан'}</b> · Прогнозов: <b>{m.predictions_count ?? 0}</b>
+                                {selectedTournamentCode === 'WC2026' && Number(m.round_number || 0) >= 4 ? (
+                                  <>
+                                    {' · '}
+                                    <button
+                                      className="admin-note-action"
+                                      onClick={() => clearAdminPlayoffSlot(m.match_id)}
+                                      disabled={adminPlayoffSavingMatchId === m.match_id}
+                                    >
+                                      очистить пару
+                                    </button>
+                                  </>
+                                ) : null}
+                              </div>
+                            </>
+                          )}
                         </div>
                       </div>
                     ))
