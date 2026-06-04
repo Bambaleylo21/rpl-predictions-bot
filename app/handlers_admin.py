@@ -59,6 +59,7 @@ from app.audience import (
 from app.reminders import _build_reminder_keyboard, _build_reminder_text
 
 ADMIN_IDS = load_admin_ids()
+MINIAPP_WEB_URL = os.getenv("MINIAPP_WEB_URL", "https://rpl-predictions-bot-mini-app.onrender.com").strip()
 ROUND_DIGEST_CHAT_ID_RAW = os.getenv("ROUND_DIGEST_CHAT_ID", "").strip()
 try:
     ROUND_DIGEST_CHAT_ID = int(ROUND_DIGEST_CHAT_ID_RAW) if ROUND_DIGEST_CHAT_ID_RAW else None
@@ -1593,6 +1594,7 @@ def register_admin_handlers(dp: Dispatcher) -> None:
     # Новое: управление окном турнира и удаление участников
     dp.message.register(admin_set_window, Command("admin_set_window"))
     dp.message.register(admin_remove_user, Command("admin_remove_user"))
+    dp.message.register(admin_miniapp_migration_push, Command("admin_miniapp_migration_push"))
     dp.message.register(admin_audience, Command("admin_audience"))
     dp.message.register(admin_audience_list, Command("admin_audience_list"))
     dp.message.register(admin_season_init, Command("admin_season_init"))
@@ -2684,6 +2686,80 @@ async def admin_remove_user(message: types.Message):
         await session.commit()
 
     await message.answer(f"✅ Пользователь {tg_user_id} удалён (users + user_tournaments + predictions + points).")
+
+
+async def admin_miniapp_migration_push(message: types.Message):
+    """
+    /admin_miniapp_migration_push [dry]
+    Разово снимает старую reply-клавиатуру у зарегистрированных пользователей
+    и отправляет кнопку открытия Mini App.
+    """
+    if message.from_user.id not in ADMIN_IDS:
+        await message.answer("⛔️ У вас нет прав на эту команду.")
+        return
+
+    if not MINIAPP_WEB_URL:
+        await message.answer("MINIAPP_WEB_URL не задан. Сначала проверь env на Render.")
+        return
+
+    mode = ((message.text or "").strip().split()[1:] or ["send"])[0].lower()
+    dry_run = mode in {"dry", "test", "count"}
+
+    async with SessionLocal() as session:
+        q = await session.execute(select(User.tg_user_id).order_by(User.tg_user_id.asc()))
+        user_ids = [int(row[0]) for row in q.all() if row[0]]
+
+    if dry_run:
+        await message.answer(
+            f"Пользователей для миграционного пуша: {len(user_ids)}\n"
+            "Для отправки: /admin_miniapp_migration_push"
+        )
+        return
+
+    keyboard = types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text="Открыть Ванга-L",
+                    web_app=types.WebAppInfo(url=MINIAPP_WEB_URL),
+                )
+            ]
+        ]
+    )
+    text = (
+        "Мы переехали в Mini App.\n"
+        "Профиль, матчи, прогнозы, таблица, 1x1 и ачивки теперь там."
+    )
+
+    sent = 0
+    blocked = 0
+    failed = 0
+    for tg_user_id in user_ids:
+        try:
+            await message.bot.send_message(
+                chat_id=tg_user_id,
+                text="Обновляем меню бота.",
+                reply_markup=types.ReplyKeyboardRemove(),
+            )
+            await message.bot.send_message(chat_id=tg_user_id, text=text, reply_markup=keyboard)
+            sent += 1
+            await asyncio.sleep(0.05)
+        except Exception as exc:
+            if is_blocked_send_error(exc):
+                blocked += 1
+                async with SessionLocal() as session:
+                    await mark_user_blocked(session, tg_user_id)
+                    await session.commit()
+            else:
+                failed += 1
+                await asyncio.sleep(0.1)
+
+    await message.answer(
+        "✅ Миграционный пуш завершён.\n"
+        f"Отправлено: {sent}\n"
+        f"Заблокировали/недоступны: {blocked}\n"
+        f"Ошибок: {failed}"
+    )
 
 
 async def admin_audience(message: types.Message):

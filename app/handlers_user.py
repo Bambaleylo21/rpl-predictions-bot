@@ -40,6 +40,66 @@ DEFAULT_WC_ROUND_MIN = 1
 DEFAULT_WC_ROUND_MAX = 64
 TOURNAMENT_SELECTED_KEY_PREFIX = "TOURNAMENT_SELECTED_U"
 MINIAPP_WEB_URL = os.getenv("MINIAPP_WEB_URL", "https://rpl-predictions-bot-mini-app.onrender.com").strip()
+MINIAPP_REDIRECT_COMMANDS = (
+    "join",
+    "tournament",
+    "round",
+    "predict",
+    "predict_round",
+    "my",
+    "table",
+    "table_round",
+    "stats",
+    "history",
+    "my_moves",
+    "mvp_round",
+    "tops_round",
+    "round_digest",
+)
+MINIAPP_REDIRECT_TEXTS = {
+    "✅ Вступить в турнир",
+    "🔄 Вернуться в турнир",
+    "🚪 Покинуть турнир",
+    "📅 Матчи тура",
+    "🏁 Выбрать турнир",
+    "🗓 История туров",
+    "🥇 MVP тура",
+    "⭐ Топы тура",
+    "❓ Помощь",
+    "📘 Правила",
+}
+
+
+def _miniapp_url(screen: str | None = None, tournament_code: str | None = None) -> str:
+    url = MINIAPP_WEB_URL
+    params: dict[str, str] = {}
+    if screen:
+        params["screen"] = screen
+    if tournament_code:
+        params["t"] = tournament_code
+    if params:
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}{urlencode(params)}"
+    return url
+
+
+def build_open_miniapp_keyboard(
+    button_text: str = "Открыть Ванга-L",
+    screen: str | None = None,
+    tournament_code: str | None = None,
+) -> types.InlineKeyboardMarkup | None:
+    if not MINIAPP_WEB_URL:
+        return None
+    return types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text=button_text,
+                    web_app=types.WebAppInfo(url=_miniapp_url(screen=screen, tournament_code=tournament_code)),
+                )
+            ]
+        ]
+    )
 
 
 def build_main_menu_keyboard(
@@ -54,7 +114,12 @@ def build_main_menu_keyboard(
 def build_start_join_wc_keyboard() -> types.InlineKeyboardMarkup:
     return types.InlineKeyboardMarkup(
         inline_keyboard=[
-            [types.InlineKeyboardButton(text="ВСТУПИТЬ В ТУРНИР", callback_data="start_join_wc")]
+            [
+                types.InlineKeyboardButton(
+                    text="Открыть Mini App",
+                    web_app=types.WebAppInfo(url=_miniapp_url(screen="profile", tournament_code=WC_TOURNAMENT_CODE)),
+                )
+            ]
         ]
     )
 
@@ -1517,31 +1582,55 @@ def register_user_handlers(dp: Dispatcher):
         tournament, default_round = await _get_user_tournament_context(message.from_user.id)
         await message.answer(
             "❓ Помощь\n\n"
-            f"Сейчас ты в турнире: {tournament.name}\n"
-            f"Диапазон туров: {tournament.round_min}..{tournament.round_max}\n\n"
-            "Если впервые:\n"
-            "1) ✅ Вступить в турнир\n"
-            "2) Открой «🎯 Поставить прогноз»\n"
-            "3) Поставь прогноз через «🎯 Поставить прогноз»\n\n"
-            "Самый удобный путь — кнопки внизу:\n"
-            "✅ Вступить в турнир\n"
-            "🎯 Поставить прогноз\n"
-            "🗂 Мои прогнозы\n"
-            "🏆 Общая таблица\n"
-            "📊 Статистика\n"
-            "👤 Мой профиль\n"
-            "📘 Правила\n\n"
-            "Дополнительно командами:\n"
-            "/round N\n"
-            "/my N\n"
-            "/table_round N\n"
-            "/history\n"
-            "/mvp_round N\n"
-            "/tops_round N\n\n"
-            "/round_digest N\n\n"
-            f"Стартовый тур сейчас: {default_round}\n"
-            "Если что-то не получается, просто напиши команду ещё раз — подскажу формат."
+            "Основной функционал теперь в Mini App: профиль, матчи, прогнозы, таблица, 1x1 и ачивки.\n\n"
+            f"Сейчас выбран турнир: {tournament.name}\n"
+            f"Текущий тур: {default_round}\n\n"
+            "Нажми кнопку ниже, чтобы открыть приложение.",
+            reply_markup=build_open_miniapp_keyboard(screen="profile", tournament_code=tournament.code),
         )
+
+    async def _send_miniapp_redirect(message: types.Message, screen: str = "matches") -> None:
+        await message.answer(
+            "Мы переехали в Mini App.\n"
+            "Все прогнозы, таблица, профиль и 1x1 теперь открываются там.",
+            reply_markup=build_open_miniapp_keyboard(screen=screen),
+        )
+
+    @dp.message(Command(*MINIAPP_REDIRECT_COMMANDS))
+    async def redirect_legacy_commands_to_miniapp(message: types.Message):
+        text = (message.text or "").strip().lower()
+        screen = "profile"
+        if text.startswith(("/round", "/predict", "/my", "/history")):
+            screen = "matches"
+        elif text.startswith(("/table", "/stats", "/mvp", "/tops", "/round_digest")):
+            screen = "table"
+        await message.answer("Обновляю интерфейс…", reply_markup=types.ReplyKeyboardRemove())
+        await _send_miniapp_redirect(message, screen=screen)
+
+    @dp.message(F.text.in_(MINIAPP_REDIRECT_TEXTS))
+    async def redirect_legacy_buttons_to_miniapp(message: types.Message):
+        text = (message.text or "").strip()
+        screen = "profile"
+        if any(part in text for part in ("Матчи", "Прогноз", "История")):
+            screen = "matches"
+        elif any(part in text for part in ("Таблиц", "MVP", "Топы")):
+            screen = "table"
+        await message.answer("Обновляю интерфейс…", reply_markup=types.ReplyKeyboardRemove())
+        await _send_miniapp_redirect(message, screen=screen)
+
+    @dp.callback_query(F.data.startswith("qnav"))
+    async def redirect_legacy_inline_nav_to_miniapp(callback: types.CallbackQuery):
+        data = callback.data or ""
+        screen = "profile"
+        if any(key in data for key in ("predict", "my", "round")):
+            screen = "matches"
+        elif any(key in data for key in ("table", "mvp", "tops")):
+            screen = "table"
+        await callback.message.answer(
+            "Эта кнопка из старого меню. Теперь всё открывается в Mini App.",
+            reply_markup=build_open_miniapp_keyboard(screen=screen),
+        )
+        await callback.answer()
 
     async def _open_predict_round(message: types.Message, state: FSMContext, round_number: int, tournament: Tournament) -> None:
         now = now_msk_naive()
@@ -2822,32 +2911,30 @@ def register_user_handlers(dp: Dispatcher):
         start_arg = (command.args or "").strip().lower()
         deep_join_wc = start_arg in {"join_wc2026", "join_wc", "wc2026", "wc", "join"}
         if deep_join_wc and not is_joined:
-            if not await _ensure_enrollment_open_for_join(message):
-                return
-            await _request_display_name_for_join(message, state, tournament)
+            await message.answer(
+                "Вступление в турнир теперь проходит в Mini App.",
+                reply_markup=build_open_miniapp_keyboard(screen="profile", tournament_code=WC_TOURNAMENT_CODE),
+            )
             return
 
-        text = (
-            "⚽  Вот это тебя корёжит! А всё потому что тебя ещё нет в новом турнире прогнозов World Cup 2026!\n"
-            "Ставишь по двоичной системе или читаешь футбол, как открытую книгу? Скоро узнаем.\n\n"
-            "Нажимай кнопку ниже и вступай в турнир!"
-        )
         if is_joined:
-            await message.answer("Ты уже участвуешь в турнире WC 2026 ✅", reply_markup=types.ReplyKeyboardRemove())
+            await message.answer(
+                "Всё готово. Открывай Mini App — там профиль, матчи, таблица и 1x1.",
+                reply_markup=build_open_miniapp_keyboard(screen="profile", tournament_code=WC_TOURNAMENT_CODE),
+            )
             return
-        await message.answer(text, reply_markup=build_start_join_wc_keyboard())
+        await message.answer(
+            "Добро пожаловать в Ванга-L.\n"
+            "Чтобы вступить в турнир и пользоваться прогнозами, открой Mini App.",
+            reply_markup=build_start_join_wc_keyboard(),
+        )
 
     @dp.callback_query(F.data == "start_join_wc")
     async def cb_start_join_wc(callback: types.CallbackQuery, state: FSMContext):
-        if not await _ensure_enrollment_open_for_join(callback):
-            await callback.answer()
-            return
-        async with SessionLocal() as session:
-            await upsert_user_from_callback(session, callback)
-            await set_selected_tournament_for_user(session, callback.from_user.id, WC_TOURNAMENT_CODE)
-            tournament = await get_selected_tournament_for_user(session, callback.from_user.id)
-            await session.commit()
-        await _request_display_name_for_join(callback, state, tournament)
+        await callback.message.answer(
+            "Вступление в турнир теперь проходит в Mini App.",
+            reply_markup=build_open_miniapp_keyboard(screen="profile", tournament_code=WC_TOURNAMENT_CODE),
+        )
         await callback.answer()
 
     @dp.message(Command("help"))

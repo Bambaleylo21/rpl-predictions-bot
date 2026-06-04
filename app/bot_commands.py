@@ -1,5 +1,10 @@
 from aiogram import types
+import os
+
 from app.config import load_admin_ids
+
+
+MINIAPP_WEB_URL = os.getenv("MINIAPP_WEB_URL", "https://rpl-predictions-bot-mini-app.onrender.com").strip()
 
 
 async def set_bot_commands(bot) -> None:
@@ -17,6 +22,19 @@ async def set_bot_commands(bot) -> None:
             [],
             scope=types.BotCommandScopeChat(chat_id=admin_id),
         )
+
+    # Нижняя кнопка Telegram-бота теперь ведёт сразу в Mini App.
+    # Если Telegram/API временно не примет кнопку, бот всё равно должен стартовать.
+    if MINIAPP_WEB_URL:
+        try:
+            await bot.set_chat_menu_button(
+                menu_button=types.MenuButtonWebApp(
+                    text="Открыть Ванга-L",
+                    web_app=types.WebAppInfo(url=MINIAPP_WEB_URL),
+                )
+            )
+        except Exception:
+            pass
 
 
 async def bot_commands(bot) -> None:
