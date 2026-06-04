@@ -339,6 +339,8 @@ type AdminRoundsResponse = {
 
 type AdminResultItem = {
   match_id: number
+  round_number?: number
+  round_name?: string
   home_team: string
   away_team: string
   group_label?: string | null
@@ -354,6 +356,7 @@ type AdminResultsCurrentResponse = {
   reason?: string
   round_number?: number
   round_name?: string
+  scope?: 'all' | 'round'
   mode?: 'open' | 'all'
   round_total?: number
   without_result?: number
@@ -792,7 +795,6 @@ function App() {
   const [adminNotice, setAdminNotice] = useState<string | null>(null)
   const [adminSavingMatchId, setAdminSavingMatchId] = useState<number | null>(null)
   const [adminScoreInputs, setAdminScoreInputs] = useState<Record<number, string>>({})
-  const [adminRecalcLoading, setAdminRecalcLoading] = useState<boolean>(false)
   const [duelsData, setDuelsData] = useState<DuelsResponse | null>(null)
   const [duelsError, setDuelsError] = useState<string | null>(null)
   const [duelsNotice, setDuelsNotice] = useState<string | null>(null)
@@ -1565,13 +1567,13 @@ function App() {
     apiBase: string,
     initData: string,
     tournamentCode: string,
-    roundNumber: number,
+    roundNumber: number | null,
     mode: 'open' | 'all'
   ) => {
     const headers = { 'X-Telegram-Init-Data': initData }
     const tParam = encodeURIComponent(tournamentCode || 'RPL')
-    const rParam = encodeURIComponent(String(roundNumber))
-    const res = await fetch(`${apiBase}/api/miniapp/admin/results/current?t=${tParam}&round=${rParam}&mode=${mode}`, { headers })
+    const rParam = roundNumber != null ? `&round=${encodeURIComponent(String(roundNumber))}` : ''
+    const res = await fetch(`${apiBase}/api/miniapp/admin/results/current?t=${tParam}${rParam}&mode=${mode}`, { headers })
     const data = (await res.json()) as AdminResultsCurrentResponse
     if (!res.ok || !data.ok) {
       throw new Error(data.reason || data.error || `HTTP ${res.status}`)
@@ -1661,9 +1663,7 @@ function App() {
         throw new Error(data.reason || data.error || `HTTP ${res.status}`)
       }
       setAdminNotice(`Счёт сохранён. Обновлено очков: ${data.updated_points ?? 0}`)
-      if (adminRound != null) {
-        await loadAdminResults(apiBase, initData, selectedTournamentCode, adminRound, adminMode)
-      }
+      await loadAdminResults(apiBase, initData, selectedTournamentCode, null, adminMode)
     } catch (err) {
       setAdminNotice(`Ошибка сохранения: ${String(err)}`)
     } finally {
@@ -1693,50 +1693,11 @@ function App() {
         throw new Error(data.reason || data.error || `HTTP ${res.status}`)
       }
       setAdminNotice(`Итог матча сброшен. Удалено очков: ${data.deleted_points ?? 0}`)
-      if (adminRound != null) {
-        await loadAdminResults(apiBase, initData, selectedTournamentCode, adminRound, adminMode)
-      }
+      await loadAdminResults(apiBase, initData, selectedTournamentCode, null, adminMode)
     } catch (err) {
       setAdminNotice(`Ошибка сброса: ${String(err)}`)
     } finally {
       setAdminSavingMatchId(null)
-    }
-  }
-
-  const recalcAdminRound = async () => {
-    if (adminRound == null) return
-    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
-    const initData = getInitData()
-    setAdminRecalcLoading(true)
-    setAdminNotice(null)
-    try {
-      const tParam = encodeURIComponent(selectedTournamentCode || 'RPL')
-      const res = await fetch(`${apiBase}/api/miniapp/admin/recalc_round?t=${tParam}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Telegram-Init-Data': initData,
-        },
-        body: JSON.stringify({ round_number: adminRound }),
-      })
-      const data = (await res.json()) as {
-        ok?: boolean
-        error?: string
-        reason?: string
-        matches_recalced?: number
-        updated_points?: number
-      }
-      if (!res.ok || !data.ok) {
-        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
-      }
-      setAdminNotice(
-        `Пересчёт завершён: матчей ${data.matches_recalced ?? 0}, обновлений очков ${data.updated_points ?? 0}`
-      )
-      await loadAdminResults(apiBase, initData, selectedTournamentCode, adminRound, adminMode)
-    } catch (err) {
-      setAdminNotice(`Ошибка пересчёта: ${String(err)}`)
-    } finally {
-      setAdminRecalcLoading(false)
     }
   }
 
@@ -1980,19 +1941,19 @@ function App() {
   }, [meData?.is_admin, selectedTournamentCode])
 
   useEffect(() => {
-    if (!meData?.is_admin || adminRound == null) return
+    if (!meData?.is_admin) return
     if (adminViewMode !== 'matches') return
     const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
     const initData = getInitData()
     if (!initData || !selectedTournamentCode) return
 
-    loadAdminResults(apiBase, initData, selectedTournamentCode, adminRound, adminMode)
+    loadAdminResults(apiBase, initData, selectedTournamentCode, null, adminMode)
       .then(() => setAdminError(null))
       .catch((err) => {
         setAdminError(String(err))
         setAdminResults([])
       })
-  }, [meData?.is_admin, selectedTournamentCode, adminRound, adminMode, adminViewMode])
+  }, [meData?.is_admin, selectedTournamentCode, adminMode, adminViewMode])
 
   useEffect(() => {
     if (!meData?.is_admin) return
@@ -2218,6 +2179,21 @@ function App() {
   const tableLongtermRows = useMemo<TableLongtermRow[]>(() => {
     return [...(tableData?.rows_longterm || [])]
   }, [tableData])
+
+  const adminResultsWithSections = useMemo(() => {
+    return adminResults.map((item, index) => {
+      const sectionTitle = item.round_name || (item.round_number ? `Тур ${item.round_number}` : 'Матчи')
+      const previous = adminResults[index - 1]
+      const previousTitle = previous
+        ? previous.round_name || (previous.round_number ? `Тур ${previous.round_number}` : 'Матчи')
+        : ''
+      return {
+        item,
+        sectionTitle,
+        showSection: sectionTitle !== previousTitle,
+      }
+    })
+  }, [adminResults])
 
   const handleSortHeader = (key: 'total' | 'exact' | 'diff' | 'outcome' | 'missed' | 'bonus') => {
     if (tableSortKey === key) {
@@ -3645,26 +3621,7 @@ function App() {
               <section className="cards space-top">
                 <div className="card card-static admin-controls-card">
                   <div className="card-title">Матчи</div>
-                  <div className="segment-hint">Пока выбираем тур/стадию, следующий этап — общий список матчей</div>
-                  <div className="tournament-row admin-round-row">
-                    {adminRounds.map((r) => (
-                      <button
-                        key={r.round}
-                        className={`tournament-chip ${adminRound === r.round ? 'is-active' : ''}`}
-                        onClick={() => setAdminRound(r.round)}
-                      >
-                        {r.round_name || `Тур ${r.round}`} · {r.without_result}/{r.total}
-                      </button>
-                    ))}
-                    {selectedTournamentCode === 'WC2026' ? (
-                      <button
-                        className="tournament-chip"
-                        onClick={() => setAdminViewMode('playoff')}
-                      >
-                        Плей-офф слоты
-                      </button>
-                    ) : null}
-                  </div>
+                  <div className="segment-hint">Все матчи турнира одним списком, от ранних к поздним</div>
 
                   <div className="admin-top-row">
                     <div className="match-toggle">
@@ -3682,21 +3639,22 @@ function App() {
                       </button>
                     </div>
 
-                    <button
-                      className="admin-recalc-btn"
-                      onClick={recalcAdminRound}
-                      disabled={adminRecalcLoading || adminRound == null}
-                    >
-                      {adminRecalcLoading ? 'Пересчёт…' : 'Пересчитать'}
-                    </button>
+                    {selectedTournamentCode === 'WC2026' ? (
+                      <button
+                        className="admin-secondary-btn"
+                        onClick={() => setAdminViewMode('playoff')}
+                      >
+                        Плей-офф слоты
+                      </button>
+                    ) : null}
                   </div>
                   <div className="card-text">
-                    {adminRoundName ? (
+                    {adminRoundTotal > 0 ? (
                       <>
-                        Выбран: <b>{adminRoundName}</b> · матчей: <b>{adminRoundTotal}</b> · без итогов: <b>{adminWithoutResult}</b>
+                        Матчей: <b>{adminRoundTotal}</b> · без итогов: <b>{adminWithoutResult}</b>
                       </>
                     ) : (
-                      'Выбери тур.'
+                      'Матчей для управления пока нет.'
                     )}
                   </div>
                 </div>
@@ -3704,46 +3662,49 @@ function App() {
                   {adminResults.length === 0 ? (
                     <div className="card-text">Матчей для показа нет.</div>
                   ) : (
-                    adminResults.map((m) => (
-                      <div className="compact-match" key={m.match_id}>
-                        <div className="compact-meta">
-                          {m.group_label ? <span className="group-small">[{m.group_label}]</span> : <span className="group-small">—</span>}
-                          <span className="kickoff-small">{m.kickoff || '—'}</span>
-                        </div>
-                        <div className="compact-main admin-main">
-                          <span className="team-name team-left">{teamWithFlag(m.home_team)}</span>
-                          <input
-                            className="score-inline-input"
-                            value={adminScoreInputs[m.match_id] || ''}
-                            onChange={(e) =>
-                              setAdminScoreInputs((prev) => ({
-                                ...prev,
-                                [m.match_id]: formatScoreInput(e.target.value),
-                              }))
-                            }
-                            placeholder="-:-"
-                            inputMode="numeric"
-                          />
-                          <span className="team-name team-right">{teamWithFlag(m.away_team)}</span>
-                          <button
-                            className={`save-btn compact-save-btn ${
-                              normalizeScore(adminScoreInputs[m.match_id] || '') ? 'is-dirty' : 'is-empty'
-                            }`}
-                            onClick={() => saveAdminResult(m.match_id)}
-                            disabled={adminSavingMatchId === m.match_id}
-                          >
-                            {adminSavingMatchId === m.match_id ? '…' : '✓'}
-                          </button>
-                          <button
-                            className="admin-reset-btn"
-                            onClick={() => resetAdminResult(m.match_id)}
-                            disabled={adminSavingMatchId === m.match_id || !m.result}
-                          >
-                            Сброс
-                          </button>
-                        </div>
-                        <div className="compact-note">
-                          Итог: <b>{m.result || 'не задан'}</b> · Прогнозов: <b>{m.predictions_count ?? 0}</b>
+                    adminResultsWithSections.map(({ item: m, sectionTitle, showSection }) => (
+                      <div className="admin-match-section-row" key={m.match_id}>
+                        {showSection ? <div className="admin-match-section-title">{sectionTitle}</div> : null}
+                        <div className="compact-match">
+                          <div className="compact-meta">
+                            {m.group_label ? <span className="group-small">[{m.group_label}]</span> : <span className="group-small">—</span>}
+                            <span className="kickoff-small">{m.kickoff || '—'}</span>
+                          </div>
+                          <div className="compact-main admin-main">
+                            <span className="team-name team-left">{teamWithFlag(m.home_team)}</span>
+                            <input
+                              className="score-inline-input"
+                              value={adminScoreInputs[m.match_id] || ''}
+                              onChange={(e) =>
+                                setAdminScoreInputs((prev) => ({
+                                  ...prev,
+                                  [m.match_id]: formatScoreInput(e.target.value),
+                                }))
+                              }
+                              placeholder="-:-"
+                              inputMode="numeric"
+                            />
+                            <span className="team-name team-right">{teamWithFlag(m.away_team)}</span>
+                            <button
+                              className={`save-btn compact-save-btn ${
+                                normalizeScore(adminScoreInputs[m.match_id] || '') ? 'is-dirty' : 'is-empty'
+                              }`}
+                              onClick={() => saveAdminResult(m.match_id)}
+                              disabled={adminSavingMatchId === m.match_id}
+                            >
+                              {adminSavingMatchId === m.match_id ? '…' : '✓'}
+                            </button>
+                            <button
+                              className="admin-reset-btn"
+                              onClick={() => resetAdminResult(m.match_id)}
+                              disabled={adminSavingMatchId === m.match_id || !m.result}
+                            >
+                              Сброс
+                            </button>
+                          </div>
+                          <div className="compact-note">
+                            Итог: <b>{m.result || 'не задан'}</b> · Прогнозов: <b>{m.predictions_count ?? 0}</b>
+                          </div>
                         </div>
                       </div>
                     ))

@@ -619,6 +619,24 @@ body {
   border-top: 1px solid var(--line-3);
 }
 
+.admin-match-section-row + .admin-match-section-row .compact-match {
+  margin-top: var(--vr-sm);
+  padding-top: 10px;
+  border-top: 1px solid var(--line-3);
+}
+
+.admin-match-section-title {
+  margin: 14px 2px 6px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.admin-match-section-row:first-child .admin-match-section-title {
+  margin-top: 2px;
+}
+
 .compact-match.is-focused {
   border-radius: 12px;
   background: rgba(185, 154, 85, 0.14);
@@ -997,6 +1015,16 @@ body {
 
 .admin-recalc-btn:disabled {
   opacity: 0.6;
+}
+
+.admin-secondary-btn {
+  border: 1px solid var(--line-1);
+  border-radius: 10px;
+  background: #050505;
+  color: var(--text-main);
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .admin-longterm-grid {

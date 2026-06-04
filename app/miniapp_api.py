@@ -839,14 +839,16 @@ async def admin_results_current(request: web.Request) -> web.Response:
                     if int(r.without_result_cnt or 0) > 0:
                         current_round = int(r.round_number)
                         break
+            list_all_rounds = requested_round is None
             if requested_round is not None:
                 current_round = int(requested_round)
 
             filters = [
                 Match.tournament_id == int(tournament.id),
-                Match.round_number == int(current_round),
                 Match.is_placeholder == 0,
             ]
+            if not list_all_rounds:
+                filters.append(Match.round_number == int(current_round))
             if mode == "open":
                 filters.append((Match.home_score.is_(None)) | (Match.away_score.is_(None)))
 
@@ -854,23 +856,24 @@ async def admin_results_current(request: web.Request) -> web.Response:
                 await session.execute(
                     select(Match)
                     .where(*filters)
-                    .order_by(Match.kickoff_time.asc(), Match.id.asc())
+                    .order_by(Match.round_number.asc(), Match.kickoff_time.asc(), Match.id.asc())
                 )
             ).scalars().all()
 
+            total_filters = [
+                Match.tournament_id == int(tournament.id),
+                Match.is_placeholder == 0,
+            ]
+            if not list_all_rounds:
+                total_filters.append(Match.round_number == int(current_round))
+
             round_total_q = await session.execute(
-                select(func.count(Match.id)).where(
-                    Match.tournament_id == int(tournament.id),
-                    Match.round_number == int(current_round),
-                    Match.is_placeholder == 0,
-                )
+                select(func.count(Match.id)).where(*total_filters)
             )
             round_total = int(round_total_q.scalar_one() or 0)
             without_result_q = await session.execute(
                 select(func.count(Match.id)).where(
-                    Match.tournament_id == int(tournament.id),
-                    Match.round_number == int(current_round),
-                    Match.is_placeholder == 0,
+                    *total_filters,
                     ((Match.home_score.is_(None)) | (Match.away_score.is_(None))),
                 )
             )
@@ -884,6 +887,8 @@ async def admin_results_current(request: web.Request) -> web.Response:
                 items.append(
                     {
                         "match_id": int(m.id),
+                        "round_number": int(m.round_number or 0),
+                        "round_name": display_round_name(tournament.code, int(m.round_number or 0)),
                         "home_team": str(m.home_team),
                         "away_team": str(m.away_team),
                         "group_label": m.group_label,
@@ -904,7 +909,8 @@ async def admin_results_current(request: web.Request) -> web.Response:
                 "tournament_code": tournament.code,
                 "tournament_name": tournament.name,
                 "round_number": int(current_round),
-                "round_name": display_round_name(tournament.code, int(current_round)),
+                "round_name": "Все матчи" if list_all_rounds else display_round_name(tournament.code, int(current_round)),
+                "scope": "all" if list_all_rounds else "round",
                 "mode": mode,
                 "round_total": round_total,
                 "without_result": without_result,
