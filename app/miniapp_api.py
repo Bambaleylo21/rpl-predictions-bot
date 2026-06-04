@@ -27,7 +27,7 @@ from app.duel_notify import (
     send_new_duel_challenge_push,
 )
 from app.display import display_round_name
-from app.duels import create_duel, ensure_duel_elo, finalize_duels_for_match, get_duel_hub, respond_duel
+from app.duels import create_duel, ensure_duel_elo, finalize_duels_for_match, get_duel_elo_rating_map, get_duel_hub, respond_duel
 from app.league_table import build_active_stage_league_table
 from app.models import Duel, DuelElo, League, LeagueParticipant, LongtermPrediction, Match, Point, Prediction, Setting, Stage, Tournament, User, UserTournament
 from app.notify_prefs import get_user_notification_prefs, set_user_notification_pref, should_send_notification
@@ -1124,6 +1124,112 @@ async def admin_participants_current(request: web.Request) -> web.Response:
         logger.exception("miniapp admin_participants_current error")
         return web.json_response(
             {"ok": False, "error": "admin_participants_current_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
+async def admin_duels_current(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_admin_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        admin_tg_user_id = int(user.get("id"))
+
+        async with SessionLocal() as session:
+            tournament = await _resolve_tournament(session, admin_tg_user_id, requested_code=request.query.get("t"))
+            rows = (
+                await session.execute(
+                    select(Duel, Match)
+                    .join(Match, Match.id == Duel.match_id)
+                    .where(
+                        Duel.tournament_id == int(tournament.id),
+                        Duel.status.in_(("accepted", "finished")),
+                    )
+                    .order_by(Match.kickoff_time.asc(), Duel.id.asc())
+                )
+            ).all()
+
+            user_ids: set[int] = set()
+            for duel, _match in rows:
+                user_ids.add(int(duel.challenger_tg_user_id))
+                user_ids.add(int(duel.opponent_tg_user_id))
+
+            name_rows = []
+            if user_ids:
+                name_rows = (
+                    await session.execute(
+                        select(
+                            UserTournament.tg_user_id,
+                            UserTournament.display_name,
+                            User.display_name,
+                            User.username,
+                            User.full_name,
+                        )
+                        .outerjoin(User, User.tg_user_id == UserTournament.tg_user_id)
+                        .where(
+                            UserTournament.tournament_id == int(tournament.id),
+                            UserTournament.tg_user_id.in_(user_ids),
+                        )
+                    )
+                ).all()
+            name_map = {
+                int(uid): str(tournament_name or user_name or full_name or (f"@{username}" if username else "") or f"ID {int(uid)}")
+                for uid, tournament_name, user_name, username, full_name in name_rows
+            }
+            elo_map = await get_duel_elo_rating_map(session, list(user_ids))
+            await session.commit()
+
+        def duel_item(duel: Duel, match: Match) -> dict[str, Any]:
+            return {
+                "duel_id": int(duel.id),
+                "status": str(duel.status),
+                "match_id": int(match.id),
+                "home_team": str(match.home_team),
+                "away_team": str(match.away_team),
+                "group_label": match.group_label,
+                "kickoff": match.kickoff_time.strftime("%d.%m %H:%M"),
+                "result": (
+                    f"{int(match.home_score)}:{int(match.away_score)}"
+                    if match.home_score is not None and match.away_score is not None
+                    else None
+                ),
+                "challenger_tg_user_id": int(duel.challenger_tg_user_id),
+                "challenger_name": name_map.get(int(duel.challenger_tg_user_id), f"ID {int(duel.challenger_tg_user_id)}"),
+                "challenger_pred": f"{int(duel.challenger_pred_home)}:{int(duel.challenger_pred_away)}",
+                "opponent_tg_user_id": int(duel.opponent_tg_user_id),
+                "opponent_name": name_map.get(int(duel.opponent_tg_user_id), f"ID {int(duel.opponent_tg_user_id)}"),
+                "opponent_pred": (
+                    f"{int(duel.opponent_pred_home)}:{int(duel.opponent_pred_away)}"
+                    if duel.opponent_pred_home is not None and duel.opponent_pred_away is not None
+                    else None
+                ),
+                "risk_multiplier_bp": int(duel.risk_multiplier_bp or 100),
+                "outcome": duel.outcome,
+                "winner_tg_user_id": int(duel.winner_tg_user_id) if duel.winner_tg_user_id is not None else None,
+                "elo_delta_challenger": int(duel.elo_delta_challenger or 0),
+                "elo_delta_opponent": int(duel.elo_delta_opponent or 0),
+                "challenger_rating": int(elo_map.get(int(duel.challenger_tg_user_id), 1000)),
+                "opponent_rating": int(elo_map.get(int(duel.opponent_tg_user_id), 1000)),
+            }
+
+        active = [duel_item(duel, match) for duel, match in rows if str(duel.status) == "accepted"]
+        finished = [duel_item(duel, match) for duel, match in rows if str(duel.status) == "finished"]
+        return web.json_response(
+            {
+                "ok": True,
+                "trusted": True,
+                "is_admin": True,
+                "tournament_code": tournament.code,
+                "tournament_name": tournament.name,
+                "active": active,
+                "finished": finished,
+            }
+        )
+    except Exception as e:
+        logger.exception("miniapp admin_duels_current error")
+        return web.json_response(
+            {"ok": False, "error": "admin_duels_current_failed", "reason": str(e), "signature_checked": True},
             status=500,
         )
 
@@ -4608,6 +4714,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/miniapp/admin/rounds", admin_rounds)
     app.router.add_get("/api/miniapp/admin/results/current", admin_results_current)
     app.router.add_get("/api/miniapp/admin/participants/current", admin_participants_current)
+    app.router.add_get("/api/miniapp/admin/duels/current", admin_duels_current)
     app.router.add_post("/api/miniapp/admin/participant/remove", admin_participant_remove)
     app.router.add_post("/api/miniapp/admin/result/set", admin_result_set)
     app.router.add_post("/api/miniapp/admin/result/reset", admin_result_reset)

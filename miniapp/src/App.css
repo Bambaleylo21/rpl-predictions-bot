@@ -1106,7 +1106,8 @@ body {
 }
 
 .admin-longterm-summary > div,
-.admin-participants-summary > div {
+.admin-participants-summary > div,
+.admin-duels-summary > div {
   border: 1px solid var(--line-2);
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.03);
@@ -1116,6 +1117,7 @@ body {
 
 .admin-longterm-summary span,
 .admin-participants-summary span,
+.admin-duels-summary span,
 .admin-longterm-label span {
   display: block;
   color: var(--text-muted);
@@ -1123,7 +1125,8 @@ body {
 }
 
 .admin-longterm-summary b,
-.admin-participants-summary b {
+.admin-participants-summary b,
+.admin-duels-summary b {
   display: block;
   margin-top: 2px;
   color: var(--text-main);
@@ -1146,6 +1149,17 @@ body {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
+  margin-bottom: 8px;
+}
+
+.admin-duels-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.admin-duels-tabs {
   margin-bottom: 8px;
 }
 
@@ -1189,6 +1203,15 @@ body {
 
 .admin-empty-text {
   padding: 4px 2px;
+}
+
+.admin-duel-row {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.admin-duel-preds {
+  margin-top: 8px;
 }
 
 .admin-playoff-card {
