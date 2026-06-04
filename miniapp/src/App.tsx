@@ -2441,12 +2441,24 @@ function App() {
 
   const renderAdminLongtermContent = () => (
     <div className="admin-inline-panel">
-      <div className="card-text">
-        Выбери фактического победителя турнира и лучшего бомбардира, затем нажми «Сохранить».
+      <div className="admin-longterm-summary">
+        <div>
+          <span>Участники</span>
+          <b>{adminLongtermParticipants}</b>
+        </div>
+        <div>
+          <span>Очки</span>
+          <b>{adminLongtermWinnerAwarded + adminLongtermScorerAwarded}</b>
+        </div>
+        <div>
+          <span>Факт</span>
+          <b>{adminLongtermWinner && adminLongtermScorer ? 'задан' : 'не задан'}</b>
+        </div>
       </div>
+      <div className="card-text admin-longterm-note">Выбери фактические итоги и пересчитай бонусы +5.</div>
       <div className="admin-longterm-grid">
         <label className="admin-longterm-label">
-          Победитель турнира
+          <span>Победитель турнира</span>
           <select
             className="duel-picker-search admin-longterm-select"
             value={adminLongtermWinner}
@@ -2461,7 +2473,7 @@ function App() {
           </select>
         </label>
         <label className="admin-longterm-label">
-          Лучший бомбардир
+          <span>Лучший бомбардир</span>
           <select
             className="duel-picker-search admin-longterm-select"
             value={adminLongtermScorer}
@@ -2476,20 +2488,22 @@ function App() {
           </select>
         </label>
       </div>
-      <button
-        className="admin-recalc-btn"
-        onClick={saveAdminLongterm}
-        disabled={adminLongtermSaving || !adminLongtermWinner || !adminLongtermScorer}
-      >
-        {adminLongtermSaving ? 'Сохраняю…' : 'Сохранить и пересчитать'}
-      </button>
-      <button
-        className="admin-reset-btn admin-reset-btn-wide"
-        onClick={resetAdminLongterm}
-        disabled={adminLongtermSaving}
-      >
-        Сбросить итоги доп. прогнозов
-      </button>
+      <div className="admin-longterm-actions">
+        <button
+          className="admin-recalc-btn"
+          onClick={saveAdminLongterm}
+          disabled={adminLongtermSaving || !adminLongtermWinner || !adminLongtermScorer}
+        >
+          {adminLongtermSaving ? 'Сохраняю…' : 'Сохранить'}
+        </button>
+        <button
+          className="admin-reset-btn"
+          onClick={resetAdminLongterm}
+          disabled={adminLongtermSaving}
+        >
+          Сбросить
+        </button>
+      </div>
     </div>
   )
 
