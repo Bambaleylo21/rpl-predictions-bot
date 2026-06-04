@@ -775,7 +775,7 @@ function App() {
   const [currentInsight, setCurrentInsight] = useState<string | null>(null)
   const [adminRounds, setAdminRounds] = useState<AdminRound[]>([])
   const [adminRound, setAdminRound] = useState<number | null>(null)
-  const [adminViewMode, setAdminViewMode] = useState<'matches' | 'playoff' | 'longterm' | 'participants' | 'duels'>('matches')
+  const [adminViewMode, setAdminViewMode] = useState<'matches' | 'playoff' | 'longterm' | 'participants' | 'duels' | null>('matches')
   const [adminMode, setAdminMode] = useState<'open' | 'all'>('open')
   const [adminResults, setAdminResults] = useState<AdminResultItem[]>([])
   const [adminRoundName, setAdminRoundName] = useState<string>('')
@@ -815,6 +815,10 @@ function App() {
   const [duelRulesOpen, setDuelRulesOpen] = useState<boolean>(false)
   const [joinBusy, setJoinBusy] = useState<boolean>(false)
   const [refreshTick, setRefreshTick] = useState<number>(0)
+
+  const toggleAdminViewMode = (mode: 'matches' | 'playoff' | 'longterm' | 'participants' | 'duels') => {
+    setAdminViewMode((current) => (current === mode ? null : mode))
+  }
 
   const selectedRoundNumber =
     selectedTournamentCode === 'WC2026'
@@ -3895,12 +3899,12 @@ function App() {
             <section className="cards">
               <div className="card card-static">
                 <div className="card-title">Панель управления</div>
-                <div className="segment-hint">Выбери блок, который нужно открыть</div>
+                <div className="segment-hint">Открой нужный блок. Повторный тап свернёт его.</div>
 
                 <div className="admin-accordion-list">
                   <button
                     className={`admin-accordion-head ${adminViewMode === 'matches' ? 'is-active' : ''}`}
-                    onClick={() => setAdminViewMode('matches')}
+                    onClick={() => toggleAdminViewMode('matches')}
                   >
                     <span>
                       <b>Матчи</b>
@@ -3918,7 +3922,7 @@ function App() {
                     <>
                       <button
                         className={`admin-accordion-head ${adminViewMode === 'longterm' ? 'is-active' : ''}`}
-                        onClick={() => setAdminViewMode('longterm')}
+                        onClick={() => toggleAdminViewMode('longterm')}
                       >
                         <span>
                           <b>Доп. прогнозы</b>
@@ -3934,7 +3938,7 @@ function App() {
 
                   <button
                     className={`admin-accordion-head ${adminViewMode === 'participants' ? 'is-active' : ''}`}
-                    onClick={() => setAdminViewMode('participants')}
+                    onClick={() => toggleAdminViewMode('participants')}
                   >
                     <span>
                       <b>Участники</b>
@@ -3946,7 +3950,7 @@ function App() {
 
                   <button
                     className={`admin-accordion-head ${adminViewMode === 'duels' ? 'is-active' : ''}`}
-                    onClick={() => setAdminViewMode('duels')}
+                    onClick={() => toggleAdminViewMode('duels')}
                   >
                     <span>
                       <b>Битвы 1x1</b>
