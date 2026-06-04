@@ -336,6 +336,22 @@ async def respond_duel(
     if int(pred_home) == int(duel.challenger_pred_home) and int(pred_away) == int(duel.challenger_pred_away):
         raise ValueError("same_prediction_not_allowed")
 
+    other_active_duel = (
+        await session.execute(
+            select(Duel.id).where(
+                Duel.id != int(duel.id),
+                Duel.match_id == int(duel.match_id),
+                Duel.status.in_(("pending", "accepted")),
+                or_(
+                    Duel.challenger_tg_user_id.in_((int(duel.challenger_tg_user_id), int(duel.opponent_tg_user_id))),
+                    Duel.opponent_tg_user_id.in_((int(duel.challenger_tg_user_id), int(duel.opponent_tg_user_id))),
+                ),
+            )
+        )
+    ).first()
+    if other_active_duel is not None:
+        raise ValueError("duel_already_exists_for_match")
+
     duel.opponent_pred_home = int(pred_home)
     duel.opponent_pred_away = int(pred_away)
     duel.risk_multiplier_bp = int(

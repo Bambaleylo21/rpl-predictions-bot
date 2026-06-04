@@ -848,6 +848,22 @@ function App() {
     if (!m) return ''
     return `${Number(m[1])}:${Number(m[2])}`
   }
+  const duelErrorMessage = (error: string): string => {
+    const key = (error || '').trim()
+    if (key === 'duel_already_exists_for_match') {
+      return 'На этот матч у тебя или соперника уже есть активная дуэль.'
+    }
+    if (key === 'same_prediction_not_allowed') {
+      return 'Прогнозы в дуэли не должны совпадать.'
+    }
+    if (key === 'match_locked' || key === 'duel_expired') {
+      return 'Матч уже начался, дуэль создать или принять нельзя.'
+    }
+    if (key === 'self_duel_not_allowed') {
+      return 'Нельзя бросить вызов самому себе.'
+    }
+    return 'Не удалось выполнить действие в 1x1. Попробуй ещё раз.'
+  }
   const showDebugPanels = import.meta.env.DEV || import.meta.env.VITE_DEBUG_PANELS === '1'
 
   useEffect(() => {
@@ -1568,8 +1584,8 @@ function App() {
       setDuelsNotice('Вызов отправлен.')
       setDuelScoreInput('')
       await loadDuelsCurrent(apiBase, initData, selectedTournamentCode)
-    } catch (_err) {
-      setDuelsNotice('Не удалось отправить вызов. Попробуй ещё раз.')
+    } catch (err) {
+      setDuelsNotice(duelErrorMessage(err instanceof Error ? err.message : String(err)))
     } finally {
       setDuelBusyId(null)
     }
@@ -1607,8 +1623,8 @@ function App() {
       }
       setDuelsNotice(action === 'accept' ? 'Вызов принят.' : 'Вызов отклонён.')
       await loadDuelsCurrent(apiBase, initData, selectedTournamentCode)
-    } catch (_err) {
-      setDuelsNotice('Не удалось выполнить действие в 1x1. Попробуй ещё раз.')
+    } catch (err) {
+      setDuelsNotice(duelErrorMessage(err instanceof Error ? err.message : String(err)))
     } finally {
       setDuelBusyId(null)
     }
