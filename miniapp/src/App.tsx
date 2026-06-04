@@ -789,7 +789,6 @@ function App() {
   const [adminLongtermWinnerAwarded, setAdminLongtermWinnerAwarded] = useState<number>(0)
   const [adminLongtermScorerAwarded, setAdminLongtermScorerAwarded] = useState<number>(0)
   const [adminLongtermSaving, setAdminLongtermSaving] = useState<boolean>(false)
-  const [adminPlayoffSlots, setAdminPlayoffSlots] = useState<AdminPlayoffSlotItem[]>([])
   const [adminPlayoffInitLoading, setAdminPlayoffInitLoading] = useState<boolean>(false)
   const [adminPlayoffSavingMatchId, setAdminPlayoffSavingMatchId] = useState<number | null>(null)
   const [adminPlayoffTeamInputs, setAdminPlayoffTeamInputs] = useState<Record<number, { home_team: string; away_team: string }>>({})
@@ -1676,7 +1675,6 @@ function App() {
       throw new Error(data.reason || data.error || `HTTP ${res.status}`)
     }
     const items = data.items || []
-    setAdminPlayoffSlots(items)
     const nextInputs: Record<number, { home_team: string; away_team: string }> = {}
     for (const item of items) {
       nextInputs[item.match_id] = {
@@ -2270,6 +2268,265 @@ function App() {
     setTableSortKey(key)
     setTableSortDir(key === 'missed' ? 'asc' : 'desc')
   }
+
+  const renderAdminMatchesContent = () => (
+    <div className="admin-inline-panel">
+      <div className="segment-hint">Все матчи турнира одним списком, от ранних к поздним</div>
+
+      <div className="admin-top-row">
+        <div className="match-toggle">
+          <button
+            className={`match-toggle-btn ${adminMode === 'open' ? 'is-active' : ''}`}
+            onClick={() => setAdminMode('open')}
+          >
+            Без итогов
+          </button>
+          <button
+            className={`match-toggle-btn ${adminMode === 'all' ? 'is-active' : ''}`}
+            onClick={() => setAdminMode('all')}
+          >
+            Все
+          </button>
+        </div>
+
+        {selectedTournamentCode === 'WC2026' ? (
+          <button
+            className="admin-secondary-btn"
+            onClick={initAdminPlayoffSlots}
+            disabled={adminPlayoffInitLoading}
+          >
+            {adminPlayoffInitLoading ? 'Создаю...' : 'Создать слоты плей-офф'}
+          </button>
+        ) : null}
+      </div>
+      <div className="card-text">
+        {adminRoundTotal > 0 ? (
+          <>
+            Матчей: <b>{adminRoundTotal}</b> · без итогов: <b>{adminWithoutResult}</b>
+          </>
+        ) : (
+          'Матчей для управления пока нет.'
+        )}
+      </div>
+
+      <div className="compact-list-card admin-inline-list">
+        {adminResults.length === 0 ? (
+          <div className="card-text">Матчей для показа нет.</div>
+        ) : (
+          adminResultsWithSections.map(({ item: m, sectionTitle, showSection }) => (
+            <div className="admin-match-section-row" key={m.match_id}>
+              {showSection ? <div className="admin-match-section-title">{sectionTitle}</div> : null}
+              <div className="compact-match">
+                <div className="compact-meta">
+                  {m.group_label ? <span className="group-small">[{m.group_label}]</span> : <span className="group-small">—</span>}
+                  <span className="kickoff-small">{m.kickoff || '—'}</span>
+                </div>
+                {m.is_placeholder ? (
+                  <>
+                    <div className="admin-playoff-inline">
+                      <select
+                        className="admin-team-select"
+                        value={adminPlayoffTeamInputs[m.match_id]?.home_team || ''}
+                        onChange={(e) =>
+                          setAdminPlayoffTeamInputs((prev) => ({
+                            ...prev,
+                            [m.match_id]: {
+                              ...(prev[m.match_id] || { home_team: '', away_team: '' }),
+                              home_team: e.target.value,
+                            },
+                          }))
+                        }
+                      >
+                        <option value="">Команда A</option>
+                        {teamOptionsWithFlags.map((team) => (
+                          <option value={team} key={`home-${m.match_id}-${team}`}>
+                            {teamWithFlag(team)}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        className="admin-team-select"
+                        value={adminPlayoffTeamInputs[m.match_id]?.away_team || ''}
+                        onChange={(e) =>
+                          setAdminPlayoffTeamInputs((prev) => ({
+                            ...prev,
+                            [m.match_id]: {
+                              ...(prev[m.match_id] || { home_team: '', away_team: '' }),
+                              away_team: e.target.value,
+                            },
+                          }))
+                        }
+                      >
+                        <option value="">Команда B</option>
+                        {teamOptionsWithFlags.map((team) => (
+                          <option value={team} key={`away-${m.match_id}-${team}`}>
+                            {teamWithFlag(team)}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        className="save-btn admin-playoff-save-inline is-dirty"
+                        onClick={() => saveAdminPlayoffSlot(m.match_id)}
+                        disabled={adminPlayoffSavingMatchId === m.match_id}
+                      >
+                        {adminPlayoffSavingMatchId === m.match_id ? '...' : 'Сохранить пару'}
+                      </button>
+                    </div>
+                    <div className="compact-note">
+                      Пара ещё не заполнена. После сохранения матч появится пользователям.
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="compact-main admin-main">
+                      <span className="team-name team-left">{teamWithFlag(m.home_team)}</span>
+                      <input
+                        className="score-inline-input"
+                        value={adminScoreInputs[m.match_id] || ''}
+                        onChange={(e) =>
+                          setAdminScoreInputs((prev) => ({
+                            ...prev,
+                            [m.match_id]: formatScoreInput(e.target.value),
+                          }))
+                        }
+                        placeholder="-:-"
+                        inputMode="numeric"
+                      />
+                      <span className="team-name team-right">{teamWithFlag(m.away_team)}</span>
+                      <button
+                        className={`save-btn compact-save-btn ${
+                          normalizeScore(adminScoreInputs[m.match_id] || '') ? 'is-dirty' : 'is-empty'
+                        }`}
+                        onClick={() => saveAdminResult(m.match_id)}
+                        disabled={adminSavingMatchId === m.match_id}
+                      >
+                        {adminSavingMatchId === m.match_id ? '…' : '✓'}
+                      </button>
+                      <button
+                        className="admin-reset-btn"
+                        onClick={() => resetAdminResult(m.match_id)}
+                        disabled={adminSavingMatchId === m.match_id || !m.result}
+                      >
+                        Сброс
+                      </button>
+                    </div>
+                    <div className="compact-note">
+                      Итог: <b>{m.result || 'не задан'}</b> · Прогнозов: <b>{m.predictions_count ?? 0}</b>
+                      {selectedTournamentCode === 'WC2026' && Number(m.round_number || 0) >= 4 ? (
+                        <>
+                          {' · '}
+                          <button
+                            className="admin-note-action"
+                            onClick={() => clearAdminPlayoffSlot(m.match_id)}
+                            disabled={adminPlayoffSavingMatchId === m.match_id}
+                          >
+                            очистить пару
+                          </button>
+                        </>
+                      ) : null}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  )
+
+  const renderAdminLongtermContent = () => (
+    <div className="admin-inline-panel">
+      <div className="card-text">
+        Выбери фактического победителя турнира и лучшего бомбардира, затем нажми «Сохранить».
+      </div>
+      <div className="admin-longterm-grid">
+        <label className="admin-longterm-label">
+          Победитель турнира
+          <select
+            className="duel-picker-search admin-longterm-select"
+            value={adminLongtermWinner}
+            onChange={(e) => setAdminLongtermWinner(e.target.value)}
+          >
+            <option value="">Выбрать команду</option>
+            {adminLongtermWinnerOptions.map((v) => (
+              <option key={v} value={v}>
+                {v}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="admin-longterm-label">
+          Лучший бомбардир
+          <select
+            className="duel-picker-search admin-longterm-select"
+            value={adminLongtermScorer}
+            onChange={(e) => setAdminLongtermScorer(e.target.value)}
+          >
+            <option value="">Выбрать игрока</option>
+            {adminLongtermScorerOptions.map((v) => (
+              <option key={v} value={v}>
+                {v}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <button
+        className="admin-recalc-btn"
+        onClick={saveAdminLongterm}
+        disabled={adminLongtermSaving || !adminLongtermWinner || !adminLongtermScorer}
+      >
+        {adminLongtermSaving ? 'Сохраняю…' : 'Сохранить и пересчитать'}
+      </button>
+      <button
+        className="admin-reset-btn admin-reset-btn-wide"
+        onClick={resetAdminLongterm}
+        disabled={adminLongtermSaving}
+      >
+        Сбросить итоги доп. прогнозов
+      </button>
+    </div>
+  )
+
+  const renderAdminParticipantsContent = () => (
+    <div className="admin-inline-panel">
+      <div className="compact-list-card admin-inline-list">
+        {adminParticipants.length === 0 ? (
+          <div className="card-text">Участников в выбранном турнире пока нет.</div>
+        ) : (
+          adminParticipants.map((u) => (
+            <div className="compact-match" key={`admin-p-${u.tg_user_id}`}>
+              <div className="compact-main admin-participant-main">
+                <span className="team-name team-left">{u.display_name}</span>
+                <span className="group-small">ID {u.tg_user_id}</span>
+                <button
+                  className="admin-reset-btn"
+                  onClick={() => removeAdminParticipant(u.tg_user_id)}
+                  disabled={adminRemovingUserId === u.tg_user_id}
+                >
+                  {adminRemovingUserId === u.tg_user_id ? '…' : 'Удалить'}
+                </button>
+              </div>
+              <div className="compact-note">
+                Вступил: <b>{u.joined_at || '—'}</b> · Бонус: <b>{u.bonus_points || 0}</b>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  )
+
+  const renderAdminDuelsContent = () => (
+    <div className="admin-inline-panel">
+      <div className="card-text">
+        Этот блок подготовлен для следующего этапа. Здесь появятся активные принятые и завершённые дуэли 1x1.
+        <br />
+        Сейчас пользовательский раздел 1x1 работает без изменений.
+      </div>
+    </div>
+  )
 
   const allAchievements = profileData?.achievements || []
   const achievementsWithVisuals: AchievementWithVisual[] = allAchievements.map((a) => ({
@@ -3655,20 +3912,24 @@ function App() {
                     </span>
                     <span className="admin-accordion-caret">{adminViewMode === 'matches' ? '⌃' : '⌄'}</span>
                   </button>
+                  {adminViewMode === 'matches' ? renderAdminMatchesContent() : null}
 
                   {selectedTournamentCode === 'WC2026' ? (
-                    <button
-                      className={`admin-accordion-head ${adminViewMode === 'longterm' ? 'is-active' : ''}`}
-                      onClick={() => setAdminViewMode('longterm')}
-                    >
-                      <span>
-                        <b>Доп. прогнозы</b>
-                        <small>
-                          участников {adminLongtermParticipants} · очки {adminLongtermWinnerAwarded + adminLongtermScorerAwarded}
-                        </small>
-                      </span>
-                      <span className="admin-accordion-caret">{adminViewMode === 'longterm' ? '⌃' : '⌄'}</span>
-                    </button>
+                    <>
+                      <button
+                        className={`admin-accordion-head ${adminViewMode === 'longterm' ? 'is-active' : ''}`}
+                        onClick={() => setAdminViewMode('longterm')}
+                      >
+                        <span>
+                          <b>Доп. прогнозы</b>
+                          <small>
+                            участников {adminLongtermParticipants} · очки {adminLongtermWinnerAwarded + adminLongtermScorerAwarded}
+                          </small>
+                        </span>
+                        <span className="admin-accordion-caret">{adminViewMode === 'longterm' ? '⌃' : '⌄'}</span>
+                      </button>
+                      {adminViewMode === 'longterm' ? renderAdminLongtermContent() : null}
+                    </>
                   ) : null}
 
                   <button
@@ -3681,6 +3942,7 @@ function App() {
                     </span>
                     <span className="admin-accordion-caret">{adminViewMode === 'participants' ? '⌃' : '⌄'}</span>
                   </button>
+                  {adminViewMode === 'participants' ? renderAdminParticipantsContent() : null}
 
                   <button
                     className={`admin-accordion-head ${adminViewMode === 'duels' ? 'is-active' : ''}`}
@@ -3692,343 +3954,13 @@ function App() {
                     </span>
                     <span className="admin-accordion-caret">{adminViewMode === 'duels' ? '⌃' : '⌄'}</span>
                   </button>
+                  {adminViewMode === 'duels' ? renderAdminDuelsContent() : null}
                 </div>
 
                 {adminError ? <div className="card-text admin-status-line">Ошибка: {adminError}</div> : null}
                 {adminNotice ? <div className="card-text admin-status-line">{adminNotice}</div> : null}
               </div>
             </section>
-
-            {adminViewMode === 'matches' ? (
-              <section className="cards space-top">
-                <div className="card card-static admin-controls-card">
-                  <div className="card-title">Матчи</div>
-                  <div className="segment-hint">Все матчи турнира одним списком, от ранних к поздним</div>
-
-                  <div className="admin-top-row">
-                    <div className="match-toggle">
-                      <button
-                        className={`match-toggle-btn ${adminMode === 'open' ? 'is-active' : ''}`}
-                        onClick={() => setAdminMode('open')}
-                      >
-                        Без итогов
-                      </button>
-                      <button
-                        className={`match-toggle-btn ${adminMode === 'all' ? 'is-active' : ''}`}
-                        onClick={() => setAdminMode('all')}
-                      >
-                        Все
-                      </button>
-                    </div>
-
-                    {selectedTournamentCode === 'WC2026' ? (
-                      <button
-                        className="admin-secondary-btn"
-                        onClick={initAdminPlayoffSlots}
-                        disabled={adminPlayoffInitLoading}
-                      >
-                        {adminPlayoffInitLoading ? 'Создаю...' : 'Создать слоты плей-офф'}
-                      </button>
-                    ) : null}
-                  </div>
-                  <div className="card-text">
-                    {adminRoundTotal > 0 ? (
-                      <>
-                        Матчей: <b>{adminRoundTotal}</b> · без итогов: <b>{adminWithoutResult}</b>
-                      </>
-                    ) : (
-                      'Матчей для управления пока нет.'
-                    )}
-                  </div>
-                </div>
-                <div className="card compact-list-card">
-                  {adminResults.length === 0 ? (
-                    <div className="card-text">Матчей для показа нет.</div>
-                  ) : (
-                    adminResultsWithSections.map(({ item: m, sectionTitle, showSection }) => (
-                      <div className="admin-match-section-row" key={m.match_id}>
-                        {showSection ? <div className="admin-match-section-title">{sectionTitle}</div> : null}
-                        <div className="compact-match">
-                          <div className="compact-meta">
-                            {m.group_label ? <span className="group-small">[{m.group_label}]</span> : <span className="group-small">—</span>}
-                            <span className="kickoff-small">{m.kickoff || '—'}</span>
-                          </div>
-                          {m.is_placeholder ? (
-                            <>
-                              <div className="admin-playoff-inline">
-                                <select
-                                  className="admin-team-select"
-                                  value={adminPlayoffTeamInputs[m.match_id]?.home_team || ''}
-                                  onChange={(e) =>
-                                    setAdminPlayoffTeamInputs((prev) => ({
-                                      ...prev,
-                                      [m.match_id]: {
-                                        ...(prev[m.match_id] || { home_team: '', away_team: '' }),
-                                        home_team: e.target.value,
-                                      },
-                                    }))
-                                  }
-                                >
-                                  <option value="">Команда A</option>
-                                  {teamOptionsWithFlags.map((team) => (
-                                    <option value={team} key={`home-${m.match_id}-${team}`}>
-                                      {teamWithFlag(team)}
-                                    </option>
-                                  ))}
-                                </select>
-                                <select
-                                  className="admin-team-select"
-                                  value={adminPlayoffTeamInputs[m.match_id]?.away_team || ''}
-                                  onChange={(e) =>
-                                    setAdminPlayoffTeamInputs((prev) => ({
-                                      ...prev,
-                                      [m.match_id]: {
-                                        ...(prev[m.match_id] || { home_team: '', away_team: '' }),
-                                        away_team: e.target.value,
-                                      },
-                                    }))
-                                  }
-                                >
-                                  <option value="">Команда B</option>
-                                  {teamOptionsWithFlags.map((team) => (
-                                    <option value={team} key={`away-${m.match_id}-${team}`}>
-                                      {teamWithFlag(team)}
-                                    </option>
-                                  ))}
-                                </select>
-                                <button
-                                  className="save-btn admin-playoff-save-inline is-dirty"
-                                  onClick={() => saveAdminPlayoffSlot(m.match_id)}
-                                  disabled={adminPlayoffSavingMatchId === m.match_id}
-                                >
-                                  {adminPlayoffSavingMatchId === m.match_id ? '...' : 'Сохранить пару'}
-                                </button>
-                              </div>
-                              <div className="compact-note">
-                                Пара ещё не заполнена. После сохранения матч появится пользователям.
-                              </div>
-                            </>
-                          ) : (
-                            <>
-                              <div className="compact-main admin-main">
-                                <span className="team-name team-left">{teamWithFlag(m.home_team)}</span>
-                                <input
-                                  className="score-inline-input"
-                                  value={adminScoreInputs[m.match_id] || ''}
-                                  onChange={(e) =>
-                                    setAdminScoreInputs((prev) => ({
-                                      ...prev,
-                                      [m.match_id]: formatScoreInput(e.target.value),
-                                    }))
-                                  }
-                                  placeholder="-:-"
-                                  inputMode="numeric"
-                                />
-                                <span className="team-name team-right">{teamWithFlag(m.away_team)}</span>
-                                <button
-                                  className={`save-btn compact-save-btn ${
-                                    normalizeScore(adminScoreInputs[m.match_id] || '') ? 'is-dirty' : 'is-empty'
-                                  }`}
-                                  onClick={() => saveAdminResult(m.match_id)}
-                                  disabled={adminSavingMatchId === m.match_id}
-                                >
-                                  {adminSavingMatchId === m.match_id ? '…' : '✓'}
-                                </button>
-                                <button
-                                  className="admin-reset-btn"
-                                  onClick={() => resetAdminResult(m.match_id)}
-                                  disabled={adminSavingMatchId === m.match_id || !m.result}
-                                >
-                                  Сброс
-                                </button>
-                              </div>
-                              <div className="compact-note">
-                                Итог: <b>{m.result || 'не задан'}</b> · Прогнозов: <b>{m.predictions_count ?? 0}</b>
-                                {selectedTournamentCode === 'WC2026' && Number(m.round_number || 0) >= 4 ? (
-                                  <>
-                                    {' · '}
-                                    <button
-                                      className="admin-note-action"
-                                      onClick={() => clearAdminPlayoffSlot(m.match_id)}
-                                      disabled={adminPlayoffSavingMatchId === m.match_id}
-                                    >
-                                      очистить пару
-                                    </button>
-                                  </>
-                                ) : null}
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </section>
-            ) : adminViewMode === 'playoff' ? (
-              <section className="cards space-top">
-                <div className="card">
-                  <div className="card-title">Шаблоны плей-офф WC2026</div>
-                  <div className="card-text">
-                    Создай сетку один раз, затем заполняй пары. Пока команда не заполнена, слот остаётся скрыт от пользователей.
-                  </div>
-                  <button className="admin-recalc-btn" onClick={initAdminPlayoffSlots} disabled={adminPlayoffInitLoading}>
-                    {adminPlayoffInitLoading ? 'Создаю…' : 'Инициализировать шаблоны'}
-                  </button>
-                </div>
-                <div className="card compact-list-card admin-playoff-card">
-                  {adminPlayoffSlots.length === 0 ? (
-                    <div className="card-text">Слотов пока нет. Нажми «Инициализировать шаблоны».</div>
-                  ) : (
-                    adminPlayoffSlots.map((m) => {
-                      const rowInput = adminPlayoffTeamInputs[m.match_id] || { home_team: '', away_team: '' }
-                      return (
-                        <div className="admin-playoff-row" key={m.match_id}>
-                          <div className="compact-meta">
-                            <span className="group-small">{m.round_name}</span>
-                            <span className="kickoff-small">{m.kickoff}</span>
-                          </div>
-                          <div className="admin-playoff-inputs">
-                            <input
-                              className="duel-picker-search"
-                              value={rowInput.home_team}
-                              onChange={(e) =>
-                                setAdminPlayoffTeamInputs((prev) => ({
-                                  ...prev,
-                                  [m.match_id]: { ...(prev[m.match_id] || { home_team: '', away_team: '' }), home_team: e.target.value },
-                                }))
-                              }
-                              placeholder="Команда A"
-                            />
-                            <input
-                              className="duel-picker-search"
-                              value={rowInput.away_team}
-                              onChange={(e) =>
-                                setAdminPlayoffTeamInputs((prev) => ({
-                                  ...prev,
-                                  [m.match_id]: { ...(prev[m.match_id] || { home_team: '', away_team: '' }), away_team: e.target.value },
-                                }))
-                              }
-                              placeholder="Команда B"
-                            />
-                            <button
-                              className="save-btn compact-save-btn is-dirty"
-                              onClick={() => saveAdminPlayoffSlot(m.match_id)}
-                              disabled={adminPlayoffSavingMatchId === m.match_id}
-                            >
-                              {adminPlayoffSavingMatchId === m.match_id ? '…' : '✓'}
-                            </button>
-                            <button
-                              className="admin-playoff-clear-btn"
-                              onClick={() => clearAdminPlayoffSlot(m.match_id)}
-                              disabled={adminPlayoffSavingMatchId === m.match_id}
-                            >
-                              Очистить
-                            </button>
-                          </div>
-                          <div className="compact-note">
-                            Статус: <b>{m.is_filled ? 'пара заполнена' : 'ожидает пары'}</b>
-                          </div>
-                        </div>
-                      )
-                    })
-                  )}
-                </div>
-              </section>
-            ) : adminViewMode === 'longterm' ? (
-              <section className="cards space-top">
-                <div className="card">
-                  <div className="card-title">Итоги доп. прогнозов</div>
-                  <div className="card-text">
-                    Выбери фактического победителя турнира и лучшего бомбардира, затем нажми «Сохранить».
-                  </div>
-                  <div className="admin-longterm-grid">
-                    <label className="admin-longterm-label">
-                      Победитель турнира
-                      <select
-                        className="duel-picker-search admin-longterm-select"
-                        value={adminLongtermWinner}
-                        onChange={(e) => setAdminLongtermWinner(e.target.value)}
-                      >
-                        <option value="">Выбрать команду</option>
-                        {adminLongtermWinnerOptions.map((v) => (
-                          <option key={v} value={v}>
-                            {v}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="admin-longterm-label">
-                      Лучший бомбардир
-                      <select
-                        className="duel-picker-search admin-longterm-select"
-                        value={adminLongtermScorer}
-                        onChange={(e) => setAdminLongtermScorer(e.target.value)}
-                      >
-                        <option value="">Выбрать игрока</option>
-                        {adminLongtermScorerOptions.map((v) => (
-                          <option key={v} value={v}>
-                            {v}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
-                  <button
-                    className="admin-recalc-btn"
-                    onClick={saveAdminLongterm}
-                    disabled={adminLongtermSaving || !adminLongtermWinner || !adminLongtermScorer}
-                  >
-                    {adminLongtermSaving ? 'Сохраняю…' : 'Сохранить и пересчитать'}
-                  </button>
-                  <button
-                    className="admin-reset-btn admin-reset-btn-wide"
-                    onClick={resetAdminLongterm}
-                    disabled={adminLongtermSaving}
-                  >
-                    Сбросить итоги доп. прогнозов
-                  </button>
-                </div>
-              </section>
-            ) : adminViewMode === 'participants' ? (
-              <section className="cards space-top">
-                <div className="card compact-list-card">
-                  {adminParticipants.length === 0 ? (
-                    <div className="card-text">Участников в выбранном турнире пока нет.</div>
-                  ) : (
-                    adminParticipants.map((u) => (
-                      <div className="compact-match" key={`admin-p-${u.tg_user_id}`}>
-                        <div className="compact-main admin-participant-main">
-                          <span className="team-name team-left">{u.display_name}</span>
-                          <span className="group-small">ID {u.tg_user_id}</span>
-                          <button
-                            className="admin-reset-btn"
-                            onClick={() => removeAdminParticipant(u.tg_user_id)}
-                            disabled={adminRemovingUserId === u.tg_user_id}
-                          >
-                            {adminRemovingUserId === u.tg_user_id ? '…' : 'Удалить'}
-                          </button>
-                        </div>
-                        <div className="compact-note">
-                          Вступил: <b>{u.joined_at || '—'}</b> · Бонус: <b>{u.bonus_points || 0}</b>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </section>
-            ) : (
-              <section className="cards space-top">
-                <div className="card">
-                  <div className="card-title">Битвы 1x1</div>
-                  <div className="card-text">
-                    Этот блок подготовлен для следующего этапа. Здесь появятся активные принятые и завершённые дуэли 1x1.
-                    <br />
-                    Сейчас пользовательский раздел 1x1 работает без изменений.
-                  </div>
-                </div>
-              </section>
-            )}
           </>
         ) : null}
 

@@ -1026,6 +1026,25 @@ body {
   line-height: 1;
 }
 
+.admin-inline-panel {
+  margin-top: -2px;
+  margin-bottom: 10px;
+  padding: 10px 10px 12px;
+  border: 1px solid rgba(185, 154, 85, 0.32);
+  border-top: 0;
+  border-radius: 0 0 14px 14px;
+  background: rgba(5, 5, 5, 0.62);
+}
+
+.admin-inline-panel .admin-top-row {
+  margin-top: var(--vr-sm);
+}
+
+.admin-inline-list {
+  margin-top: var(--vr-sm);
+  padding: 0;
+}
+
 .admin-status-line {
   margin-top: var(--vr-md);
 }
