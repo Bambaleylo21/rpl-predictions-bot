@@ -702,10 +702,6 @@ body {
   grid-template-columns: 1fr 58px 1fr 34px auto;
 }
 
-.admin-participant-main {
-  grid-template-columns: 1fr auto auto;
-}
-
 .team-name {
   font-size: 15px;
   color: var(--text-strong);
@@ -1109,7 +1105,8 @@ body {
   gap: 6px;
 }
 
-.admin-longterm-summary > div {
+.admin-longterm-summary > div,
+.admin-participants-summary > div {
   border: 1px solid var(--line-2);
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.03);
@@ -1118,13 +1115,15 @@ body {
 }
 
 .admin-longterm-summary span,
+.admin-participants-summary span,
 .admin-longterm-label span {
   display: block;
   color: var(--text-muted);
   font-size: 11px;
 }
 
-.admin-longterm-summary b {
+.admin-longterm-summary b,
+.admin-participants-summary b {
   display: block;
   margin-top: 2px;
   color: var(--text-main);
@@ -1141,6 +1140,55 @@ body {
   grid-template-columns: 1fr 0.8fr;
   gap: 8px;
   margin-top: 10px;
+}
+
+.admin-participants-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.admin-participant-row {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.admin-participant-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 62px 74px;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-participant-name {
+  min-width: 0;
+}
+
+.admin-participant-bonus {
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  padding: 6px 7px;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.admin-participant-bonus span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.admin-participant-bonus b {
+  display: block;
+  margin-top: 3px;
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.admin-empty-text {
+  padding: 4px 2px;
 }
 
 .admin-playoff-card {

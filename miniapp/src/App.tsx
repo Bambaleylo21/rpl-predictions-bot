@@ -2509,15 +2509,35 @@ function App() {
 
   const renderAdminParticipantsContent = () => (
     <div className="admin-inline-panel">
+      <div className="admin-participants-summary">
+        <div>
+          <span>Участники</span>
+          <b>{adminParticipants.length}</b>
+        </div>
+        <div>
+          <span>Бонусы</span>
+          <b>{adminParticipants.reduce((sum, u) => sum + (u.bonus_points || 0), 0)}</b>
+        </div>
+        <div>
+          <span>Действие</span>
+          <b>удаление</b>
+        </div>
+      </div>
       <div className="compact-list-card admin-inline-list">
         {adminParticipants.length === 0 ? (
-          <div className="card-text">Участников в выбранном турнире пока нет.</div>
+          <div className="card-text admin-empty-text">Участников в выбранном турнире пока нет.</div>
         ) : (
           adminParticipants.map((u) => (
-            <div className="compact-match" key={`admin-p-${u.tg_user_id}`}>
-              <div className="compact-main admin-participant-main">
-                <span className="team-name team-left">{u.display_name}</span>
-                <span className="group-small">ID {u.tg_user_id}</span>
+            <div className="compact-match admin-participant-row" key={`admin-p-${u.tg_user_id}`}>
+              <div className="admin-participant-main">
+                <div className="admin-participant-name">
+                  <span className="team-name team-left">{u.display_name}</span>
+                  <span className="group-small">ID {u.tg_user_id}</span>
+                </div>
+                <div className="admin-participant-bonus">
+                  <span>Бонус</span>
+                  <b>{u.bonus_points || 0}</b>
+                </div>
                 <button
                   className="admin-reset-btn"
                   onClick={() => removeAdminParticipant(u.tg_user_id)}
@@ -2527,7 +2547,7 @@ function App() {
                 </button>
               </div>
               <div className="compact-note">
-                Вступил: <b>{u.joined_at || '—'}</b> · Бонус: <b>{u.bonus_points || 0}</b>
+                Вступил: <b>{u.joined_at || '—'}</b>
               </div>
             </div>
           ))
