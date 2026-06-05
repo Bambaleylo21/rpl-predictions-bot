@@ -806,6 +806,7 @@ function App() {
   const [adminRemovingUserId, setAdminRemovingUserId] = useState<number | null>(null)
   const [adminDuels, setAdminDuels] = useState<AdminDuelsCurrentResponse | null>(null)
   const [adminDuelsFilter, setAdminDuelsFilter] = useState<'active' | 'finished'>('active')
+  const [adminDuelCancelBusyId, setAdminDuelCancelBusyId] = useState<number | null>(null)
   const [adminError, setAdminError] = useState<string | null>(null)
   const [adminNotice, setAdminNotice] = useState<string | null>(null)
   const [adminSavingMatchId, setAdminSavingMatchId] = useState<number | null>(null)
@@ -2016,6 +2017,36 @@ function App() {
     }
   }
 
+  const cancelAdminDuel = async (duelId: number) => {
+    const confirmed = window.confirm('Отменить активную дуэль 1x1? Elo не изменится, дуэль уйдёт из активных.')
+    if (!confirmed) return
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    setAdminDuelCancelBusyId(duelId)
+    setAdminNotice(null)
+    try {
+      const tParam = encodeURIComponent(selectedTournamentCode || 'RPL')
+      const res = await fetch(`${apiBase}/api/miniapp/admin/duels/cancel?t=${tParam}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Telegram-Init-Data': initData,
+        },
+        body: JSON.stringify({ duel_id: duelId }),
+      })
+      const data = (await res.json()) as { ok?: boolean; error?: string; reason?: string }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      setAdminNotice('Дуэль отменена.')
+      await loadAdminDuels(apiBase, initData, selectedTournamentCode)
+    } catch (err) {
+      setAdminNotice(`Ошибка отмены дуэли: ${String(err)}`)
+    } finally {
+      setAdminDuelCancelBusyId(null)
+    }
+  }
+
   useEffect(() => {
     if (!meData?.is_admin) {
       setAdminRounds([])
@@ -2610,35 +2641,46 @@ function App() {
     </div>
   )
 
-  const renderAdminDuelsContent = () => (
-    <div className="admin-inline-panel">
-      <div className="admin-duels-summary">
-        <div>
-          <span>Активные</span>
-          <b>{adminDuels?.active?.length || 0}</b>
+  const renderAdminDuelsContent = () => {
+    const visibleAdminDuels = adminDuelsFilter === 'active' ? adminDuels?.active || [] : adminDuels?.finished || []
+    return (
+      <div className="admin-inline-panel">
+        <div className="admin-duels-summary">
+          <div>
+            <span>Активные</span>
+            <b>{adminDuels?.active?.length || 0}</b>
+          </div>
+          <div>
+            <span>Завершённые</span>
+            <b>{adminDuels?.finished?.length || 0}</b>
+          </div>
+          <div>
+            <span>Всего</span>
+            <b>{(adminDuels?.active?.length || 0) + (adminDuels?.finished?.length || 0)}</b>
+          </div>
         </div>
-        <div>
-          <span>Завершённые</span>
-          <b>{adminDuels?.finished?.length || 0}</b>
+        <div className="admin-duels-tabs">
+          <button
+            type="button"
+            className={adminDuelsFilter === 'active' ? 'is-active' : ''}
+            onClick={() => setAdminDuelsFilter('active')}
+          >
+            Активные
+          </button>
+          <button
+            type="button"
+            className={adminDuelsFilter === 'finished' ? 'is-active' : ''}
+            onClick={() => setAdminDuelsFilter('finished')}
+          >
+            Завершённые
+          </button>
         </div>
-        <div>
-          <span>Всего</span>
-          <b>{(adminDuels?.active?.length || 0) + (adminDuels?.finished?.length || 0)}</b>
-        </div>
-      </div>
-      <div className="segmented segmented-compact admin-duels-tabs">
-        <button className={adminDuelsFilter === 'active' ? 'active' : ''} onClick={() => setAdminDuelsFilter('active')}>
-          Активные
-        </button>
-        <button className={adminDuelsFilter === 'finished' ? 'active' : ''} onClick={() => setAdminDuelsFilter('finished')}>
-          Завершённые
-        </button>
-      </div>
-      <div className="compact-list-card admin-inline-list">
-        {!adminDuels ? (
-          <div className="card-text admin-empty-text">Загружаю дуэли…</div>
-        ) : (adminDuelsFilter === 'active' ? adminDuels.active : adminDuels.finished)?.length ? (
-          (adminDuelsFilter === 'active' ? adminDuels.active : adminDuels.finished)!.map((d) => {
+        <div className="admin-duels-list">
+          {!adminDuels ? (
+            <div className="card-text admin-empty-text">Загружаю дуэли…</div>
+          ) : visibleAdminDuels.length ? (
+            visibleAdminDuels.map((d) => {
+              const isFinished = adminDuelsFilter === 'finished'
             const winnerName =
               d.outcome === 'draw'
                 ? 'Ничья'
@@ -2648,56 +2690,78 @@ function App() {
                     ? d.opponent_name
                     : '—'
             return (
-              <div className="compact-match admin-duel-row" key={`admin-duel-${d.duel_id}`}>
-                <div className="compact-meta">
-                  {d.group_label ? <span className="group-small">[{d.group_label}]</span> : <span className="group-small">—</span>}
-                  <span className="kickoff-small">{d.kickoff} МСК</span>
+              <div className="admin-duel-card" key={`admin-duel-${d.duel_id}`}>
+                <div className="admin-duel-card-top">
+                  <div>
+                    <div className="admin-duel-meta">
+                      <span>{d.group_label ? `[${d.group_label}]` : '—'}</span>
+                      <span>{d.kickoff} МСК</span>
+                    </div>
+                    <div className="admin-duel-match-line">
+                      {teamWithFlag(d.home_team)} — {teamWithFlag(d.away_team)}
+                    </div>
+                  </div>
+                  <span className={`admin-duel-state ${isFinished ? 'is-finished' : 'is-active'}`}>
+                    {isFinished ? d.result || '-:-' : duelStatusText[d.status] || 'Активна'}
+                  </span>
                 </div>
-                <div className="compact-main compact-main-result-only">
-                  <span className="team-name team-left">{teamWithFlag(d.home_team)}</span>
-                  <span className="score-inline-pill">{adminDuelsFilter === 'finished' ? d.result || '-:-' : duelStatusText[d.status] || d.status}</span>
-                  <span className="team-name team-right">{teamWithFlag(d.away_team)}</span>
-                </div>
-                <div className="duel-preds admin-duel-preds">
-                  <div className="duel-pred-line">
-                    <span className="duel-pred-text">
-                      <b>{d.challenger_rating || 1000}</b>{' '}
-                      {adminDuelsFilter === 'finished' ? (
+                <div className="admin-duel-players">
+                  <div className="admin-duel-player-line">
+                    <span className="admin-duel-player-rating">{d.challenger_rating || 1000}</span>
+                    <span className="admin-duel-player-name">{d.challenger_name}</span>
+                    <b>{d.challenger_pred}</b>
+                    {isFinished ? (
                         <span className={d.elo_delta_challenger >= 0 ? 'duel-delta-plus' : 'duel-delta-minus'}>
                           ({d.elo_delta_challenger >= 0 ? `+${d.elo_delta_challenger}` : d.elo_delta_challenger})
                         </span>
-                      ) : null}{' '}
-                      {d.challenger_name} <b>{d.challenger_pred}</b>
-                    </span>
+                    ) : (
+                      <span />
+                    )}
                   </div>
-                  <div className="duel-pred-line">
-                    <span className="duel-pred-text">
-                      <b>{d.opponent_rating || 1000}</b>{' '}
-                      {adminDuelsFilter === 'finished' ? (
+                  <div className="admin-duel-player-line">
+                    <span className="admin-duel-player-rating">{d.opponent_rating || 1000}</span>
+                    <span className="admin-duel-player-name">{d.opponent_name}</span>
+                    <b>{d.opponent_pred || '—'}</b>
+                    {isFinished ? (
                         <span className={d.elo_delta_opponent >= 0 ? 'duel-delta-plus' : 'duel-delta-minus'}>
                           ({d.elo_delta_opponent >= 0 ? `+${d.elo_delta_opponent}` : d.elo_delta_opponent})
                         </span>
-                      ) : null}{' '}
-                      {d.opponent_name} <b>{d.opponent_pred || '—'}</b>
-                    </span>
+                    ) : (
+                      <span />
+                    )}
                   </div>
-                  {adminDuelsFilter === 'finished' ? (
-                    <div className="compact-note">
+                </div>
+                <div className="admin-duel-footer">
+                  {isFinished ? (
+                    <span>
                       Итог: <b>{winnerName}</b>
-                    </div>
-                  ) : null}
+                    </span>
+                  ) : (
+                    <>
+                      <span>Принята · ждёт результат матча</span>
+                      <button
+                        type="button"
+                        className="admin-duel-cancel-btn"
+                        onClick={() => cancelAdminDuel(d.duel_id)}
+                        disabled={adminDuelCancelBusyId === d.duel_id}
+                      >
+                        {adminDuelCancelBusyId === d.duel_id ? 'Отменяю…' : 'Отменить'}
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
             )
-          })
-        ) : (
-          <div className="card-text admin-empty-text">
-            {adminDuelsFilter === 'active' ? 'Активных дуэлей пока нет.' : 'Завершённых дуэлей пока нет.'}
-          </div>
-        )}
+            })
+          ) : (
+            <div className="card-text admin-empty-text">
+              {adminDuelsFilter === 'active' ? 'Активных дуэлей пока нет.' : 'Завершённых дуэлей пока нет.'}
+            </div>
+          )}
+        </div>
       </div>
-    </div>
-  )
+    )
+  }
 
   const allAchievements = profileData?.achievements || []
   const achievementsWithVisuals: AchievementWithVisual[] = allAchievements.map((a) => ({

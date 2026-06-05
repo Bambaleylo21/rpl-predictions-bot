@@ -1234,6 +1234,64 @@ async def admin_duels_current(request: web.Request) -> web.Response:
         )
 
 
+async def admin_duel_cancel(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_admin_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        admin_tg_user_id = int(user.get("id"))
+
+        body = await request.json()
+        duel_id = int(body.get("duel_id") or 0)
+        if duel_id <= 0:
+            return web.json_response({"ok": False, "error": "invalid_payload"}, status=400)
+
+        async with SessionLocal() as session:
+            tournament = await _resolve_tournament(session, admin_tg_user_id, requested_code=request.query.get("t"))
+            duel = (
+                await session.execute(
+                    select(Duel).where(
+                        Duel.id == int(duel_id),
+                        Duel.tournament_id == int(tournament.id),
+                    )
+                )
+            ).scalar_one_or_none()
+            if duel is None:
+                return web.json_response({"ok": False, "error": "duel_not_found"}, status=404)
+            if str(duel.status) != "accepted":
+                return web.json_response(
+                    {
+                        "ok": False,
+                        "error": "duel_not_active",
+                        "reason": "Отменить можно только активную принятую дуэль.",
+                    },
+                    status=400,
+                )
+
+            duel.status = "declined"
+            duel.resolved_at = datetime.utcnow()
+            await session.commit()
+
+        return web.json_response(
+            {
+                "ok": True,
+                "trusted": True,
+                "is_admin": True,
+                "duel_id": int(duel_id),
+                "status": "declined",
+            }
+        )
+    except (ValueError, TypeError):
+        return web.json_response({"ok": False, "error": "invalid_payload"}, status=400)
+    except Exception as e:
+        logger.exception("miniapp admin_duel_cancel error")
+        return web.json_response(
+            {"ok": False, "error": "admin_duel_cancel_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
 async def admin_participant_remove(request: web.Request) -> web.Response:
     try:
         auth_result = _extract_verified_admin_user(request)
@@ -4715,6 +4773,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/miniapp/admin/results/current", admin_results_current)
     app.router.add_get("/api/miniapp/admin/participants/current", admin_participants_current)
     app.router.add_get("/api/miniapp/admin/duels/current", admin_duels_current)
+    app.router.add_post("/api/miniapp/admin/duels/cancel", admin_duel_cancel)
     app.router.add_post("/api/miniapp/admin/participant/remove", admin_participant_remove)
     app.router.add_post("/api/miniapp/admin/result/set", admin_result_set)
     app.router.add_post("/api/miniapp/admin/result/reset", admin_result_reset)
