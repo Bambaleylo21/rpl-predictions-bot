@@ -684,6 +684,13 @@ body {
   grid-template-columns: 1fr 58px 1fr 56px;
 }
 
+.compact-main-predict .team-name,
+.compact-main-result .team-name {
+  font-size: 14px;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
 .compact-main-result-only {
   grid-template-columns: 1fr 58px 1fr;
 }
