@@ -2398,7 +2398,7 @@ function App() {
         )}
       </div>
 
-      <div className="compact-list-card admin-inline-list">
+      <div className="compact-list-card admin-inline-list admin-matches-list">
         {adminResults.length === 0 ? (
           <div className="card-text">Матчей для показа нет.</div>
         ) : (
