@@ -896,17 +896,37 @@ body {
 }
 
 .longterm-save-btn {
-  width: 38px;
-  height: 38px;
-  min-width: 38px;
-  min-height: 38px;
-  padding: 0;
-  border-radius: 10px;
+  width: 82px;
+  min-width: 82px;
+  min-height: 34px;
+  padding: 0 8px;
+  border-radius: 9px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 16px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
   line-height: 1;
+}
+
+.longterm-cards {
+  gap: 10px;
+}
+
+.longterm-card {
+  padding: 10px;
+  border-radius: 14px;
+}
+
+.longterm-card .card-title {
+  font-size: 16px;
+  line-height: 1.15;
+}
+
+.longterm-card .predict-row {
+  gap: 6px;
+  margin: 8px 0 0;
 }
 
 .longterm-picker-wrap {
@@ -915,17 +935,23 @@ body {
 }
 
 .longterm-picker-wrap .duel-picker-btn {
-  min-height: 38px;
-  border-radius: 10px;
-  padding: 8px 10px;
+  min-height: 34px;
+  border-radius: 9px;
+  padding: 7px 9px;
 }
 
 .longterm-picker-wrap .duel-picker-value {
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.longterm-save-all-btn {
+  margin-top: 0;
+  min-height: 36px;
+  font-size: 12px;
 }
 
 .longterm-picker-empty {
