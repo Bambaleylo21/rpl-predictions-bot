@@ -541,12 +541,22 @@ const crowdText = (item: {
   crowd_draw_pct?: number
   crowd_away_pct?: number
 }): string | null => {
+  const [h, d, a] = crowdPercentParts(item)
+  return `${h} · ${d} · ${a}`
+}
+
+const crowdPercentParts = (item: {
+  crowd_count?: number
+  crowd_home_pct?: number
+  crowd_draw_pct?: number
+  crowd_away_pct?: number
+}): [string, string, string] => {
   const count = Number(item.crowd_count || 0)
-  if (count < 4) return `0% · 0% · 0%`
+  if (count < 4) return ['0%', '0%', '0%']
   const h = Number(item.crowd_home_pct || 0)
   const d = Number(item.crowd_draw_pct || 0)
   const a = Number(item.crowd_away_pct || 0)
-  return `${h}% · ${d}% · ${a}%`
+  return [`${h}%`, `${d}%`, `${a}%`]
 }
 
 const intOrZero = (value: unknown): number => {
@@ -3330,7 +3340,15 @@ function App() {
                                               : 'Сохранить'}
                                         </button>
                                       </div>
-                                      {crowdText(m) ? <div className="match-card-bottom"><span>{crowdText(m)}</span></div> : null}
+                                      {crowdText(m) ? (
+                                        <div className="match-card-bottom">
+                                          <span className="community-triplet">
+                                            {crowdPercentParts(m).map((part, index) => (
+                                              <span key={`${m.match_id}-crowd-${index}`}>{part}</span>
+                                            ))}
+                                          </span>
+                                        </div>
+                                      ) : null}
                                     </>
                                   )
                                 })()}
@@ -3373,7 +3391,13 @@ function App() {
                                 <span className="result-badge">{m.prediction ? `${m.emoji} ${m.points ?? 0}` : '❌ 0'}</span>
                               </div>
                               <div className="match-card-bottom">
-                                {crowdText(m) ? <span>{crowdText(m)}</span> : <span />}
+                                {crowdText(m) ? (
+                                  <span className="community-triplet">
+                                    {crowdPercentParts(m).map((part, index) => (
+                                      <span key={`${m.match_id}-closed-crowd-${index}`}>{part}</span>
+                                    ))}
+                                  </span>
+                                ) : <span />}
                                 <span>Итог: {m.result || '—'}</span>
                               </div>
                             </div>
