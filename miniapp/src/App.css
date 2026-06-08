@@ -15,6 +15,8 @@
   --text-dim: rgba(230, 230, 230, 0.72);
   --accent: #b99a55;
   --accent-strong: #8d7132;
+  --gold-glow: 0 0 0 1px rgba(185, 154, 85, 0.32) inset, 0 10px 26px rgba(185, 154, 85, 0.2);
+  --gold-glow-soft: 0 0 0 1px rgba(185, 154, 85, 0.22) inset, 0 8px 20px rgba(185, 154, 85, 0.13);
   --success: #1f8a4c;
   --success-line: #44bf75;
   --radius-card: 16px;
@@ -46,8 +48,12 @@ body {
 .app-shell {
   min-height: var(--tg-viewport-stable-height, 100vh);
   background:
+    radial-gradient(circle at 18% 12%, rgba(255, 255, 255, 0.035) 0 1px, transparent 1.5px),
+    radial-gradient(circle at 84% 4%, rgba(185, 154, 85, 0.12), transparent 22%),
     radial-gradient(circle at 50% 0%, rgba(185, 154, 85, 0.09), transparent 34%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.025) 0 1px, transparent 1px 16px),
     linear-gradient(180deg, var(--bg-0) 0%, var(--bg-1) 58%, var(--bg-2) 100%);
+  background-size: 24px 24px, auto, auto, 16px 16px, auto;
   color: var(--text-main);
 }
 
@@ -133,6 +139,7 @@ body {
 .match-toggle-btn.is-active {
   background: linear-gradient(180deg, #d4b460 0%, #9f7b31 100%);
   color: #fff;
+  box-shadow: var(--gold-glow-soft);
 }
 
 .match-toggle-btn:active {
@@ -184,7 +191,7 @@ body {
   opacity: 1;
   border-color: var(--accent);
   background: linear-gradient(180deg, rgba(185, 154, 85, 0.2), rgba(17, 17, 17, 0.94));
-  box-shadow: 0 0 0 1px rgba(185, 154, 85, 0.38) inset;
+  box-shadow: var(--gold-glow);
 }
 
 .notice-line {
@@ -379,7 +386,7 @@ body {
   border-color: var(--accent);
   background: linear-gradient(180deg, #d4b460 0%, #9f7b31 100%);
   color: #ffffff;
-  box-shadow: 0 0 0 1px rgba(185, 154, 85, 0.3) inset;
+  box-shadow: var(--gold-glow-soft);
 }
 
 .tournament-chip:hover {
@@ -594,11 +601,18 @@ body {
 }
 
 .day-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(185, 154, 85, 0.34);
+  border-radius: 999px;
+  background: rgba(185, 154, 85, 0.1);
+  color: var(--text-main);
   font-size: 12px;
-  color: var(--text-dim);
-  font-weight: 700;
-  margin: 0 0 6px;
-  padding-left: 0;
+  font-weight: 800;
+  margin: 0 0 8px;
+  padding: 4px 9px;
+  box-shadow: 0 0 18px rgba(185, 154, 85, 0.08);
 }
 
 .day-group-inset {
@@ -626,11 +640,17 @@ body {
 }
 
 .admin-match-section-title {
-  margin: 14px 2px 6px;
-  color: var(--accent);
-  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(185, 154, 85, 0.34);
+  border-radius: 999px;
+  background: rgba(185, 154, 85, 0.1);
+  margin: 14px 0 7px;
+  color: var(--text-main);
+  font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.02em;
+  padding: 4px 9px;
 }
 
 .admin-match-section-row:first-child .admin-match-section-title {
@@ -865,6 +885,7 @@ body {
   background: linear-gradient(180deg, #d4b460 0%, #9f7b31 100%);
   border-color: var(--accent);
   color: #ffffff;
+  box-shadow: var(--gold-glow-soft);
 }
 
 .prediction-save-btn.is-saved,
@@ -1041,7 +1062,7 @@ body {
 .admin-accordion-head.is-active {
   border-color: rgba(185, 154, 85, 0.75);
   background: linear-gradient(180deg, rgba(185, 154, 85, 0.2), rgba(17, 17, 17, 0.95));
-  box-shadow: 0 0 0 1px rgba(185, 154, 85, 0.18) inset;
+  box-shadow: var(--gold-glow-soft);
 }
 
 .admin-accordion-head:active {
@@ -1202,6 +1223,7 @@ body {
   border-radius: 10px;
   background: linear-gradient(180deg, #d4b460 0%, #9f7b31 100%);
   color: #ffffff;
+  box-shadow: var(--gold-glow-soft);
   padding: 8px 10px;
   font-size: 12px;
   font-weight: 700;
@@ -1327,7 +1349,7 @@ body {
 .admin-duels-tabs button.is-active {
   background: linear-gradient(180deg, #d4b460 0%, #9f7b31 100%);
   color: #fff;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  box-shadow: var(--gold-glow-soft), inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 
 .admin-participant-row {
@@ -2608,7 +2630,7 @@ body {
   border-color: rgba(185, 154, 85, 0.62);
   background: rgba(185, 154, 85, 0.2);
   color: #ffffff;
-  box-shadow: 0 8px 22px rgba(185, 154, 85, 0.18);
+  box-shadow: var(--gold-glow);
 }
 
 .tab-icon {
