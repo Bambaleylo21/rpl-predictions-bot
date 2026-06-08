@@ -305,6 +305,16 @@ type DuelsResponse = {
     display_name: string
     elo_rating?: number
   }>
+  leaderboard?: Array<{
+    tg_user_id: number
+    display_name: string
+    rating: number
+    duels_total: number
+    wins: number
+    losses: number
+    draws: number
+    place: number
+  }>
   active?: DuelItem[]
   finished?: DuelItem[]
 }
@@ -837,6 +847,7 @@ function App() {
   const [duelOpponentSearch, setDuelOpponentSearch] = useState<string>('')
   const [duelMatchVisibleCount, setDuelMatchVisibleCount] = useState<number>(20)
   const [duelRulesOpen, setDuelRulesOpen] = useState<boolean>(false)
+  const [duelLeaderboardOpen, setDuelLeaderboardOpen] = useState<boolean>(false)
   const [joinBusy, setJoinBusy] = useState<boolean>(false)
   const [refreshTick, setRefreshTick] = useState<number>(0)
 
@@ -2259,6 +2270,7 @@ function App() {
 
   const duelMatchOptions = duelsData?.match_options || []
   const duelOpponents = duelsData?.opponents || []
+  const duelLeaderboard = duelsData?.leaderboard || []
   const duelSelectedMatch = duelMatchOptions.find((m) => Number(m.match_id) === Number(duelMatchId)) || null
   const duelSelectedOpponent =
     duelOpponents.find((u) => Number(u.tg_user_id) === Number(duelOpponentId)) || null
@@ -3722,13 +3734,22 @@ function App() {
                   <>
                     <div className="duel-head-row">
                       <div className="card-title">{profileData?.display_name || (tgUsername ? `@${tgUsername}` : 'Участник')}</div>
-                      <button
-                        type="button"
-                        className="duel-rules-btn"
-                        onClick={() => setDuelRulesOpen(true)}
-                      >
-                        Правила
-                      </button>
+                      <div className="duel-head-actions">
+                        <button
+                          type="button"
+                          className="duel-rules-btn duel-rating-btn"
+                          onClick={() => setDuelLeaderboardOpen(true)}
+                        >
+                          Рейтинг
+                        </button>
+                        <button
+                          type="button"
+                          className="duel-rules-btn"
+                          onClick={() => setDuelRulesOpen(true)}
+                        >
+                          Правила
+                        </button>
+                      </div>
                     </div>
                     <div className="profile-hits-line">
                       Рейтинг: <b>{duelsData.elo?.rating ?? 1000}</b> · W <b>{duelsData.elo?.wins ?? 0}</b> · D <b>{duelsData.elo?.draws ?? 0}</b> · L{' '}
@@ -4480,6 +4501,55 @@ function App() {
                     ))}
                   </div>
                 ))}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {duelLeaderboardOpen ? (
+          <div className="duel-rating-sheet-overlay" onClick={() => setDuelLeaderboardOpen(false)}>
+            <div className="duel-rating-sheet" onClick={(ev) => ev.stopPropagation()}>
+              <div className="duel-rating-handle" />
+              <div className="duel-rating-sheet-head">
+                <div>
+                  <div className="duel-rating-title">Рейтинг 1x1</div>
+                  <div className="duel-rating-subtitle">Сквозной Elo по всем турнирам</div>
+                </div>
+                <button
+                  type="button"
+                  className="duel-rating-close"
+                  onClick={() => setDuelLeaderboardOpen(false)}
+                  aria-label="Закрыть рейтинг 1x1"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="duel-rating-list">
+                {duelLeaderboard.length ? (
+                  duelLeaderboard.map((row) => {
+                    const isMe = tgUserId != null && Number(row.tg_user_id) === Number(tgUserId)
+                    return (
+                      <div className={`duel-rating-row ${isMe ? 'is-me' : ''}`} key={`duel-rating-${row.tg_user_id}`}>
+                        <div className="duel-rating-place">{row.place}</div>
+                        <div className="duel-rating-body">
+                          <div className="duel-rating-name-line">
+                            <span className="duel-rating-name">{row.display_name}</span>
+                            {isMe ? <span className="duel-rating-me-badge">ты</span> : null}
+                          </div>
+                          <div className="duel-rating-record">
+                            {row.duels_total} битв · W {row.wins} · D {row.draws} · L {row.losses}
+                          </div>
+                        </div>
+                        <div className="duel-rating-score">
+                          <b>{row.rating}</b>
+                          <span>Elo</span>
+                        </div>
+                      </div>
+                    )
+                  })
+                ) : (
+                  <div className="duel-rating-empty">Рейтинг появится после первых дуэлей.</div>
+                )}
               </div>
             </div>
           </div>

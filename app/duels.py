@@ -397,6 +397,39 @@ async def get_duel_hub(session, *, tournament_id: int, tg_user_id: int) -> dict[
         for uid, dn in opponents_raw
     ]
 
+    leaderboard_rows = (
+        await session.execute(
+            select(UserTournament.tg_user_id, UserTournament.display_name).where(
+                UserTournament.tournament_id == int(tournament_id)
+            )
+        )
+    ).all()
+    leaderboard: list[dict[str, Any]] = []
+    for uid_raw, display_name_raw in leaderboard_rows:
+        uid = int(uid_raw)
+        row = await ensure_duel_elo(session, int(tournament_id), uid)
+        leaderboard.append(
+            {
+                "tg_user_id": uid,
+                "display_name": str(display_name_raw or f"ID {uid}"),
+                "rating": int(row.rating or ELO_DEFAULT_RATING),
+                "duels_total": int(row.duels_total or 0),
+                "wins": int(row.wins or 0),
+                "losses": int(row.losses or 0),
+                "draws": int(row.draws or 0),
+            }
+        )
+    leaderboard.sort(
+        key=lambda item: (
+            -int(item["rating"]),
+            -int(item["duels_total"]),
+            -int(item["wins"]),
+            str(item["display_name"]).lower(),
+        )
+    )
+    for idx, item in enumerate(leaderboard, start=1):
+        item["place"] = int(idx)
+
     match_options = await list_duel_match_options(session, int(tournament_id), int(tg_user_id), limit=200)
 
     duel_user_ids: set[int] = {int(tg_user_id)}
@@ -526,6 +559,7 @@ async def get_duel_hub(session, *, tournament_id: int, tg_user_id: int) -> dict[
         },
         "match_options": match_options,
         "opponents": opponents,
+        "leaderboard": leaderboard,
         "active": [_duel_item(duel, match) for duel, match in active_rows],
         "finished": [_duel_item(duel, match) for duel, match in finished_rows],
     }
