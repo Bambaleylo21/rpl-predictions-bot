@@ -3260,14 +3260,15 @@ function App() {
                       ) : (
                         predictGroups.map(([dateKey, matches]) => (
                           <div key={dateKey} className="day-group day-group-inset">
-                            <div className="day-title">{dateKey}</div>
-                            {matches.map((m) => (
+                            {matches.map((m, matchIndex) => (
                               <div className="compact-match" key={m.match_id}>
                                 {(() => {
+                                  const showDateBadge = matchIndex === 0
                                   if (m.is_placeholder) {
                                     return (
                                       <>
-                                        <div className="compact-meta">
+                                        <div className="match-card-top">
+                                          {showDateBadge ? <span className="day-title">{dateKey}</span> : <span />}
                                           {m.group_label ? <span className="group-small">[{m.group_label}]</span> : <span className="group-small">—</span>}
                                           <span className="kickoff-small">{(m.kickoff || '').split(' ')[1] || ''} МСК</span>
                                         </div>
@@ -3276,8 +3277,8 @@ function App() {
                                           <span className="score-inline-pill">—</span>
                                           <span className="team-name team-right">{teamWithFlag(m.away_team)}</span>
                                         </div>
-                                        <div className="compact-note compact-note-under-score">
-                                          <span className="compact-note-under-score-text">Пара определится позже</span>
+                                        <div className="match-card-bottom">
+                                          <span>Пара определится позже</span>
                                         </div>
                                       </>
                                     )
@@ -3297,11 +3298,11 @@ function App() {
                                         : 'is-empty'
                                   return (
                                     <>
-                                      <div className="compact-meta">
+                                      <div className="match-card-top">
+                                        {showDateBadge ? <span className="day-title">{dateKey}</span> : <span />}
                                         {m.group_label ? <span className="group-small">[{m.group_label}]</span> : <span className="group-small">—</span>}
                                         <span className="kickoff-small">{(m.kickoff || '').split(' ')[1] || ''} МСК</span>
                                       </div>
-                                      {crowdText(m) ? <div className="community-small">{crowdText(m)}</div> : null}
                                       <div className="compact-main compact-main-predict">
                                         <span className="team-name team-left">{teamWithFlag(m.home_team)}</span>
                                         <input
@@ -3329,6 +3330,7 @@ function App() {
                                               : 'Сохранить'}
                                         </button>
                                       </div>
+                                      {crowdText(m) ? <div className="match-card-bottom"><span>{crowdText(m)}</span></div> : null}
                                     </>
                                   )
                                 })()}
@@ -3357,24 +3359,22 @@ function App() {
                     <div className="card compact-list-card">
                       {closedPredictionGroups.map(([day, items]) => (
                         <div className="day-group day-group-inset" key={day}>
-                          <div className="day-title">{day}</div>
-                          {items.map((m) => (
+                          {items.map((m, matchIndex) => (
                             <div className="compact-match" key={m.match_id}>
-                              <div className="compact-meta">
+                              <div className="match-card-top">
+                                {matchIndex === 0 ? <span className="day-title">{day}</span> : <span />}
                                 {m.group_label ? <span className="group-small">[{m.group_label}]</span> : <span className="group-small">—</span>}
                                 <span className="kickoff-small">{(m.kickoff || '').split(' ')[1] || ''} МСК</span>
                               </div>
-                              {crowdText(m) ? <div className="community-small">{crowdText(m)}</div> : null}
                               <div className="compact-main compact-main-result">
                                 <span className="team-name team-left">{teamWithFlag(m.home_team)}</span>
                                 <span className="score-inline-pill">{m.prediction || '-:-'}</span>
                                 <span className="team-name team-right">{teamWithFlag(m.away_team)}</span>
                                 <span className="result-badge">{m.prediction ? `${m.emoji} ${m.points ?? 0}` : '❌ 0'}</span>
                               </div>
-                              <div className="compact-note compact-note-under-score">
-                                <span className="compact-note-under-score-text">
-                                  Итог: {m.result || '—'}
-                                </span>
+                              <div className="match-card-bottom">
+                                {crowdText(m) ? <span>{crowdText(m)}</span> : <span />}
+                                <span>Итог: {m.result || '—'}</span>
                               </div>
                             </div>
                           ))}
