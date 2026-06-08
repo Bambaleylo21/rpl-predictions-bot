@@ -3737,10 +3737,10 @@ function App() {
                       <div className="duel-head-actions">
                         <button
                           type="button"
-                          className="duel-rules-btn duel-rating-btn"
+                          className="duel-rules-btn"
                           onClick={() => setDuelLeaderboardOpen(true)}
                         >
-                          Рейтинг
+                          Таблица 1x1
                         </button>
                         <button
                           type="button"
@@ -4509,10 +4509,9 @@ function App() {
         {duelLeaderboardOpen ? (
           <div className="duel-rating-sheet-overlay" onClick={() => setDuelLeaderboardOpen(false)}>
             <div className="duel-rating-sheet" onClick={(ev) => ev.stopPropagation()}>
-              <div className="duel-rating-handle" />
               <div className="duel-rating-sheet-head">
                 <div>
-                  <div className="duel-rating-title">Рейтинг 1x1</div>
+                  <div className="duel-rating-title">Таблица 1x1</div>
                   <div className="duel-rating-subtitle">Сквозной Elo по всем турнирам</div>
                 </div>
                 <button

@@ -463,12 +463,6 @@ body {
   margin: 0;
 }
 
-.duel-rating-btn {
-  border-color: rgba(185, 154, 85, 0.42);
-  background: rgba(185, 154, 85, 0.1);
-  color: var(--text-main);
-}
-
 .duel-rules-btn:hover {
   border-color: var(--accent);
   background: #171717;
@@ -2754,14 +2748,6 @@ body {
     opacity: 1;
     transform: translateY(0);
   }
-}
-
-.duel-rating-handle {
-  width: 46px;
-  height: 4px;
-  border-radius: 999px;
-  background: rgba(230, 230, 230, 0.35);
-  margin: 0 auto 12px;
 }
 
 .duel-rating-sheet-head {
