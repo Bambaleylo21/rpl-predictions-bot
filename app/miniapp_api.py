@@ -123,6 +123,23 @@ WC2026_PLAYOFF_SLOTS: list[tuple[int, str]] = [
 ]
 
 LEGACY_TROPHIES = [
+    {
+        "season": "2026",
+        "title": "Турнир, посвященный годовщине переноса годовщины",
+        "format": "РПЛ (2 часть) · Высшая лига",
+        "place": 1,
+        "username": "nyaka19",
+    },
+    {
+        "season": "2026",
+        "title": "Турнир, посвященный годовщине переноса годовщины",
+        "format": "РПЛ (2 часть) · Низшая лига",
+        "place": 1,
+        "username": "marykozhanova",
+    },
+    {"season": "2025/26", "title": "Лига Чемпионов", "format": "Плей-офф", "place": 1, "username": "tsykun"},
+    {"season": "2025/26", "title": "Лига Чемпионов", "format": "Плей-офф", "place": 2, "username": "kirya_32"},
+    {"season": "2025/26", "title": "Лига Чемпионов", "format": "Плей-офф", "place": 3, "username": "SegaDm"},
     {"season": "2025/26", "title": "Лига Кайратовна", "format": "Группа ЛЧ", "place": 1, "username": "ImRus32"},
     {"season": "2025/26", "title": "Лига Кайратовна", "format": "Группа ЛЧ", "place": 2, "username": "kuznetsoff32"},
     {"season": "2025/26", "title": "Лига Кайратовна", "format": "Группа ЛЧ", "place": 3, "username": "artgorlin"},
