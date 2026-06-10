@@ -3916,13 +3916,16 @@ function App() {
                     (duelsFilter === 'active' ? duelsData.active : duelsData.finished)!.map((d) => {
                       const isIncomingPending =
                         d.status === 'pending' && tgUserId != null && Number(d.opponent_tg_user_id) === Number(tgUserId)
+                      const acceptScore = normalizeScore(duelAcceptInputs[d.duel_id] || '')
                       return (
                         <div
-                          className={`compact-match ${duelFocusId === d.duel_id ? 'is-focused' : ''}`}
+                          className={`compact-match duel-card ${isIncomingPending ? 'is-incoming-pending' : ''} ${
+                            duelFocusId === d.duel_id ? 'is-focused' : ''
+                          }`}
                           key={`duel-${d.duel_id}`}
                           id={`duel-card-${d.duel_id}`}
                         >
-                          <div className="compact-meta">
+                          <div className="compact-meta duel-card-meta">
                             {d.group_label ? <span className="group-small">[{d.group_label}]</span> : <span className="group-small">—</span>}
                             <span className="kickoff-small">{d.kickoff} МСК</span>
                           </div>
@@ -3942,47 +3945,49 @@ function App() {
                           )}
 
                           <div className="duel-preds">
-                            <div className="duel-pred-line">
-                              <span className="duel-pred-text">
+                            <div className="duel-pred-line duel-player-line">
+                              <span className="duel-player-main">
                                 {duelsFilter === 'finished' ? (
                                   <>
-                                    <b>{d.challenger_rating || 1000}</b>{' '}
+                                    <span className="duel-player-rating">{d.challenger_rating || 1000}</span>{' '}
                                     <span className={d.elo_delta_challenger >= 0 ? 'duel-delta-plus' : 'duel-delta-minus'}>
                                       ({d.elo_delta_challenger >= 0 ? `+${d.elo_delta_challenger}` : d.elo_delta_challenger})
                                     </span>{' '}
                                   </>
                                 ) : (
                                   <>
-                                    <b>{d.challenger_rating || 1000}</b>{' '}
+                                    <span className="duel-player-rating">{d.challenger_rating || 1000}</span>{' '}
                                   </>
                                 )}
-                                {d.challenger_name} <b>{d.challenger_pred}</b>
+                                <span className="duel-player-name">{d.challenger_name}</span>
                               </span>
+                              <b className="duel-player-pred">{d.challenger_pred}</b>
                             </div>
-                            <div className="duel-pred-line">
-                              <span className="duel-pred-text">
+                            <div className="duel-pred-line duel-player-line">
+                              <span className="duel-player-main">
                                 {duelsFilter === 'finished' ? (
                                   <>
-                                    <b>{d.opponent_rating || 1000}</b>{' '}
+                                    <span className="duel-player-rating">{d.opponent_rating || 1000}</span>{' '}
                                     <span className={d.elo_delta_opponent >= 0 ? 'duel-delta-plus' : 'duel-delta-minus'}>
                                       ({d.elo_delta_opponent >= 0 ? `+${d.elo_delta_opponent}` : d.elo_delta_opponent})
                                     </span>{' '}
                                   </>
                                 ) : (
                                   <>
-                                    <b>{d.opponent_rating || 1000}</b>{' '}
+                                    <span className="duel-player-rating">{d.opponent_rating || 1000}</span>{' '}
                                   </>
                                 )}
-                                {d.opponent_name} <b>{d.opponent_pred || '—'}</b>
+                                <span className="duel-player-name">{d.opponent_name}</span>
                               </span>
+                              <b className="duel-player-pred">{d.opponent_pred || '—'}</b>
                             </div>
                             <div className="compact-note">
-                              Личные встречи: <b>{d.h2h_wins || 0}-{d.h2h_draws || 0}-{d.h2h_losses || 0}</b> (W-D-L)
+                              Личные встречи · <b>{d.h2h_wins || 0}-{d.h2h_draws || 0}-{d.h2h_losses || 0}</b> (W-D-L)
                             </div>
                           </div>
 
                           {isIncomingPending ? (
-                            <div className="predict-row duel-predict-row">
+                            <div className="predict-row duel-predict-row duel-accept-row">
                               <input
                                 className="score-input"
                                 value={duelAcceptInputs[d.duel_id] || ''}
@@ -3996,11 +4001,11 @@ function App() {
                                 inputMode="numeric"
                               />
                               <button
-                                className="save-btn is-dirty"
+                                className={`duel-accept-btn ${acceptScore ? 'is-ready' : 'is-empty'}`}
                                 onClick={() => respondDuel(d.duel_id, 'accept', duelAcceptInputs[d.duel_id] || '')}
                                 disabled={duelBusyId === d.duel_id}
                               >
-                                ✓
+                                {duelBusyId === d.duel_id ? 'Принимаю...' : 'Принять вызов'}
                               </button>
                             </div>
                           ) : null}

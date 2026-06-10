@@ -807,6 +807,47 @@ body {
   grid-template-columns: 1fr 18px 1fr 72px;
 }
 
+.duel-card {
+  position: relative;
+  border: 1px solid rgba(185, 154, 85, 0.26);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 20% 0%, rgba(185, 154, 85, 0.12), transparent 34%),
+    linear-gradient(180deg, rgba(185, 154, 85, 0.07), rgba(17, 17, 17, 0.52));
+  padding: 13px 12px 14px;
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.22);
+}
+
+.duel-card.is-incoming-pending {
+  border-color: rgba(185, 154, 85, 0.52);
+  background:
+    radial-gradient(circle at 24% 0%, rgba(185, 154, 85, 0.18), transparent 38%),
+    linear-gradient(180deg, rgba(185, 154, 85, 0.11), rgba(17, 17, 17, 0.6));
+}
+
+.duel-card + .duel-card {
+  margin-top: 12px;
+}
+
+.duel-card.compact-match + .compact-match {
+  border-top: 0;
+  padding-top: 13px;
+}
+
+.duel-card-meta {
+  margin-bottom: 10px;
+}
+
+.duel-card .compact-main-duel {
+  grid-template-columns: minmax(0, 1fr) 18px minmax(0, 1fr) auto;
+  gap: 7px;
+}
+
+.duel-card .team-name {
+  font-size: 14px;
+  line-height: 1.14;
+}
+
 .duel-vs-sep {
   text-align: center;
   color: var(--text-dim);
@@ -885,6 +926,10 @@ body {
 
 .duel-status-badge {
   min-width: 72px;
+  height: 30px;
+  border-color: rgba(185, 154, 85, 0.62);
+  background: rgba(185, 154, 85, 0.15);
+  box-shadow: 0 0 16px rgba(185, 154, 85, 0.08) inset;
 }
 
 .compact-note {
@@ -894,17 +939,17 @@ body {
 }
 
 .duel-preds {
-  margin-top: var(--vr-sm);
+  margin-top: 12px;
   display: grid;
-  gap: 4px;
+  gap: 6px;
 }
 
 .duel-pred-line {
   display: flex;
-  justify-content: flex-start;
+  justify-content: space-between;
   align-items: baseline;
-  gap: 8px;
-  font-size: 12px;
+  gap: 10px;
+  font-size: 13px;
   color: var(--text-muted);
 }
 
@@ -913,6 +958,39 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.duel-player-line {
+  width: 100%;
+  min-width: 0;
+}
+
+.duel-player-main {
+  min-width: 0;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.duel-player-rating {
+  color: var(--text-main);
+  font-weight: 800;
+  flex: 0 0 auto;
+}
+
+.duel-player-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.duel-player-pred {
+  color: var(--text-main);
+  font-weight: 900;
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 .duel-delta-plus {
@@ -2363,6 +2441,52 @@ body {
 .duel-predict-row {
   margin-top: var(--vr-sm);
   align-items: stretch;
+}
+
+.duel-accept-row {
+  margin-top: 13px;
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.duel-accept-row .score-input {
+  width: 100%;
+}
+
+.duel-accept-btn {
+  border: 1px solid rgba(185, 154, 85, 0.5);
+  border-radius: 14px;
+  background: rgba(185, 154, 85, 0.12);
+  color: var(--text-main);
+  min-height: 44px;
+  padding: 9px 14px;
+  font-size: 13px;
+  font-weight: 900;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    transform 0.16s ease,
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    box-shadow 0.18s ease,
+    color 0.18s ease;
+}
+
+.duel-accept-btn.is-ready {
+  border-color: rgba(185, 154, 85, 0.88);
+  background: linear-gradient(180deg, rgba(219, 185, 95, 0.92), rgba(153, 119, 47, 0.92));
+  color: #ffffff;
+  box-shadow: 0 10px 22px rgba(185, 154, 85, 0.18);
+}
+
+.duel-accept-btn:active {
+  transform: translateY(1px) scale(0.99);
+}
+
+.duel-accept-btn:disabled {
+  opacity: 0.72;
+  cursor: wait;
 }
 
 .duel-challenge-submit-btn {
