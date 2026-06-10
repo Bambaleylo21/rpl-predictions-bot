@@ -2313,6 +2313,8 @@ function App() {
     ...wcPlayoffTabs.map((tab) => ({ type: 'playoff' as const, key: tab.key, label: tab.label })),
     { type: 'stage', key: 'LT', label: 'Доп. прогнозы' },
   ]
+  const groupStageTabs = wcStageTabsUnified.filter((tab) => tab.type === 'stage' && tab.key !== 'LT')
+  const knockoutStageTabs = wcStageTabsUnified.filter((tab) => tab.type === 'playoff' || tab.key === 'LT')
   const allowLongtermTab = showWcSelector
   const winnerSearchNorm = winnerSearch.trim().toLowerCase()
   const scorerSearchNorm = scorerSearch.trim().toLowerCase()
@@ -3015,29 +3017,35 @@ function App() {
                 <div className="card card-static segment-card">
                   <div className="card-title">Этап турнира</div>
                   <div className="segment-hint">Нажми, чтобы выбрать этап</div>
-                  <div className="tournament-row tournament-row-unified">
-                    {wcStageTabsUnified.map((tab) => {
-                      const isActive =
-                        tab.type === 'playoff'
-                          ? stageTab === 'PO' && playoffTab === tab.key
-                          : stageTab === tab.key
-                      return (
-                        <button
-                          key={`${tab.type}-${tab.key}`}
-                          className={`tournament-chip ${tab.type === 'playoff' ? 'is-playoff' : ''} ${isActive ? 'is-active' : ''}`}
-                          onClick={() => {
-                            if (tab.type === 'playoff') {
-                              setStageTab('PO')
-                              setPlayoffTab(tab.key)
-                              return
-                            }
-                            setStageTab(tab.key)
-                          }}
-                        >
-                          {tab.label}
-                        </button>
-                      )
-                    })}
+                  <div className="tournament-stage-stack">
+                    {[groupStageTabs, knockoutStageTabs].map((tabs, rowIdx) => (
+                      <div className="tournament-row tournament-row-unified" key={`stage-row-${rowIdx}`}>
+                        {tabs.map((tab) => {
+                          const isActive =
+                            tab.type === 'playoff'
+                              ? stageTab === 'PO' && playoffTab === tab.key
+                              : stageTab === tab.key
+                          return (
+                            <button
+                              key={`${tab.type}-${tab.key}`}
+                              className={`tournament-chip ${tab.type === 'playoff' ? 'is-playoff' : ''} ${
+                                tab.type === 'stage' && tab.key === 'LT' ? 'is-longterm' : ''
+                              } ${isActive ? 'is-active' : ''}`}
+                              onClick={() => {
+                                if (tab.type === 'playoff') {
+                                  setStageTab('PO')
+                                  setPlayoffTab(tab.key)
+                                  return
+                                }
+                                setStageTab(tab.key)
+                              }}
+                            >
+                              {tab.label}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    ))}
                   </div>
                 </div>
               </section>
