@@ -432,6 +432,23 @@ async def get_duel_hub(session, *, tournament_id: int, tg_user_id: int) -> dict[
 
     match_options = await list_duel_match_options(session, int(tournament_id), int(tg_user_id), limit=200)
 
+    busy_rows = (
+        await session.execute(
+            select(Duel.match_id, Duel.challenger_tg_user_id, Duel.opponent_tg_user_id).where(
+                Duel.tournament_id == int(tournament_id),
+                Duel.status.in_(("pending", "accepted")),
+            )
+        )
+    ).all()
+    busy_opponents_by_match: dict[str, list[int]] = {}
+    for match_id_raw, challenger_id_raw, opponent_id_raw in busy_rows:
+        match_key = str(int(match_id_raw))
+        busy_ids = busy_opponents_by_match.setdefault(match_key, [])
+        for uid_raw in (challenger_id_raw, opponent_id_raw):
+            uid = int(uid_raw)
+            if uid not in busy_ids:
+                busy_ids.append(uid)
+
     duel_user_ids: set[int] = {int(tg_user_id)}
 
     # Head-to-head map from perspective of current user:
@@ -558,6 +575,7 @@ async def get_duel_hub(session, *, tournament_id: int, tg_user_id: int) -> dict[
             "draws": int(elo.draws or 0),
         },
         "match_options": match_options,
+        "busy_opponents_by_match": busy_opponents_by_match,
         "opponents": opponents,
         "leaderboard": leaderboard,
         "active": [_duel_item(duel, match) for duel, match in active_rows],

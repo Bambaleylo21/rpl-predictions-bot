@@ -300,6 +300,7 @@ type DuelsResponse = {
     kickoff: string
     blocked_for_user?: boolean
   }>
+  busy_opponents_by_match?: Record<string, number[]>
   opponents?: Array<{
     tg_user_id: number
     display_name: string
@@ -2271,9 +2272,15 @@ function App() {
   const duelMatchOptions = duelsData?.match_options || []
   const duelOpponents = duelsData?.opponents || []
   const duelLeaderboard = duelsData?.leaderboard || []
+  const duelBusyOpponentsByMatch = duelsData?.busy_opponents_by_match || {}
   const duelSelectedMatch = duelMatchOptions.find((m) => Number(m.match_id) === Number(duelMatchId)) || null
   const duelSelectedOpponent =
     duelOpponents.find((u) => Number(u.tg_user_id) === Number(duelOpponentId)) || null
+  const duelBusyOpponentIdsForMatch = new Set(
+    (duelBusyOpponentsByMatch[String(duelMatchId)] || []).map((id) => Number(id))
+  )
+  const isDuelOpponentBusyForMatch = (tgUserIdValue: number) =>
+    duelMatchId > 0 && duelBusyOpponentIdsForMatch.has(Number(tgUserIdValue))
   const duelMatchSearchNorm = duelMatchSearch.trim().toLowerCase()
   const duelOpponentSearchNorm = duelOpponentSearch.trim().toLowerCase()
   const duelFilteredMatches = duelMatchOptions.filter((m) => {
@@ -3815,6 +3822,12 @@ function App() {
                                 }`}
                                 onClick={() => {
                                   if (m.blocked_for_user) return
+                                  const nextBusyIds = new Set(
+                                    (duelBusyOpponentsByMatch[String(m.match_id)] || []).map((id) => Number(id))
+                                  )
+                                  if (nextBusyIds.has(Number(duelOpponentId))) {
+                                    setDuelOpponentId(0)
+                                  }
                                   setDuelMatchId(m.match_id)
                                   setDuelMatchPickerOpen(false)
                                 }}
@@ -3870,19 +3883,30 @@ function App() {
                             placeholder="Поиск соперника"
                           />
                           <div className="duel-picker-list">
-                            {duelFilteredOpponents.map((u) => (
-                              <button
-                                key={u.tg_user_id}
-                                className={`duel-picker-item ${duelOpponentId === u.tg_user_id ? 'is-selected' : ''}`}
-                                onClick={() => {
-                                  setDuelOpponentId(u.tg_user_id)
-                                  setDuelOpponentPickerOpen(false)
-                                }}
-                              >
-                                <div className="duel-picker-item-title">{u.display_name}</div>
-                                <div className="duel-picker-item-note">Рейтинг: {u.elo_rating || 1000}</div>
-                              </button>
-                            ))}
+                            {duelFilteredOpponents.map((u) => {
+                              const opponentIsBusy = isDuelOpponentBusyForMatch(u.tg_user_id)
+                              return (
+                                <button
+                                  key={u.tg_user_id}
+                                  className={`duel-picker-item ${
+                                    duelOpponentId === u.tg_user_id ? 'is-selected' : ''
+                                  } ${opponentIsBusy ? 'is-disabled' : ''}`}
+                                  onClick={() => {
+                                    if (opponentIsBusy) return
+                                    setDuelOpponentId(u.tg_user_id)
+                                    setDuelOpponentPickerOpen(false)
+                                  }}
+                                  disabled={opponentIsBusy}
+                                >
+                                  <div className="duel-picker-item-title">{u.display_name}</div>
+                                  <div className="duel-picker-item-note">
+                                    {opponentIsBusy
+                                      ? 'Игрок уже участвует в битве на этот матч'
+                                      : `Рейтинг: ${u.elo_rating || 1000}`}
+                                  </div>
+                                </button>
+                              )
+                            })}
                           </div>
                         </div>
                       ) : null}
