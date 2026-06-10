@@ -2295,14 +2295,6 @@ function App() {
     expired: 'Истекла',
   }
 
-  const wcTopTabsBase: Array<{ key: '1' | '2' | '3' | 'PO'; label: string }> = [
-    { key: '1', label: 'Тур 1' },
-    { key: '2', label: 'Тур 2' },
-    { key: '3', label: 'Тур 3' },
-    { key: 'PO', label: 'Плей-офф' },
-  ]
-  const wcTopTabsMatches: Array<{ key: '1' | '2' | '3' | 'PO' | 'LT'; label: string }> =
-    [...wcTopTabsBase, { key: 'LT', label: 'Доп. прогнозы' }]
   const wcPlayoffTabs: Array<{ key: 4 | 5 | 6 | 7 | 8 | 9; label: string }> = [
     { key: 4, label: '1/16' },
     { key: 5, label: '1/8' },
@@ -2310,6 +2302,16 @@ function App() {
     { key: 7, label: '1/2' },
     { key: 8, label: 'За 3-е' },
     { key: 9, label: 'Финал' },
+  ]
+  const wcStageTabsUnified: Array<
+    | { type: 'stage'; key: '1' | '2' | '3' | 'LT'; label: string }
+    | { type: 'playoff'; key: 4 | 5 | 6 | 7 | 8 | 9; label: string }
+  > = [
+    { type: 'stage', key: '1', label: 'Тур 1' },
+    { type: 'stage', key: '2', label: 'Тур 2' },
+    { type: 'stage', key: '3', label: 'Тур 3' },
+    ...wcPlayoffTabs.map((tab) => ({ type: 'playoff' as const, key: tab.key, label: tab.label })),
+    { type: 'stage', key: 'LT', label: 'Доп. прогнозы' },
   ]
   const allowLongtermTab = showWcSelector
   const winnerSearchNorm = winnerSearch.trim().toLowerCase()
@@ -3013,30 +3015,30 @@ function App() {
                 <div className="card card-static segment-card">
                   <div className="card-title">Этап турнира</div>
                   <div className="segment-hint">Нажми, чтобы выбрать этап</div>
-                  <div className="tournament-row">
-                    {wcTopTabsMatches.map((tab) => (
-                      <button
-                        key={tab.key}
-                        className={`tournament-chip ${stageTab === tab.key ? 'is-active' : ''}`}
-                        onClick={() => setStageTab(tab.key)}
-                      >
-                        {tab.label}
-                      </button>
-                    ))}
-                  </div>
-                  {stageTab === 'PO' ? (
-                    <div className="tournament-row">
-                      {wcPlayoffTabs.map((tab) => (
+                  <div className="tournament-row tournament-row-unified">
+                    {wcStageTabsUnified.map((tab) => {
+                      const isActive =
+                        tab.type === 'playoff'
+                          ? stageTab === 'PO' && playoffTab === tab.key
+                          : stageTab === tab.key
+                      return (
                         <button
-                          key={tab.key}
-                          className={`tournament-chip ${playoffTab === tab.key ? 'is-active' : ''}`}
-                          onClick={() => setPlayoffTab(tab.key)}
+                          key={`${tab.type}-${tab.key}`}
+                          className={`tournament-chip ${tab.type === 'playoff' ? 'is-playoff' : ''} ${isActive ? 'is-active' : ''}`}
+                          onClick={() => {
+                            if (tab.type === 'playoff') {
+                              setStageTab('PO')
+                              setPlayoffTab(tab.key)
+                              return
+                            }
+                            setStageTab(tab.key)
+                          }}
                         >
                           {tab.label}
                         </button>
-                      ))}
-                    </div>
-                  ) : null}
+                      )
+                    })}
+                  </div>
                 </div>
               </section>
             ) : null}

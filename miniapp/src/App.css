@@ -371,6 +371,22 @@ body {
   margin-top: var(--vr-md);
 }
 
+.tournament-row-unified {
+  flex-wrap: nowrap;
+  gap: 7px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  margin-right: -4px;
+  margin-left: -4px;
+  padding: 1px 4px 2px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.tournament-row-unified::-webkit-scrollbar {
+  display: none;
+}
+
 .tournament-chip {
   border: 1px solid var(--line-2);
   border-radius: 999px;
@@ -402,6 +418,24 @@ body {
 
 .tournament-chip:active {
   transform: translateY(1px);
+}
+
+.tournament-row-unified .tournament-chip {
+  flex: 0 0 auto;
+  min-width: 62px;
+  padding: 7px 12px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.tournament-row-unified .tournament-chip.is-playoff {
+  min-width: 52px;
+  padding-inline: 11px;
+}
+
+.tournament-row-unified .tournament-chip:last-child {
+  min-width: 116px;
 }
 
 .predict-row {
