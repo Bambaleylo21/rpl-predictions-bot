@@ -2336,8 +2336,14 @@ function App() {
     return Object.entries(grouped)
   })()
   const closedPredictionItems = (predictionsData?.items || []).filter((m) => m.status === 'closed')
-  const openPredictionCount = predictData?.items?.length || 0
+  const openRealPredictionItems = predictItems.filter((m) => !m.is_placeholder)
+  const openPredictionCount = openRealPredictionItems.length
   const closedPredictionCount = closedPredictionItems.length
+  const placedPredictionCount =
+    openRealPredictionItems.filter((m) => Boolean(normalizeScore(m.prediction || ''))).length +
+    closedPredictionItems.filter((m) => Boolean(normalizeScore(m.prediction || ''))).length
+  const overviewMatchesTotal = openPredictionCount + closedPredictionCount
+  const overviewProgressPct = overviewMatchesTotal > 0 ? Math.round((placedPredictionCount / overviewMatchesTotal) * 100) : 0
   const closedPredictionGroups = (() => {
     const grouped: Record<string, typeof closedPredictionItems> = {}
     for (const item of closedPredictionItems) {
@@ -3038,18 +3044,24 @@ function App() {
             {stageTab !== 'LT' && predictData?.joined !== false && (predictData || predictionsData) ? (
               <section className="cards space-top">
                 <div className="card card-static matches-overview-card">
-                  <div className="matches-overview-head">Сводка матчей</div>
-                  <div className="matches-overview-row">
-                    <span className="matches-overview-pill">
-                      Активные: <b>{openPredictionCount}</b>
-                    </span>
-                    <span className="matches-overview-pill">
-                      Завершённые: <b>{closedPredictionCount}</b>
-                    </span>
+                  <div className="matches-overview-top">
+                    <span>Сводка</span>
+                    <b>{placedPredictionCount}/{overviewMatchesTotal}</b>
+                  </div>
+                  <div className="matches-overview-progress" aria-hidden="true">
+                    <span style={{ width: `${overviewProgressPct}%` }} />
+                  </div>
+                  <div className="matches-overview-text">
+                    Проставлено <b>{placedPredictionCount}</b> из <b>{overviewMatchesTotal}</b>
+                    <span> · </span>
+                    Активные <b>{openPredictionCount}</b>
+                    <span> · </span>
+                    Завершённые <b>{closedPredictionCount}</b>
                     {predictionsData?.total_points_closed != null ? (
-                      <span className="matches-overview-pill">
-                        Очки: <b>{predictionsData.total_points_closed}</b>
-                      </span>
+                      <>
+                        <span> · </span>
+                        Очки <b>{predictionsData.total_points_closed}</b>
+                      </>
                     ) : null}
                   </div>
                 </div>
