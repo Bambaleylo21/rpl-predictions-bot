@@ -4003,7 +4003,7 @@ async def predict_current(request: web.Request) -> web.Response:
                 await session.execute(
                     select(
                         Match.round_number.label("round_number"),
-                        func.sum(case((Match.kickoff_time > now, 1), else_=0)).label("open_cnt"),
+                        func.sum(case((Match.home_score.is_(None), 1), else_=0)).label("open_cnt"),
                     )
                     .where(
                         Match.tournament_id == int(tournament.id),
@@ -4039,7 +4039,7 @@ async def predict_current(request: web.Request) -> web.Response:
                         .where(
                             Match.tournament_id == int(tournament.id),
                             Match.round_number == int(current_round),
-                            or_(Match.kickoff_time > now, Match.is_placeholder == 1),
+                            Match.home_score.is_(None),
                         )
                         .order_by(Match.kickoff_time.asc(), Match.id.asc())
                     )
@@ -4051,7 +4051,7 @@ async def predict_current(request: web.Request) -> web.Response:
                         .where(
                             Match.tournament_id == int(tournament.id),
                             Match.round_number == int(current_round),
-                            Match.kickoff_time > now,
+                            Match.home_score.is_(None),
                             Match.is_placeholder == 0,
                         )
                         .order_by(Match.kickoff_time.asc(), Match.id.asc())
@@ -4077,12 +4077,15 @@ async def predict_current(request: web.Request) -> web.Response:
             for m in matches:
                 pred = preds_map.get(int(m.id))
                 crowd = crowd_map.get(int(m.id), {})
+                is_placeholder = int(m.is_placeholder or 0) == 1
+                is_locked = bool(not is_placeholder and m.kickoff_time <= now)
                 items.append(
                     {
                         "match_id": int(m.id),
                         "home_team": m.home_team,
                         "away_team": m.away_team,
-                        "is_placeholder": int(m.is_placeholder or 0) == 1,
+                        "is_placeholder": is_placeholder,
+                        "locked": is_locked,
                         "group_label": m.group_label,
                         "kickoff": m.kickoff_time.strftime("%d.%m %H:%M"),
                         "prediction": f"{pred.pred_home}:{pred.pred_away}" if pred is not None else None,

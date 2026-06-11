@@ -998,6 +998,16 @@ body {
   line-height: 1.2;
 }
 
+.score-inline-static {
+  width: 58px;
+  color: var(--text-main);
+  text-align: center;
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+
 .result-badge {
   min-width: 56px;
   height: 28px;
@@ -1149,6 +1159,14 @@ body {
   background: #151515;
   border-color: var(--line-2);
   color: var(--text-dim);
+}
+
+.prediction-save-btn.is-locked {
+  background: rgba(185, 154, 85, 0.12);
+  border-color: rgba(185, 154, 85, 0.38);
+  color: var(--accent-soft);
+  opacity: 1;
+  box-shadow: none;
 }
 
 .save-btn.is-empty {

@@ -154,6 +154,7 @@ type PredictCurrentResponse = {
     home_team: string
     away_team: string
     is_placeholder?: boolean
+    locked?: boolean
     group_label?: string | null
     kickoff: string
     prediction: string | null
@@ -1496,7 +1497,7 @@ function App() {
 
   const saveAllPredictions = async () => {
     const itemsToSave = (predictData?.items || [])
-      .filter((item) => !item.is_placeholder)
+      .filter((item) => !item.is_placeholder && !item.locked)
       .map((item) => {
         const currentInput = normalizeScore(scoreInputs[item.match_id] || '')
         const savedInput = normalizeScore(item.prediction || '')
@@ -2332,7 +2333,7 @@ function App() {
 
   const predictItems = predictData?.items || []
   const dirtyPredictItemsCount = predictItems.filter((item) => {
-    if (item.is_placeholder) return false
+    if (item.is_placeholder || item.locked) return false
     const currentInput = normalizeScore(scoreInputs[item.match_id] || '')
     const savedInput = normalizeScore(item.prediction || '')
     return Boolean(currentInput && currentInput !== savedInput)
@@ -3338,6 +3339,7 @@ function App() {
                                   const savedInput = normalizeScore(m.prediction || '')
                                   const isDirty = currentInput !== savedInput
                                   const hasSaved = savedInput.length > 0
+                                  const isLocked = Boolean(m.locked)
                                   const isSaving = savingMatchId === m.match_id
                                   const canSave = isDirty
                                   const saveVisualState = isSaving
@@ -3356,25 +3358,33 @@ function App() {
                                       </div>
                                       <div className="compact-main compact-main-predict">
                                         <span className="team-name team-left">{teamWithFlag(m.home_team)}</span>
-                                        <input
-                                          className="score-inline-input"
-                                          value={scoreInputs[m.match_id] || ''}
-                                          onChange={(e) =>
-                                            setScoreInputs((prev) => ({
-                                              ...prev,
-                                              [m.match_id]: formatScoreInput(e.target.value),
-                                            }))
-                                          }
-                                          placeholder="-:-"
-                                          inputMode="numeric"
-                                        />
+                                        {isLocked ? (
+                                          <span className="score-inline-static">{savedInput || '-:-'}</span>
+                                        ) : (
+                                          <input
+                                            className="score-inline-input"
+                                            value={scoreInputs[m.match_id] || ''}
+                                            onChange={(e) =>
+                                              setScoreInputs((prev) => ({
+                                                ...prev,
+                                                [m.match_id]: formatScoreInput(e.target.value),
+                                              }))
+                                            }
+                                            placeholder="-:-"
+                                            inputMode="numeric"
+                                          />
+                                        )}
                                         <span className="team-name team-right">{teamWithFlag(m.away_team)}</span>
                                         <button
-                                          className={`save-btn compact-save-btn prediction-save-btn ${saveVisualState}`}
+                                          className={`save-btn compact-save-btn prediction-save-btn ${
+                                            isLocked ? 'is-locked' : saveVisualState
+                                          }`}
                                           onClick={() => savePrediction(m.match_id)}
-                                          disabled={savingAllPredictions || isSaving || !canSave}
+                                          disabled={isLocked || savingAllPredictions || isSaving || !canSave}
                                         >
-                                          {isSaving
+                                          {isLocked
+                                            ? 'Матч идёт'
+                                            : isSaving
                                             ? '...'
                                             : saveVisualState === 'is-saved'
                                               ? 'Сохранено'
