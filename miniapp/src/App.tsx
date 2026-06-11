@@ -3418,28 +3418,27 @@ function App() {
                     <div className="card compact-list-card">
                       {closedPredictionGroups.map(([day, items]) => (
                         <div className="day-group day-group-inset" key={day}>
-                          {items.map((m, matchIndex) => (
-                            <div className="compact-match" key={m.match_id}>
-                              <div className="match-card-top">
-                                {matchIndex === 0 ? <span className="day-title">{day}</span> : <span />}
-                                {m.group_label ? <span className="group-small">[{m.group_label}]</span> : <span className="group-small">—</span>}
-                                <span className="kickoff-small">{(m.kickoff || '').split(' ')[1] || ''} МСК</span>
+                          {items.map((m) => (
+                            <div className="compact-match closed-match" key={m.match_id}>
+                              <div className="closed-match-main">
+                                <span className="team-name closed-team-name team-left">{teamWithFlag(m.home_team)}</span>
+                                <span className="closed-result-score">{m.result || '—'}</span>
+                                <span className="team-name closed-team-name team-right">{teamWithFlag(m.away_team)}</span>
+                                <span className="closed-points-badge">
+                                  {m.prediction
+                                    ? `${m.emoji} ${Number(m.points ?? 0) > 0 ? '+' : ''}${m.points ?? 0}`
+                                    : '❌ 0'}
+                                </span>
                               </div>
-                              <div className="compact-main compact-main-result">
-                                <span className="team-name team-left">{teamWithFlag(m.home_team)}</span>
-                                <span className="score-inline-pill">{m.prediction || '-:-'}</span>
-                                <span className="team-name team-right">{teamWithFlag(m.away_team)}</span>
-                                <span className="result-badge">{m.prediction ? `${m.emoji} ${m.points ?? 0}` : '❌ 0'}</span>
-                              </div>
-                              <div className="match-card-bottom">
+                              <div className="closed-match-details">
+                                <span>{m.prediction ? `Твой прогноз: ${m.prediction}` : 'Прогноз не был сделан'}</span>
                                 {crowdText(m) ? (
                                   <span className="community-triplet">
                                     {crowdPercentParts(m).map((part, index) => (
                                       <span key={`${m.match_id}-closed-crowd-${index}`}>{part}</span>
                                     ))}
                                   </span>
-                                ) : <span />}
-                                <span>Итог: {m.result || '—'}</span>
+                                ) : null}
                               </div>
                             </div>
                           ))}

@@ -825,6 +825,62 @@ body {
   grid-template-columns: 1fr 58px 1fr 56px;
 }
 
+.closed-match {
+  padding: 8px 2px 9px;
+}
+
+.closed-match-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.closed-team-name {
+  font-size: 13px;
+  line-height: 1.14;
+}
+
+.closed-result-score {
+  color: var(--text-strong);
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.closed-points-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 50px;
+  border: 1px solid rgba(185, 154, 85, 0.46);
+  border-radius: 999px;
+  background: rgba(185, 154, 85, 0.15);
+  color: var(--text-strong);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  padding: 7px 9px;
+  white-space: nowrap;
+}
+
+.closed-match-details {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 5px;
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+.closed-match-details .community-triplet {
+  min-width: 82px;
+}
+
 .compact-main-predict .team-name,
 .compact-main-result .team-name {
   font-size: 14px;
