@@ -63,6 +63,7 @@ type ProfileResponse = {
     emoji: string
     earned: boolean
     taken_by_other?: boolean
+    taken_by_name?: string | null
     description?: string
   }>
   next_achievement?: {
@@ -3658,6 +3659,9 @@ function App() {
                                 a.visual.iconEmoji
                               )}
                             </span>
+                            {a.taken_by_other && a.taken_by_name ? (
+                              <span className="profile-achievement-owner">Получена: {a.taken_by_name}</span>
+                            ) : null}
                           </button>
                             )
                           })()

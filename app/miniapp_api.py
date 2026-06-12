@@ -2128,6 +2128,7 @@ async def _build_profile_achievements(
                 "emoji": emoji,
                 "earned": bool(earned),
                 "taken_by_other": False,
+                "taken_by_name": None,
                 "description": description,
             }
         )
@@ -2143,13 +2144,25 @@ async def _build_profile_achievements(
         )
         if holders and not earned:
             achievements[-1]["taken_by_other"] = True
+            for holder_id in sorted(int(uid) for uid in holders):
+                holder_name = participant_name_map.get(holder_id)
+                if holder_name:
+                    achievements[-1]["taken_by_name"] = holder_name
+                    break
 
     participant_rows = (
         await session.execute(
-            select(UserTournament.tg_user_id).where(UserTournament.tournament_id == int(tournament_id))
+            select(UserTournament.tg_user_id, UserTournament.display_name).where(
+                UserTournament.tournament_id == int(tournament_id)
+            )
         )
     ).all()
     participant_ids = [int(r[0]) for r in participant_rows if r[0] is not None]
+    participant_name_map = {
+        int(uid): str(display_name or f"ID {uid}").strip()
+        for uid, display_name in participant_rows
+        if uid is not None
+    }
 
     closed_match_rows = (
         await session.execute(
@@ -2521,59 +2534,69 @@ async def _build_profile_achievements(
     )
 
     # Секретные ачивки.
-    high_scoring_exact = any(
-        int(user_category_by_match.get(int(m["match_id"]), "") == "exact")
-        and (int(m["home_score"]) + int(m["away_score"]) >= 4)
+    high_scoring_exact_match_ids = [
+        int(m["match_id"])
         for m in closed_matches
-    )
-    _push(
+        if int(m["home_score"]) + int(m["away_score"]) >= 4
+    ]
+    high_scoring_exact_rows = (
+        await session.execute(
+            select(Point.tg_user_id)
+            .where(
+                Point.match_id.in_(high_scoring_exact_match_ids) if high_scoring_exact_match_ids else false(),
+                Point.category == "exact",
+            )
+            .distinct()
+        )
+    ).all()
+    high_scoring_exact_holders = {
+        int(uid)
+        for (uid,) in high_scoring_exact_rows
+        if uid is not None
+    }
+    _push_unique(
         key="high_scoring_exact",
         title="Мастер многомяча",
         emoji="🔥",
-        earned=bool(high_scoring_exact),
+        holders=high_scoring_exact_holders,
         description="Угадал точный счет в матче, где было забито 4+ гола",
     )
 
     only_scorer_rows = (
         await session.execute(
-            select(
-                Point.match_id,
-                func.sum(case((Point.points > 0, 1), else_=0)).label("positive_count"),
-                func.max(
-                    case(
-                        ((Point.tg_user_id == int(tg_user_id)) & (Point.points > 0), 1),
-                        else_=0,
-                    )
-                ).label("my_positive"),
+            select(Point.match_id, Point.tg_user_id, Point.points).where(
+                Point.match_id.in_(closed_match_ids) if closed_match_ids else false()
             )
-            .select_from(Point)
-            .join(Match, Match.id == Point.match_id)
-            .where(
-                Match.tournament_id == int(tournament_id),
-                Match.is_placeholder == 0,
-                Match.home_score.is_not(None),
-                Match.away_score.is_not(None),
-            )
-            .group_by(Point.match_id)
-            .having(
-                func.sum(case((Point.points > 0, 1), else_=0)) == 1,
-                func.max(case(((Point.tg_user_id == int(tg_user_id)) & (Point.points > 0), 1), else_=0)) == 1,
-            )
-            .limit(1)
         )
-    ).first()
-    _push(
+    ).all()
+    only_scorer_by_match: dict[int, list[int]] = {}
+    for mid, uid, points in only_scorer_rows:
+        if int(points or 0) <= 0:
+            continue
+        only_scorer_by_match.setdefault(int(mid), []).append(int(uid))
+    only_scorer_holders = {
+        int(uids[0])
+        for uids in only_scorer_by_match.values()
+        if len(uids) == 1
+    }
+    _push_unique(
         key="only_scorer_in_match",
         title="Единственный с очками",
         emoji="🧠",
-        earned=only_scorer_rows is not None,
+        holders=only_scorer_holders,
         description="Ты набрал очки в матче, в котором остальные получили 0",
     )
 
     # Fergie-time hit: прогноз за 5 минут до старта, который принес очки.
     fergie_rows = (
         await session.execute(
-            select(Prediction.created_at, Prediction.updated_at, Match.kickoff_time, Point.points)
+            select(
+                Prediction.tg_user_id,
+                Prediction.created_at,
+                Prediction.updated_at,
+                Match.kickoff_time,
+                Point.points,
+            )
             .select_from(Prediction)
             .join(
                 Point,
@@ -2581,7 +2604,6 @@ async def _build_profile_achievements(
             )
             .join(Match, Match.id == Prediction.match_id)
             .where(
-                Prediction.tg_user_id == int(tg_user_id),
                 Match.tournament_id == int(tournament_id),
                 Match.is_placeholder == 0,
                 Match.home_score.is_not(None),
@@ -2591,8 +2613,8 @@ async def _build_profile_achievements(
             .order_by(Prediction.updated_at.desc(), Prediction.id.desc())
         )
     ).all()
-    fergie_time_hit = False
-    for created_at, updated_at, kickoff_time, points in fergie_rows:
+    fergie_time_holders: set[int] = set()
+    for uid, created_at, updated_at, kickoff_time, points in fergie_rows:
         if int(points or 0) <= 0:
             continue
         ref_time = updated_at or created_at
@@ -2600,13 +2622,12 @@ async def _build_profile_achievements(
             continue
         delta_sec = (kickoff_time - ref_time).total_seconds()
         if 0 <= delta_sec <= 5 * 60:
-            fergie_time_hit = True
-            break
-    _push(
+            fergie_time_holders.add(int(uid))
+    _push_unique(
         key="fergie_time_hit",
         title="Ферги тайм",
         emoji="⏱️",
-        earned=fergie_time_hit,
+        holders=fergie_time_holders,
         description="Ты сделал прогноз за 5 минут до начала матча и заработал очки",
     )
 

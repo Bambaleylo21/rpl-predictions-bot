@@ -2377,6 +2377,7 @@ body {
 }
 
 .profile-achievement-btn {
+  position: relative;
   width: 100%;
   aspect-ratio: 1 / 1;
   cursor: pointer;
@@ -2400,14 +2401,18 @@ body {
 }
 
 .profile-achievement.is-locked {
+  opacity: 1;
+}
+
+.profile-achievement.is-locked .profile-achievement-emoji {
   opacity: 0.45;
 }
 
-.profile-achievement.is-locked.is-taken {
+.profile-achievement.is-locked.is-taken .profile-achievement-emoji {
   opacity: 0.4;
 }
 
-.profile-achievement.is-locked.is-secret-locked {
+.profile-achievement.is-locked.is-secret-locked .profile-achievement-emoji {
   opacity: 0.35;
 }
 
@@ -2431,6 +2436,28 @@ body {
 
 .profile-achievement.is-locked .profile-achievement-icon {
   filter: grayscale(0.9) saturate(0.6);
+}
+
+.profile-achievement-owner {
+  position: absolute;
+  left: 50%;
+  bottom: 4px;
+  z-index: 2;
+  max-width: 96%;
+  padding: 3px 7px;
+  transform: translateX(-50%) rotate(-3deg);
+  border: 1px solid rgba(185, 154, 85, 0.32);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #111;
+  font-size: 8px;
+  font-weight: 850;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.24);
+  pointer-events: none;
 }
 
 .profile-achievements-toggle {
