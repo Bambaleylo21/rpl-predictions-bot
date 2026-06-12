@@ -349,6 +349,10 @@ class Duel(Base):
     risk_multiplier_bp: Mapped[int] = mapped_column(Integer, nullable=False, default=100, server_default="100")
     elo_delta_challenger: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     elo_delta_opponent: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    challenger_elo_before: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    opponent_elo_before: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    challenger_elo_after: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    opponent_elo_after: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime,

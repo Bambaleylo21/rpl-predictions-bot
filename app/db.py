@@ -117,6 +117,10 @@ async def _apply_postgres_schema_fixes(conn) -> None:
         "CREATE INDEX IF NOT EXISTS ix_duels_opponent_tg_user_id ON duels (opponent_tg_user_id)",
         "CREATE INDEX IF NOT EXISTS ix_duels_status ON duels (status)",
         "CREATE INDEX IF NOT EXISTS ix_duels_winner_tg_user_id ON duels (winner_tg_user_id)",
+        "ALTER TABLE duels ADD COLUMN IF NOT EXISTS challenger_elo_before INTEGER",
+        "ALTER TABLE duels ADD COLUMN IF NOT EXISTS opponent_elo_before INTEGER",
+        "ALTER TABLE duels ADD COLUMN IF NOT EXISTS challenger_elo_after INTEGER",
+        "ALTER TABLE duels ADD COLUMN IF NOT EXISTS opponent_elo_after INTEGER",
 
         # duel elo
         "CREATE TABLE IF NOT EXISTS duel_elo (id SERIAL PRIMARY KEY, tournament_id INTEGER NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE, tg_user_id BIGINT NOT NULL, rating INTEGER NOT NULL DEFAULT 1000, duels_total INTEGER NOT NULL DEFAULT 0, wins INTEGER NOT NULL DEFAULT 0, losses INTEGER NOT NULL DEFAULT 0, draws INTEGER NOT NULL DEFAULT 0, created_at TIMESTAMP NOT NULL DEFAULT NOW(), updated_at TIMESTAMP NOT NULL DEFAULT NOW(), CONSTRAINT uq_duel_elo_tournament_user UNIQUE (tournament_id, tg_user_id))",
@@ -189,6 +193,10 @@ async def _apply_sqlite_schema_fixes(conn) -> None:
         "CREATE INDEX IF NOT EXISTS ix_duels_opponent_tg_user_id ON duels (opponent_tg_user_id)",
         "CREATE INDEX IF NOT EXISTS ix_duels_status ON duels (status)",
         "CREATE INDEX IF NOT EXISTS ix_duels_winner_tg_user_id ON duels (winner_tg_user_id)",
+        "ALTER TABLE duels ADD COLUMN challenger_elo_before INTEGER",
+        "ALTER TABLE duels ADD COLUMN opponent_elo_before INTEGER",
+        "ALTER TABLE duels ADD COLUMN challenger_elo_after INTEGER",
+        "ALTER TABLE duels ADD COLUMN opponent_elo_after INTEGER",
         # duel elo
         "CREATE TABLE IF NOT EXISTS duel_elo (id INTEGER PRIMARY KEY AUTOINCREMENT, tournament_id INTEGER NOT NULL, tg_user_id BIGINT NOT NULL, rating INTEGER NOT NULL DEFAULT 1000, duels_total INTEGER NOT NULL DEFAULT 0, wins INTEGER NOT NULL DEFAULT 0, losses INTEGER NOT NULL DEFAULT 0, draws INTEGER NOT NULL DEFAULT 0, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT uq_duel_elo_tournament_user UNIQUE (tournament_id, tg_user_id))",
         "CREATE INDEX IF NOT EXISTS ix_duel_elo_tournament_id ON duel_elo (tournament_id)",

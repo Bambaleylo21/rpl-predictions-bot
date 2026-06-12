@@ -525,6 +525,19 @@ async def get_duel_hub(session, *, tournament_id: int, tg_user_id: int) -> dict[
     elo_map = await get_duel_elo_rating_map(session, list(duel_user_ids))
 
     def _duel_item(duel: Duel, match: Match) -> dict[str, Any]:
+        is_finished = str(duel.status) == "finished"
+        challenger_current_rating = int(elo_map.get(int(duel.challenger_tg_user_id), ELO_DEFAULT_RATING))
+        opponent_current_rating = int(elo_map.get(int(duel.opponent_tg_user_id), ELO_DEFAULT_RATING))
+        challenger_rating_after = (
+            int(duel.challenger_elo_after)
+            if is_finished and duel.challenger_elo_after is not None
+            else challenger_current_rating
+        )
+        opponent_rating_after = (
+            int(duel.opponent_elo_after)
+            if is_finished and duel.opponent_elo_after is not None
+            else opponent_current_rating
+        )
         opp_id = (
             int(duel.opponent_tg_user_id)
             if int(duel.challenger_tg_user_id) == int(tg_user_id)
@@ -559,8 +572,16 @@ async def get_duel_hub(session, *, tournament_id: int, tg_user_id: int) -> dict[
             "winner_tg_user_id": int(duel.winner_tg_user_id) if duel.winner_tg_user_id is not None else None,
             "elo_delta_challenger": int(duel.elo_delta_challenger or 0),
             "elo_delta_opponent": int(duel.elo_delta_opponent or 0),
-            "challenger_rating": int(elo_map.get(int(duel.challenger_tg_user_id), ELO_DEFAULT_RATING)),
-            "opponent_rating": int(elo_map.get(int(duel.opponent_tg_user_id), ELO_DEFAULT_RATING)),
+            "challenger_rating": challenger_rating_after,
+            "opponent_rating": opponent_rating_after,
+            "challenger_rating_before": (
+                int(duel.challenger_elo_before) if duel.challenger_elo_before is not None else None
+            ),
+            "opponent_rating_before": (
+                int(duel.opponent_elo_before) if duel.opponent_elo_before is not None else None
+            ),
+            "challenger_rating_after": challenger_rating_after,
+            "opponent_rating_after": opponent_rating_after,
             "h2h_wins": int(h2h_w),
             "h2h_draws": int(h2h_d),
             "h2h_losses": int(h2h_l),
@@ -731,6 +752,10 @@ async def finalize_duels_for_match(session, match_id: int) -> list[dict[str, Any
         duel.risk_multiplier_bp = int(mult_bp)
         duel.elo_delta_challenger = int(d_ch)
         duel.elo_delta_opponent = int(d_op)
+        duel.challenger_elo_before = int(old_ch)
+        duel.opponent_elo_before = int(old_op)
+        duel.challenger_elo_after = int(ch_elo.rating)
+        duel.opponent_elo_after = int(op_elo.rating)
         duel.resolved_at = now
 
         result_events.append(

@@ -273,6 +273,10 @@ type DuelItem = {
   elo_delta_opponent: number
   challenger_rating?: number
   opponent_rating?: number
+  challenger_rating_before?: number | null
+  opponent_rating_before?: number | null
+  challenger_rating_after?: number | null
+  opponent_rating_after?: number | null
   h2h_wins?: number
   h2h_draws?: number
   h2h_losses?: number

@@ -1198,6 +1198,19 @@ async def admin_duels_current(request: web.Request) -> web.Response:
             await session.commit()
 
         def duel_item(duel: Duel, match: Match) -> dict[str, Any]:
+            is_finished = str(duel.status) == "finished"
+            challenger_current_rating = int(elo_map.get(int(duel.challenger_tg_user_id), 1000))
+            opponent_current_rating = int(elo_map.get(int(duel.opponent_tg_user_id), 1000))
+            challenger_rating_after = (
+                int(duel.challenger_elo_after)
+                if is_finished and duel.challenger_elo_after is not None
+                else challenger_current_rating
+            )
+            opponent_rating_after = (
+                int(duel.opponent_elo_after)
+                if is_finished and duel.opponent_elo_after is not None
+                else opponent_current_rating
+            )
             return {
                 "duel_id": int(duel.id),
                 "status": str(duel.status),
@@ -1226,8 +1239,16 @@ async def admin_duels_current(request: web.Request) -> web.Response:
                 "winner_tg_user_id": int(duel.winner_tg_user_id) if duel.winner_tg_user_id is not None else None,
                 "elo_delta_challenger": int(duel.elo_delta_challenger or 0),
                 "elo_delta_opponent": int(duel.elo_delta_opponent or 0),
-                "challenger_rating": int(elo_map.get(int(duel.challenger_tg_user_id), 1000)),
-                "opponent_rating": int(elo_map.get(int(duel.opponent_tg_user_id), 1000)),
+                "challenger_rating": challenger_rating_after,
+                "opponent_rating": opponent_rating_after,
+                "challenger_rating_before": (
+                    int(duel.challenger_elo_before) if duel.challenger_elo_before is not None else None
+                ),
+                "opponent_rating_before": (
+                    int(duel.opponent_elo_before) if duel.opponent_elo_before is not None else None
+                ),
+                "challenger_rating_after": challenger_rating_after,
+                "opponent_rating_after": opponent_rating_after,
             }
 
         active = [duel_item(duel, match) for duel, match in rows if str(duel.status) == "accepted"]
