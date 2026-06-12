@@ -666,10 +666,15 @@ const levelLabel = (level: 'bronze' | 'silver' | 'gold'): string => {
   return 'Уровень 3'
 }
 
-const resolveAchievementIconUrl = (key: string, title: string | undefined, earned: boolean): string | null => {
+const resolveAchievementIconUrl = (
+  key: string,
+  title: string | undefined,
+  earned: boolean,
+  revealLockedSecret = false
+): string | null => {
   const normalizedKey = normalizeAchievementKey(key)
   const isSecret = SECRET_ACHIEVEMENT_KEYS.has(normalizedKey)
-  if (isSecret && !earned) {
+  if (isSecret && !earned && !revealLockedSecret) {
     return ACHIEVEMENT_ICON_BY_KEY['secret_locked'] || null
   }
 
@@ -692,9 +697,10 @@ const resolveAchievementIconUrl = (key: string, title: string | undefined, earne
 const buildAchievementVisual = (achievement: AchievementItem): AchievementVisual => {
   const keyNorm = normalizeAchievementKey(achievement.key)
   const isSecretLocked = SECRET_ACHIEVEMENT_KEYS.has(keyNorm) && !achievement.earned
+  const revealLockedSecret = Boolean(isSecretLocked && achievement.taken_by_other)
   return {
-    iconUrl: resolveAchievementIconUrl(achievement.key, achievement.title, achievement.earned),
-    iconEmoji: isSecretLocked ? '🔒' : achievement.emoji,
+    iconUrl: resolveAchievementIconUrl(achievement.key, achievement.title, achievement.earned, revealLockedSecret),
+    iconEmoji: isSecretLocked && !revealLockedSecret ? '🔒' : achievement.emoji,
     isSecretLocked,
     displayTitle: isSecretLocked ? 'Секретная ачивка' : achievement.title,
     displayDescription: isSecretLocked
