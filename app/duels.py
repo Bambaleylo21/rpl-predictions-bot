@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import or_, select
@@ -11,6 +11,7 @@ from app.scoring import calculate_points
 ELO_DEFAULT_RATING = 1000
 ELO_K_FACTOR = 24
 GLOBAL_ELO_TOURNAMENT_CODE = "ELO_GLOBAL"
+DUEL_ACCEPT_WINDOW = timedelta(hours=3)
 
 
 async def _ensure_global_elo_tournament_id(session) -> int:
@@ -238,6 +239,8 @@ async def create_duel(
     if int(challenger_pred_home) < 0 or int(challenger_pred_away) < 0:
         raise ValueError("invalid_score")
 
+    await expire_stale_duels(session, int(tournament_id))
+
     if not await _is_joined(session, int(tournament_id), int(challenger_tg_user_id)):
         raise ValueError("challenger_not_joined")
     if not await _is_joined(session, int(tournament_id), int(opponent_tg_user_id)):
@@ -363,6 +366,49 @@ async def respond_duel(
         )
     )
     duel.status = "accepted"
+    await session.flush()
+    return duel
+
+
+async def cancel_duel(
+    session,
+    *,
+    tournament_id: int,
+    duel_id: int,
+    challenger_tg_user_id: int,
+) -> Duel:
+    await expire_stale_duels(session, int(tournament_id))
+
+    duel = (
+        await session.execute(
+            select(Duel).where(
+                Duel.id == int(duel_id),
+                Duel.tournament_id == int(tournament_id),
+            )
+        )
+    ).scalar_one_or_none()
+    if duel is None:
+        raise ValueError("duel_not_found")
+    if int(duel.challenger_tg_user_id) != int(challenger_tg_user_id):
+        raise ValueError("not_duel_challenger")
+    if str(duel.status) != "pending":
+        raise ValueError("duel_not_pending")
+
+    match = (await session.execute(select(Match).where(Match.id == int(duel.match_id)))).scalar_one_or_none()
+    if match is None:
+        raise ValueError("match_not_found")
+
+    now = datetime.utcnow()
+    if match.home_score is not None or match.away_score is not None or match.kickoff_time <= now:
+        duel.status = "expired"
+        duel.resolved_at = now
+        duel.responded_at = duel.responded_at or now
+        await session.flush()
+        raise ValueError("duel_expired")
+
+    duel.status = "cancelled"
+    duel.resolved_at = now
+    duel.responded_at = duel.responded_at or now
     await session.flush()
     return duel
 
@@ -611,7 +657,7 @@ def _elo_delta(rating_self: int, rating_other: int, score_self: float, multiplie
     return int(round(value))
 
 
-async def expire_stale_duels(session, tournament_id: int) -> int:
+async def expire_stale_duels(session, tournament_id: int) -> list[dict[str, Any]]:
     now = datetime.utcnow()
     rows = (
         await session.execute(
@@ -620,22 +666,30 @@ async def expire_stale_duels(session, tournament_id: int) -> int:
             .where(
                 Duel.tournament_id == int(tournament_id),
                 Duel.status == "pending",
-                or_(
-                    Match.kickoff_time <= now,
-                    Match.home_score.is_not(None),
-                    Match.away_score.is_not(None),
-                ),
             )
         )
     ).all()
 
-    updates = 0
-    for duel, _match in rows:
+    events: list[dict[str, Any]] = []
+    for duel, match in rows:
+        match_started_or_finished = (
+            match.kickoff_time <= now
+            or match.home_score is not None
+            or match.away_score is not None
+        )
+        created_at = duel.created_at or now
+        has_full_accept_window = match.kickoff_time - created_at >= DUEL_ACCEPT_WINDOW
+        accept_window_expired = has_full_accept_window and created_at + DUEL_ACCEPT_WINDOW <= now
+
+        if not match_started_or_finished and not accept_window_expired:
+            continue
+
         duel.status = "expired"
         duel.resolved_at = now
         duel.responded_at = duel.responded_at or now
-        updates += 1
-    return updates
+        if accept_window_expired and not match_started_or_finished:
+            events.append({"duel_id": int(duel.id)})
+    return events
 
 
 async def finalize_duels_for_match(session, match_id: int) -> list[dict[str, Any]]:

@@ -165,6 +165,68 @@ async def send_duel_declined_push(bot: Bot, session, *, duel_id: int) -> None:
         )
 
 
+async def send_duel_cancelled_push(bot: Bot, session, *, duel_id: int) -> None:
+    ctx = await _duel_context(session, int(duel_id))
+    if ctx is None:
+        return
+    duel: Duel = ctx["duel"]
+    match: Match = ctx["match"]
+    text = (
+        "❌ Вызов 1х1 отменён\n"
+        f"Матч: {match.home_team} — {match.away_team}\n"
+        f"{ctx['challenger_name']} отменил вызов."
+    )
+    if await should_send_notification(session, int(duel.opponent_tg_user_id), "duels"):
+        await _safe_send(
+            bot,
+            session,
+            chat_id=int(duel.opponent_tg_user_id),
+            text=text,
+            reply_markup=_open_duels_keyboard("Открыть 1х1", duel_id=int(duel.id)),
+        )
+
+
+async def send_duel_expired_pushes(bot: Bot, session, *, events: list[dict[str, Any]]) -> None:
+    for ev in events:
+        duel_id = int(ev.get("duel_id") or 0)
+        if duel_id <= 0:
+            continue
+        ctx = await _duel_context(session, duel_id)
+        if ctx is None:
+            continue
+        duel: Duel = ctx["duel"]
+        match: Match = ctx["match"]
+        keyboard = _open_duels_keyboard("Открыть 1х1", duel_id=int(duel.id))
+
+        challenger_text = (
+            "⌛ Вызов 1х1 истёк\n"
+            f"Матч: {match.home_team} — {match.away_team}\n"
+            "Соперник не принял вызов в течение 3 часов."
+        )
+        opponent_text = (
+            "⌛ Вызов 1х1 истёк\n"
+            f"Матч: {match.home_team} — {match.away_team}\n"
+            "Время на принятие вызова закончилось."
+        )
+
+        if await should_send_notification(session, int(duel.challenger_tg_user_id), "duels"):
+            await _safe_send(
+                bot,
+                session,
+                chat_id=int(duel.challenger_tg_user_id),
+                text=challenger_text,
+                reply_markup=keyboard,
+            )
+        if await should_send_notification(session, int(duel.opponent_tg_user_id), "duels"):
+            await _safe_send(
+                bot,
+                session,
+                chat_id=int(duel.opponent_tg_user_id),
+                text=opponent_text,
+                reply_markup=keyboard,
+            )
+
+
 async def send_duel_finished_pushes(bot: Bot, session, *, events: list[dict[str, Any]]) -> None:
     if not events:
         return

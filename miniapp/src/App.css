@@ -2633,6 +2633,38 @@ body {
   cursor: wait;
 }
 
+.duel-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.duel-cancel-btn {
+  border: 1px solid rgba(185, 154, 85, 0.46);
+  border-radius: 14px;
+  background: rgba(185, 154, 85, 0.1);
+  color: var(--text-main);
+  min-height: 40px;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+  transition:
+    transform 0.16s ease,
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.duel-cancel-btn:active {
+  transform: translateY(1px) scale(0.99);
+}
+
+.duel-cancel-btn:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
 .duel-challenge-submit-btn {
   min-width: 128px;
   padding: 8px 12px;

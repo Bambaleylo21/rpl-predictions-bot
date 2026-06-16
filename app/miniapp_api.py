@@ -22,12 +22,23 @@ from app.config import load_admin_ids, load_config
 from app.db import SessionLocal, init_db
 from app.duel_notify import (
     send_duel_accepted_push,
+    send_duel_cancelled_push,
     send_duel_declined_push,
+    send_duel_expired_pushes,
     send_duel_finished_pushes,
     send_new_duel_challenge_push,
 )
 from app.display import display_round_name
-from app.duels import create_duel, ensure_duel_elo, finalize_duels_for_match, get_duel_elo_rating_map, get_duel_hub, respond_duel
+from app.duels import (
+    cancel_duel,
+    create_duel,
+    ensure_duel_elo,
+    expire_stale_duels,
+    finalize_duels_for_match,
+    get_duel_elo_rating_map,
+    get_duel_hub,
+    respond_duel,
+)
 from app.league_table import build_active_stage_league_table
 from app.models import Duel, DuelElo, League, LeagueParticipant, LongtermPrediction, Match, Point, Prediction, Setting, Stage, Tournament, User, UserTournament
 from app.notify_prefs import get_user_notification_prefs, set_user_notification_pref, should_send_notification
@@ -4462,6 +4473,14 @@ async def duels_current(request: web.Request) -> web.Response:
                     }
                 )
 
+            expired_events = await expire_stale_duels(session, int(tournament.id))
+            if expired_events:
+                await session.commit()
+                try:
+                    await send_duel_expired_pushes(_get_notify_bot(), session, events=expired_events)
+                except Exception:
+                    logger.exception("miniapp duels_current expired notify failed")
+
             hub = await get_duel_hub(session, tournament_id=int(tournament.id), tg_user_id=int(tg_user_id))
             await session.commit()
 
@@ -4586,6 +4605,52 @@ async def duels_respond(request: web.Request) -> web.Response:
         logger.exception("miniapp duels_respond error")
         return web.json_response(
             {"ok": False, "error": "duels_respond_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
+async def duels_cancel(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = user.get("id") if isinstance(user, dict) else None
+        if not tg_user_id:
+            return web.json_response({"ok": False, "error": "user_not_found_in_init_data"}, status=400)
+
+        body = await request.json()
+        duel_id = int(body.get("duel_id") or 0)
+        if duel_id <= 0:
+            return web.json_response({"ok": False, "error": "invalid_payload"}, status=400)
+
+        async with SessionLocal() as session:
+            tournament = await _resolve_tournament(session, int(tg_user_id), requested_code=request.query.get("t"))
+            duel = await cancel_duel(
+                session,
+                tournament_id=int(tournament.id),
+                duel_id=int(duel_id),
+                challenger_tg_user_id=int(tg_user_id),
+            )
+            try:
+                await send_duel_cancelled_push(_get_notify_bot(), session, duel_id=int(duel.id))
+            except Exception:
+                logger.exception("miniapp duels_cancel notify failed")
+            await session.commit()
+
+        return web.json_response(
+            {
+                "ok": True,
+                "duel_id": int(duel.id),
+                "status": str(duel.status),
+            }
+        )
+    except ValueError as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=400)
+    except Exception as e:
+        logger.exception("miniapp duels_cancel error")
+        return web.json_response(
+            {"ok": False, "error": "duels_cancel_failed", "reason": str(e), "signature_checked": True},
             status=500,
         )
 
@@ -4831,6 +4896,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/miniapp/duels/current", duels_current)
     app.router.add_post("/api/miniapp/duels/challenge", duels_challenge)
     app.router.add_post("/api/miniapp/duels/respond", duels_respond)
+    app.router.add_post("/api/miniapp/duels/cancel", duels_cancel)
     app.router.add_get("/api/miniapp/admin/rounds", admin_rounds)
     app.router.add_get("/api/miniapp/admin/results/current", admin_results_current)
     app.router.add_get("/api/miniapp/admin/participants/current", admin_participants_current)

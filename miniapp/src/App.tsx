@@ -253,7 +253,7 @@ type LongtermResponse = {
 
 type DuelItem = {
   duel_id: number
-  status: 'pending' | 'accepted' | 'finished' | 'declined' | 'expired'
+  status: 'pending' | 'accepted' | 'finished' | 'declined' | 'expired' | 'cancelled'
   match_id: number
   home_team: string
   away_team: string
@@ -894,6 +894,12 @@ function App() {
     }
     if (key === 'match_locked' || key === 'duel_expired') {
       return 'Матч уже начался, дуэль создать или принять нельзя.'
+    }
+    if (key === 'not_duel_challenger') {
+      return 'Отменить вызов может только тот, кто его бросил.'
+    }
+    if (key === 'duel_not_pending') {
+      return 'Этот вызов уже принят, отклонён или истёк.'
     }
     if (key === 'self_duel_not_allowed') {
       return 'Нельзя бросить вызов самому себе.'
@@ -1715,6 +1721,34 @@ function App() {
     }
   }
 
+  const cancelDuel = async (duelId: number) => {
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    setDuelBusyId(duelId)
+    setDuelsNotice(null)
+    try {
+      const tParam = encodeURIComponent(selectedTournamentCode || 'RPL')
+      const res = await fetch(`${apiBase}/api/miniapp/duels/cancel?t=${tParam}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Telegram-Init-Data': initData,
+        },
+        body: JSON.stringify({ duel_id: duelId }),
+      })
+      const data = (await res.json()) as { ok?: boolean; error?: string; reason?: string; status?: string }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      setDuelsNotice('Вызов отменён.')
+      await loadDuelsCurrent(apiBase, initData, selectedTournamentCode)
+    } catch (err) {
+      setDuelsNotice(duelErrorMessage(err instanceof Error ? err.message : String(err)))
+    } finally {
+      setDuelBusyId(null)
+    }
+  }
+
   const loadAdminRounds = async (apiBase: string, initData: string, tournamentCode: string) => {
     const headers = { 'X-Telegram-Init-Data': initData }
     const tParam = encodeURIComponent(tournamentCode || 'RPL')
@@ -2312,6 +2346,7 @@ function App() {
     finished: 'Завершена',
     declined: 'Отклонена',
     expired: 'Истекла',
+    cancelled: 'Отменена',
   }
 
   const wcPlayoffTabs: Array<{ key: 4 | 5 | 6 | 7 | 8 | 9; label: string }> = [
@@ -3985,6 +4020,8 @@ function App() {
                     (duelsFilter === 'active' ? duelsData.active : duelsData.finished)!.map((d) => {
                       const isIncomingPending =
                         d.status === 'pending' && tgUserId != null && Number(d.opponent_tg_user_id) === Number(tgUserId)
+                      const isOutgoingPending =
+                        d.status === 'pending' && tgUserId != null && Number(d.challenger_tg_user_id) === Number(tgUserId)
                       const acceptScore = normalizeScore(duelAcceptInputs[d.duel_id] || '')
                       return (
                         <div
@@ -4075,6 +4112,17 @@ function App() {
                                 disabled={duelBusyId === d.duel_id}
                               >
                                 {duelBusyId === d.duel_id ? 'Принимаю...' : 'Принять вызов'}
+                              </button>
+                            </div>
+                          ) : null}
+                          {isOutgoingPending ? (
+                            <div className="duel-card-actions">
+                              <button
+                                className="duel-cancel-btn"
+                                onClick={() => cancelDuel(d.duel_id)}
+                                disabled={duelBusyId === d.duel_id}
+                              >
+                                {duelBusyId === d.duel_id ? 'Отменяю...' : 'Отменить вызов'}
                               </button>
                             </div>
                           ) : null}
