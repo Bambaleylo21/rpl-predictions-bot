@@ -65,6 +65,15 @@ type ProfileResponse = {
     taken_by_other?: boolean
     taken_by_name?: string | null
     description?: string
+    match_context?: {
+      match_id: number
+      home_team: string
+      away_team: string
+      result?: string | null
+      prediction?: string | null
+      points?: number | null
+      total_after?: number | null
+    } | null
   }>
   next_achievement?: {
     key: string
@@ -4531,6 +4540,30 @@ function App() {
               <div className="achievement-modal-description">
                 {achievementPreviewIsLockedHint ? achievementPreviewLockedHintText : achievementPreviewVisual.displayDescription}
               </div>
+              {!achievementPreviewIsLockedHint && achievementPreview.match_context ? (
+                <div className="achievement-match-context">
+                  <div className="achievement-match-label">Матч</div>
+                  <div className="achievement-match-title">
+                    {achievementPreview.match_context.home_team} {achievementPreview.match_context.result || '-:-'}{' '}
+                    {achievementPreview.match_context.away_team}
+                  </div>
+                  {achievementPreview.match_context.prediction ? (
+                    <div className="achievement-match-line">
+                      Твой прогноз: <b>{achievementPreview.match_context.prediction}</b>
+                    </div>
+                  ) : null}
+                  {achievementPreview.match_context.points != null ? (
+                    <div className="achievement-match-line">
+                      Очки за матч: <b>{achievementPreview.match_context.points}</b>
+                    </div>
+                  ) : null}
+                  {achievementPreview.match_context.total_after != null ? (
+                    <div className="achievement-match-line">
+                      После матча: <b>{achievementPreview.match_context.total_after}</b>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               {!achievementPreviewIsLockedHint && achievementPreviewGroup ? (
                 <div className="achievement-levels">
                   {achievementPreviewGroup.map((item, idx) => (

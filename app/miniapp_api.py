@@ -2152,7 +2152,14 @@ async def _build_profile_achievements(
     )
     tournament_code = str(tournament_code).strip().upper()
 
-    def _push(key: str, title: str, emoji: str, earned: bool, description: str) -> None:
+    def _push(
+        key: str,
+        title: str,
+        emoji: str,
+        earned: bool,
+        description: str,
+        match_context: dict[str, Any] | None = None,
+    ) -> None:
         achievements.append(
             {
                 "key": key,
@@ -2162,10 +2169,18 @@ async def _build_profile_achievements(
                 "taken_by_other": False,
                 "taken_by_name": None,
                 "description": description,
+                "match_context": match_context if earned else None,
             }
         )
 
-    def _push_unique(key: str, title: str, emoji: str, holders: set[int], description: str) -> None:
+    def _push_unique(
+        key: str,
+        title: str,
+        emoji: str,
+        holders: set[int],
+        description: str,
+        match_context_by_holder: dict[int, dict[str, Any]] | None = None,
+    ) -> None:
         earned = int(tg_user_id) in holders
         _push(
             key=key,
@@ -2173,6 +2188,7 @@ async def _build_profile_achievements(
             emoji=emoji,
             earned=earned,
             description=description,
+            match_context=(match_context_by_holder or {}).get(int(tg_user_id)),
         )
         if holders and not earned:
             achievements[-1]["taken_by_other"] = True
@@ -2198,7 +2214,15 @@ async def _build_profile_achievements(
 
     closed_match_rows = (
         await session.execute(
-            select(Match.id, Match.round_number, Match.home_score, Match.away_score, Match.kickoff_time)
+            select(
+                Match.id,
+                Match.round_number,
+                Match.home_team,
+                Match.away_team,
+                Match.home_score,
+                Match.away_score,
+                Match.kickoff_time,
+            )
             .where(
                 Match.tournament_id == int(tournament_id),
                 Match.is_placeholder == 0,
@@ -2212,13 +2236,16 @@ async def _build_profile_achievements(
         {
             "match_id": int(mid),
             "round_number": int(round_number or 0),
+            "home_team": str(home_team or ""),
+            "away_team": str(away_team or ""),
             "home_score": int(home_score or 0),
             "away_score": int(away_score or 0),
             "kickoff_time": kickoff_time,
         }
-        for mid, round_number, home_score, away_score, kickoff_time in closed_match_rows
+        for mid, round_number, home_team, away_team, home_score, away_score, kickoff_time in closed_match_rows
     ]
     closed_match_ids = [m["match_id"] for m in closed_matches]
+    closed_match_map = {int(m["match_id"]): m for m in closed_matches}
 
     user_point_rows = (
         await session.execute(
@@ -2230,6 +2257,41 @@ async def _build_profile_achievements(
     ).all()
     user_category_by_match = {int(mid): str(cat or "") for mid, cat, _pts in user_point_rows}
     user_points_by_match = {int(mid): int(pts or 0) for mid, _cat, pts in user_point_rows}
+
+    prediction_context_rows = (
+        await session.execute(
+            select(
+                Prediction.match_id,
+                Prediction.tg_user_id,
+                Prediction.pred_home,
+                Prediction.pred_away,
+            ).where(
+                Prediction.match_id.in_(closed_match_ids) if closed_match_ids else false(),
+            )
+        )
+    ).all()
+    prediction_by_user_match: dict[tuple[int, int], tuple[int | None, int | None]] = {
+        (int(mid), int(uid)): (
+            int(pred_home) if pred_home is not None else None,
+            int(pred_away) if pred_away is not None else None,
+        )
+        for mid, uid, pred_home, pred_away in prediction_context_rows
+        if mid is not None and uid is not None
+    }
+
+    def _match_context_for(uid: int, match_id: int, points: int | None = None) -> dict[str, Any] | None:
+        match = closed_match_map.get(int(match_id))
+        if not match:
+            return None
+        pred_home, pred_away = prediction_by_user_match.get((int(match_id), int(uid)), (None, None))
+        return {
+            "match_id": int(match_id),
+            "home_team": str(match.get("home_team") or ""),
+            "away_team": str(match.get("away_team") or ""),
+            "result": f"{int(match.get('home_score') or 0)}:{int(match.get('away_score') or 0)}",
+            "prediction": f"{pred_home}:{pred_away}" if pred_home is not None and pred_away is not None else None,
+            "points": int(points) if points is not None else int(user_points_by_match.get(int(match_id), 0)),
+        }
 
     # no_miss_tour: количество туров без пропусков.
     round_totals_rows = (
@@ -2382,7 +2444,7 @@ async def _build_profile_achievements(
     # first / last exact in tournament.
     first_exact_row = (
         await session.execute(
-            select(Prediction.tg_user_id)
+            select(Prediction.tg_user_id, Prediction.match_id, Point.points)
             .select_from(Prediction)
             .join(
                 Point,
@@ -2404,20 +2466,29 @@ async def _build_profile_achievements(
         )
     ).first()
     first_exact_holders = {int(first_exact_row[0])} if first_exact_row and first_exact_row[0] is not None else set()
+    first_exact_context_by_holder: dict[int, dict[str, Any]] = {}
+    if first_exact_row and first_exact_row[0] is not None and first_exact_row[1] is not None:
+        ctx = _match_context_for(int(first_exact_row[0]), int(first_exact_row[1]), int(first_exact_row[2] or 0))
+        if ctx:
+            first_exact_context_by_holder[int(first_exact_row[0])] = ctx
     _push_unique(
         key="first_exact_tournament",
         title="Первый точный счёт в турнире",
         emoji="🎯",
         holders=first_exact_holders,
         description="Ты первый в турнире угадал точный счёт",
+        match_context_by_holder=first_exact_context_by_holder,
     )
 
     last_exact_holders: set[int] = set()
+    first_exact_by_user: dict[int, tuple[Any, Any, int, int, int]] = {}
     if participant_ids:
         exact_rows = (
             await session.execute(
                 select(
                     Point.tg_user_id,
+                    Point.match_id,
+                    Point.points,
                     Point.created_at,
                     Prediction.created_at,
                     Prediction.id,
@@ -2442,11 +2513,16 @@ async def _build_profile_achievements(
                 )
             )
         ).all()
-        first_exact_by_user: dict[int, tuple[Any, Any, int]] = {}
-        for uid, point_created_at, pred_created_at, pred_id in exact_rows:
+        for uid, match_id, points, point_created_at, pred_created_at, pred_id in exact_rows:
             iuid = int(uid)
             if iuid not in first_exact_by_user:
-                first_exact_by_user[iuid] = (point_created_at, pred_created_at, int(pred_id or 0))
+                first_exact_by_user[iuid] = (
+                    point_created_at,
+                    pred_created_at,
+                    int(pred_id or 0),
+                    int(match_id or 0),
+                    int(points or 0),
+                )
         if all(int(uid) in first_exact_by_user for uid in participant_ids):
             latest_uid = max(
                 participant_ids,
@@ -2457,12 +2533,20 @@ async def _build_profile_achievements(
                 ),
             )
             last_exact_holders = {int(latest_uid)}
+    last_exact_context_by_holder: dict[int, dict[str, Any]] = {}
+    for holder_id in last_exact_holders:
+        holder_info = first_exact_by_user.get(int(holder_id))
+        if holder_info:
+            ctx = _match_context_for(int(holder_id), int(holder_info[3]), int(holder_info[4]))
+            if ctx:
+                last_exact_context_by_holder[int(holder_id)] = ctx
     _push_unique(
         key="last_exact_tournament",
         title="Последний точный счёт в турнире",
         emoji="🕐",
         holders=last_exact_holders,
         description="Ты последним угадал точный счёт",
+        match_context_by_holder=last_exact_context_by_holder,
     )
 
     # first_leader_after_round1: лидер(ы) таблицы после завершения 1-го тура.
@@ -2492,6 +2576,7 @@ async def _build_profile_achievements(
 
     # first_101_points: первый(е), кто достиг 100+ очков за турнир.
     first_101_holders: set[int] = set()
+    first_101_context_by_holder: dict[int, dict[str, Any]] = {}
     if participant_ids and closed_match_ids:
         all_points_rows = (
             await session.execute(
@@ -2531,6 +2616,14 @@ async def _build_profile_achievements(
                     ),
                 )
                 first_101_holders = {int(winner_uid)}
+                ctx = _match_context_for(
+                    int(winner_uid),
+                    int(mid),
+                    int(points_by_pair.get((int(mid), int(winner_uid)), 0)),
+                )
+                if ctx:
+                    ctx["total_after"] = int(cumulative.get(int(winner_uid), 0))
+                    first_101_context_by_holder[int(winner_uid)] = ctx
                 break
     _push_unique(
         key="first_101_points",
@@ -2538,6 +2631,7 @@ async def _build_profile_achievements(
         emoji="💯",
         holders=first_101_holders,
         description="Ты первым набрал 100 очков. Или 101...",
+        match_context_by_holder=first_101_context_by_holder,
     )
 
     # group_stage_winner_after_round3: лидер(ы) после завершения 3-го тура.
@@ -2573,25 +2667,32 @@ async def _build_profile_achievements(
     ]
     high_scoring_exact_rows = (
         await session.execute(
-            select(Point.tg_user_id)
+            select(Point.tg_user_id, Point.match_id, Point.points)
             .where(
                 Point.match_id.in_(high_scoring_exact_match_ids) if high_scoring_exact_match_ids else false(),
                 Point.category == "exact",
             )
-            .distinct()
+            .order_by(Point.created_at.asc(), Point.match_id.asc())
         )
     ).all()
-    high_scoring_exact_holders = {
-        int(uid)
-        for (uid,) in high_scoring_exact_rows
-        if uid is not None
-    }
+    high_scoring_exact_holders: set[int] = set()
+    high_scoring_exact_context_by_holder: dict[int, dict[str, Any]] = {}
+    for uid, match_id, points in high_scoring_exact_rows:
+        if uid is None or match_id is None:
+            continue
+        iuid = int(uid)
+        high_scoring_exact_holders.add(iuid)
+        if iuid not in high_scoring_exact_context_by_holder:
+            ctx = _match_context_for(iuid, int(match_id), int(points or 0))
+            if ctx:
+                high_scoring_exact_context_by_holder[iuid] = ctx
     _push_unique(
         key="high_scoring_exact",
         title="Мастер многомяча",
         emoji="🔥",
         holders=high_scoring_exact_holders,
         description="Угадал точный счет в матче, где было забито 4+ гола",
+        match_context_by_holder=high_scoring_exact_context_by_holder,
     )
 
     only_scorer_rows = (
@@ -2601,22 +2702,33 @@ async def _build_profile_achievements(
             )
         )
     ).all()
-    only_scorer_by_match: dict[int, list[int]] = {}
+    only_scorer_by_match: dict[int, list[tuple[int, int]]] = {}
     for mid, uid, points in only_scorer_rows:
         if int(points or 0) <= 0:
             continue
-        only_scorer_by_match.setdefault(int(mid), []).append(int(uid))
+        only_scorer_by_match.setdefault(int(mid), []).append((int(uid), int(points or 0)))
     only_scorer_holders = {
-        int(uids[0])
-        for uids in only_scorer_by_match.values()
-        if len(uids) == 1
+        int(entries[0][0])
+        for entries in only_scorer_by_match.values()
+        if len(entries) == 1
     }
+    only_scorer_context_by_holder: dict[int, dict[str, Any]] = {}
+    for match_id, entries in only_scorer_by_match.items():
+        if len(entries) != 1:
+            continue
+        holder_id, holder_points = entries[0]
+        if holder_id in only_scorer_context_by_holder:
+            continue
+        ctx = _match_context_for(holder_id, int(match_id), int(holder_points))
+        if ctx:
+            only_scorer_context_by_holder[holder_id] = ctx
     _push_unique(
         key="only_scorer_in_match",
         title="Единственный с очками",
         emoji="🧠",
         holders=only_scorer_holders,
         description="Ты набрал очки в матче, в котором остальные получили 0",
+        match_context_by_holder=only_scorer_context_by_holder,
     )
 
     # Fergie-time hit: прогноз за 5 минут до старта, который принес очки.
@@ -2624,6 +2736,7 @@ async def _build_profile_achievements(
         await session.execute(
             select(
                 Prediction.tg_user_id,
+                Prediction.match_id,
                 Prediction.created_at,
                 Prediction.updated_at,
                 Match.kickoff_time,
@@ -2646,7 +2759,8 @@ async def _build_profile_achievements(
         )
     ).all()
     fergie_time_holders: set[int] = set()
-    for uid, created_at, updated_at, kickoff_time, points in fergie_rows:
+    fergie_time_context_by_holder: dict[int, dict[str, Any]] = {}
+    for uid, match_id, created_at, updated_at, kickoff_time, points in fergie_rows:
         if int(points or 0) <= 0:
             continue
         ref_time = updated_at or created_at
@@ -2654,13 +2768,19 @@ async def _build_profile_achievements(
             continue
         delta_sec = (kickoff_time - ref_time).total_seconds()
         if 0 <= delta_sec <= 5 * 60:
-            fergie_time_holders.add(int(uid))
+            holder_id = int(uid)
+            fergie_time_holders.add(holder_id)
+            if holder_id not in fergie_time_context_by_holder:
+                ctx = _match_context_for(holder_id, int(match_id), int(points or 0))
+                if ctx:
+                    fergie_time_context_by_holder[holder_id] = ctx
     _push_unique(
         key="fergie_time_hit",
         title="Ферги тайм",
         emoji="⏱️",
         holders=fergie_time_holders,
         description="Ты сделал прогноз за 5 минут до начала матча и заработал очки",
+        match_context_by_holder=fergie_time_context_by_holder,
     )
 
     progress_meta: dict[str, Any] = {
