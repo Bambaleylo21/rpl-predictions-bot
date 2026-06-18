@@ -215,6 +215,9 @@ type TableResponse = {
 }
 type TableRow = NonNullable<TableResponse['rows']>[number]
 type TableLongtermRow = NonNullable<TableResponse['rows_longterm']>[number]
+type WcStageTab =
+  | { type: 'stage'; key: '1' | '2' | '3' | 'LT'; label: string }
+  | { type: 'playoff'; key: 4 | 5 | 6 | 7 | 8 | 9; label: string }
 
 type TournamentsResponse = {
   ok: boolean
@@ -810,6 +813,9 @@ function App() {
   const [profileTargetUserId, setProfileTargetUserId] = useState<number | null>(null)
   const [stageTab, setStageTab] = useState<'1' | '2' | '3' | 'PO' | 'LT'>('1')
   const [playoffTab, setPlayoffTab] = useState<4 | 5 | 6 | 7 | 8 | 9>(4)
+  const [matchStageAvailability, setMatchStageAvailability] = useState<
+    Record<number, { open: number; closed: number; latestClosedKickoff: string }>
+  >({})
   const [tableRoundFilter, setTableRoundFilter] = useState<'ALL' | 'LT' | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9>('ALL')
   const [tableSortKey, setTableSortKey] = useState<'total' | 'exact' | 'diff' | 'outcome' | 'missed' | 'bonus'>('total')
   const [tableSortDir, setTableSortDir] = useState<'desc' | 'asc'>('desc')
@@ -1362,6 +1368,55 @@ function App() {
       setDuelsError(String(err))
     })
   }, [selectedTournamentCode, selectedRoundNumber, tableRoundFilter, refreshTick])
+
+  useEffect(() => {
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    if (!initData || selectedTournamentCode !== 'WC2026') {
+      setMatchStageAvailability({})
+      return
+    }
+    const headers = {
+      'X-Telegram-Init-Data': initData,
+    }
+    const tParam = encodeURIComponent(selectedTournamentCode)
+    let cancelled = false
+
+    Promise.all(
+      matchStageRoundNumbers.map(async (round) => {
+        const rParam = encodeURIComponent(String(round))
+        const [openRes, closedRes] = await Promise.all([
+          fetch(`${apiBase}/api/miniapp/predict/current?t=${tParam}&round=${rParam}`, { headers }),
+          fetch(`${apiBase}/api/miniapp/predictions/current?t=${tParam}&round=${rParam}`, { headers }),
+        ])
+        const openData = (await openRes.json()) as PredictCurrentResponse
+        const closedData = (await closedRes.json()) as PredictionsResponse
+        if (!openRes.ok || !closedRes.ok) {
+          throw new Error(openData.reason || closedData.reason || openData.error || closedData.error || 'stage_availability_failed')
+        }
+        const open = (openData.items || []).filter((item) => !item.is_placeholder).length
+        const closedItems = (closedData.items || []).filter((item) => item.status === 'closed')
+        const latestClosedKickoff = closedItems.reduce((latest, item) => {
+          const kickoff = String(item.kickoff || '')
+          return kickoff > latest ? kickoff : latest
+        }, '')
+        return [round, { open, closed: closedItems.length, latestClosedKickoff }] as const
+      })
+    )
+      .then((entries) => {
+        if (cancelled) return
+        setMatchStageAvailability(Object.fromEntries(entries))
+      })
+      .catch(() => {
+        if (cancelled) return
+        // Если обзор этапов не загрузился, оставляем старое поведение и показываем все вкладки.
+        setMatchStageAvailability({})
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [selectedTournamentCode, refreshTick])
 
   const selectTournament = async (code: string) => {
     if (!code || code === selectedTournamentCode) {
@@ -2366,18 +2421,47 @@ function App() {
     { key: 8, label: 'За 3-е' },
     { key: 9, label: 'Финал' },
   ]
-  const wcStageTabsUnified: Array<
-    | { type: 'stage'; key: '1' | '2' | '3' | 'LT'; label: string }
-    | { type: 'playoff'; key: 4 | 5 | 6 | 7 | 8 | 9; label: string }
-  > = [
+  const wcStageTabsUnified: WcStageTab[] = [
     { type: 'stage', key: '1', label: 'Тур 1' },
     { type: 'stage', key: '2', label: 'Тур 2' },
     { type: 'stage', key: '3', label: 'Тур 3' },
     ...wcPlayoffTabs.map((tab) => ({ type: 'playoff' as const, key: tab.key, label: tab.label })),
     { type: 'stage', key: 'LT', label: 'Доп. прогнозы' },
   ]
-  const groupStageTabs = wcStageTabsUnified.filter((tab) => tab.type === 'stage' && tab.key !== 'LT')
-  const knockoutStageTabs = wcStageTabsUnified.filter((tab) => tab.type === 'playoff' || tab.key === 'LT')
+  const matchStageRoundNumbers = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+  const selectedMatchStageRound = stageTab === 'PO' ? playoffTab : stageTab === 'LT' ? null : Number(stageTab)
+  const getStageRound = (tab: WcStageTab) =>
+    tab.type === 'playoff' ? Number(tab.key) : tab.key === 'LT' ? null : Number(tab.key)
+  const hasStageAvailability = Object.keys(matchStageAvailability).length > 0
+  const shouldShowMatchStageTab = (tab: WcStageTab) => {
+    const round = getStageRound(tab)
+    if (round == null) return true
+    if (!hasStageAvailability) return true
+    const info = matchStageAvailability[round]
+    if (predictionsFilter === 'closed') return Boolean(info && info.closed > 0)
+    return Boolean(info && info.open > 0)
+  }
+  const selectMatchStageRound = (round: number) => {
+    if (round >= 4) {
+      setStageTab('PO')
+      setPlayoffTab(round as 4 | 5 | 6 | 7 | 8 | 9)
+      return
+    }
+    setStageTab(String(round) as '1' | '2' | '3')
+  }
+  const latestClosedStageRound = hasStageAvailability
+    ? matchStageRoundNumbers
+        .filter((round) => (matchStageAvailability[round]?.closed || 0) > 0)
+        .sort((a, b) => {
+          const byKickoff = String(matchStageAvailability[b]?.latestClosedKickoff || '').localeCompare(
+            String(matchStageAvailability[a]?.latestClosedKickoff || '')
+          )
+          return byKickoff !== 0 ? byKickoff : b - a
+        })[0]
+    : undefined
+  const visibleWcStageTabs = wcStageTabsUnified.filter(shouldShowMatchStageTab)
+  const groupStageTabs = visibleWcStageTabs.filter((tab) => tab.type === 'stage' && tab.key !== 'LT')
+  const knockoutStageTabs = visibleWcStageTabs.filter((tab) => tab.type === 'playoff' || tab.key === 'LT')
   const allowLongtermTab = showWcSelector
   const winnerSearchNorm = winnerSearch.trim().toLowerCase()
   const scorerSearchNorm = scorerSearch.trim().toLowerCase()
@@ -2402,7 +2486,13 @@ function App() {
     }
     return Object.entries(grouped)
   })()
-  const closedPredictionItems = (predictionsData?.items || []).filter((m) => m.status === 'closed')
+  const closedPredictionItems = (predictionsData?.items || [])
+    .filter((m) => m.status === 'closed')
+    .sort((a, b) => {
+      const byKickoff = String(b.kickoff || '').localeCompare(String(a.kickoff || ''))
+      if (byKickoff !== 0) return byKickoff
+      return Number(b.match_id || 0) - Number(a.match_id || 0)
+    })
   const openRealPredictionItems = predictItems.filter((m) => !m.is_placeholder)
   const openPredictionCount = openRealPredictionItems.length
   const closedPredictionCount = closedPredictionItems.length
@@ -2420,6 +2510,42 @@ function App() {
     }
     return Object.entries(grouped)
   })()
+
+  useEffect(() => {
+    if (selectedTournamentCode !== 'WC2026' || !hasStageAvailability || stageTab === 'LT') return
+    const currentRound = selectedMatchStageRound
+    if (currentRound != null) {
+      const currentInfo = matchStageAvailability[currentRound]
+      const currentIsAvailable =
+        predictionsFilter === 'closed'
+          ? Boolean(currentInfo && currentInfo.closed > 0)
+          : Boolean(currentInfo && currentInfo.open > 0)
+      if (currentIsAvailable) return
+    }
+
+    const nextRound =
+      predictionsFilter === 'closed'
+        ? matchStageRoundNumbers
+            .filter((round) => (matchStageAvailability[round]?.closed || 0) > 0)
+            .sort((a, b) => {
+              const byKickoff = String(matchStageAvailability[b]?.latestClosedKickoff || '').localeCompare(
+                String(matchStageAvailability[a]?.latestClosedKickoff || '')
+              )
+              return byKickoff !== 0 ? byKickoff : b - a
+            })[0]
+        : matchStageRoundNumbers.find((round) => (matchStageAvailability[round]?.open || 0) > 0)
+
+    if (!nextRound) return
+    selectMatchStageRound(nextRound)
+  }, [
+    hasStageAvailability,
+    matchStageAvailability,
+    predictionsFilter,
+    selectedMatchStageRound,
+    selectedTournamentCode,
+    stageTab,
+  ])
+
   useEffect(() => {
     if (stageTab === 'LT' && !allowLongtermTab) {
       setStageTab('1')
@@ -3007,7 +3133,12 @@ function App() {
                 </button>
                 <button
                   className={`match-toggle-btn ${predictionsFilter === 'closed' ? 'is-active' : ''}`}
-                  onClick={() => setPredictionsFilter('closed')}
+                  onClick={() => {
+                    setPredictionsFilter('closed')
+                    if (latestClosedStageRound) {
+                      selectMatchStageRound(latestClosedStageRound)
+                    }
+                  }}
                 >
                   Завершённые
                 </button>
