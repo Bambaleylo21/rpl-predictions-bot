@@ -4018,6 +4018,128 @@ async def predictions_current(request: web.Request) -> web.Response:
         )
 
 
+async def match_stages_current(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = user.get("id") if isinstance(user, dict) else None
+        if not tg_user_id:
+            return web.json_response({"ok": False, "error": "user_not_found_in_init_data"}, status=400)
+
+        async with SessionLocal() as session:
+            tournament = await _resolve_tournament(session, int(tg_user_id), requested_code=request.query.get("t"))
+
+            rows = (
+                await session.execute(
+                    select(
+                        Match.round_number.label("round_number"),
+                        func.count(Match.id).label("total_cnt"),
+                        func.sum(case((Match.is_placeholder == 1, 1), else_=0)).label("placeholder_cnt"),
+                        func.sum(
+                            case(
+                                (
+                                    (Match.is_placeholder == 0)
+                                    & (Match.home_score.is_not(None))
+                                    & (Match.away_score.is_not(None)),
+                                    1,
+                                ),
+                                else_=0,
+                            )
+                        ).label("closed_cnt"),
+                        func.sum(
+                            case(
+                                (
+                                    (Match.is_placeholder == 0)
+                                    & ((Match.home_score.is_(None)) | (Match.away_score.is_(None))),
+                                    1,
+                                ),
+                                else_=0,
+                            )
+                        ).label("open_cnt"),
+                        func.max(
+                            case(
+                                (
+                                    (Match.is_placeholder == 0)
+                                    & (Match.home_score.is_not(None))
+                                    & (Match.away_score.is_not(None)),
+                                    Match.kickoff_time,
+                                ),
+                                else_=None,
+                            )
+                        ).label("latest_closed_kickoff"),
+                    )
+                    .where(Match.tournament_id == int(tournament.id))
+                    .group_by(Match.round_number)
+                    .order_by(Match.round_number.asc())
+                )
+            ).all()
+
+        rows_by_round = {}
+        for row in rows:
+            round_number = int(row.round_number)
+            total = int(row.total_cnt or 0)
+            placeholders = int(row.placeholder_cnt or 0)
+            closed = int(row.closed_cnt or 0)
+            open_cnt = int(row.open_cnt or 0)
+            real_total = max(0, total - placeholders)
+            latest_closed = row.latest_closed_kickoff
+            rows_by_round[round_number] = {
+                "round": round_number,
+                "round_name": display_round_name(tournament.code, round_number),
+                "total": total,
+                "real_total": real_total,
+                "placeholders": placeholders,
+                "open": open_cnt,
+                "closed": closed,
+                "completed": bool(real_total > 0 and open_cnt == 0),
+                "latest_closed_kickoff": latest_closed.strftime("%Y-%m-%d %H:%M:%S") if latest_closed is not None else "",
+            }
+
+        code_upper = (tournament.code or "").strip().upper()
+        round_numbers = range(1, 10) if code_upper == WC_TOURNAMENT_CODE else sorted(rows_by_round.keys())
+        stages = []
+        for round_number in round_numbers:
+            stages.append(
+                rows_by_round.get(
+                    int(round_number),
+                    {
+                        "round": int(round_number),
+                        "round_name": display_round_name(tournament.code, int(round_number)),
+                        "total": 0,
+                        "real_total": 0,
+                        "placeholders": 0,
+                        "open": 0,
+                        "closed": 0,
+                        "completed": False,
+                        "latest_closed_kickoff": "",
+                    },
+                )
+            )
+
+        return web.json_response(
+            {
+                "ok": True,
+                "trusted": True,
+                "tournament_code": tournament.code,
+                "tournament": tournament.name,
+                "stages": stages,
+            }
+        )
+    except Exception as e:
+        logger.exception("miniapp match_stages_current error")
+        return web.json_response(
+            {
+                "ok": False,
+                "error": "match_stages_failed",
+                "reason": str(e),
+                "signature_checked": True,
+            },
+            status=500,
+        )
+
+
 def _now_msk_naive() -> datetime:
     return datetime.now(MSK_TZ).replace(tzinfo=None)
 
@@ -5009,6 +5131,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/miniapp/profile", profile)
     app.router.add_get("/api/miniapp/predictions/current", predictions_current)
     app.router.add_get("/api/miniapp/table/current", table_current)
+    app.router.add_get("/api/miniapp/matches/stages", match_stages_current)
     app.router.add_get("/api/miniapp/predict/current", predict_current)
     app.router.add_post("/api/miniapp/predict/set", predict_set)
     app.router.add_get("/api/miniapp/longterm/current", longterm_current)

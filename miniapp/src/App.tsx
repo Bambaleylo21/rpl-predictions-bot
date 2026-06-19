@@ -218,6 +218,29 @@ type TableLongtermRow = NonNullable<TableResponse['rows_longterm']>[number]
 type WcStageTab =
   | { type: 'stage'; key: '1' | '2' | '3' | 'LT'; label: string }
   | { type: 'playoff'; key: 4 | 5 | 6 | 7 | 8 | 9; label: string }
+const MATCH_STAGE_ROUND_NUMBERS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const
+
+type MatchStageAvailability = {
+  round: number
+  round_name?: string
+  total: number
+  real_total: number
+  placeholders: number
+  open: number
+  closed: number
+  completed: boolean
+  latest_closed_kickoff: string
+}
+
+type MatchStagesResponse = {
+  ok: boolean
+  error?: string
+  reason?: string
+  trusted?: boolean
+  tournament_code?: string
+  tournament?: string
+  stages?: MatchStageAvailability[]
+}
 
 type TournamentsResponse = {
   ok: boolean
@@ -813,9 +836,8 @@ function App() {
   const [profileTargetUserId, setProfileTargetUserId] = useState<number | null>(null)
   const [stageTab, setStageTab] = useState<'1' | '2' | '3' | 'PO' | 'LT'>('1')
   const [playoffTab, setPlayoffTab] = useState<4 | 5 | 6 | 7 | 8 | 9>(4)
-  const [matchStageAvailability, setMatchStageAvailability] = useState<
-    Record<number, { open: number; closed: number; latestClosedKickoff: string }>
-  >({})
+  const [matchStageAvailability, setMatchStageAvailability] = useState<Record<number, MatchStageAvailability>>({})
+  const [matchStageAvailabilityReady, setMatchStageAvailabilityReady] = useState<boolean>(false)
   const [tableRoundFilter, setTableRoundFilter] = useState<'ALL' | 'LT' | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9>('ALL')
   const [tableSortKey, setTableSortKey] = useState<'total' | 'exact' | 'diff' | 'outcome' | 'missed' | 'bonus'>('total')
   const [tableSortDir, setTableSortDir] = useState<'desc' | 'asc'>('desc')
@@ -1374,6 +1396,7 @@ function App() {
     const initData = getInitData()
     if (!initData || selectedTournamentCode !== 'WC2026') {
       setMatchStageAvailability({})
+      setMatchStageAvailabilityReady(true)
       return
     }
     const headers = {
@@ -1381,36 +1404,29 @@ function App() {
     }
     const tParam = encodeURIComponent(selectedTournamentCode)
     let cancelled = false
+    setMatchStageAvailabilityReady(false)
 
-    Promise.all(
-      matchStageRoundNumbers.map(async (round) => {
-        const rParam = encodeURIComponent(String(round))
-        const [openRes, closedRes] = await Promise.all([
-          fetch(`${apiBase}/api/miniapp/predict/current?t=${tParam}&round=${rParam}`, { headers }),
-          fetch(`${apiBase}/api/miniapp/predictions/current?t=${tParam}&round=${rParam}`, { headers }),
-        ])
-        const openData = (await openRes.json()) as PredictCurrentResponse
-        const closedData = (await closedRes.json()) as PredictionsResponse
-        if (!openRes.ok || !closedRes.ok) {
-          throw new Error(openData.reason || closedData.reason || openData.error || closedData.error || 'stage_availability_failed')
+    fetch(`${apiBase}/api/miniapp/matches/stages?t=${tParam}`, { headers })
+      .then(async (res) => {
+        const data = (await res.json()) as MatchStagesResponse
+        if (!res.ok || !data.ok) {
+          throw new Error(data.reason || data.error || 'match_stages_failed')
         }
-        const open = (openData.items || []).filter((item) => !item.is_placeholder).length
-        const closedItems = (closedData.items || []).filter((item) => item.status === 'closed')
-        const latestClosedKickoff = closedItems.reduce((latest, item) => {
-          const kickoff = String(item.kickoff || '')
-          return kickoff > latest ? kickoff : latest
-        }, '')
-        return [round, { open, closed: closedItems.length, latestClosedKickoff }] as const
+        return data
       })
-    )
-      .then((entries) => {
+      .then((data) => {
         if (cancelled) return
-        setMatchStageAvailability(Object.fromEntries(entries))
+        const nextAvailability = Object.fromEntries(
+          (data.stages || []).map((stage) => [Number(stage.round), stage])
+        ) as Record<number, MatchStageAvailability>
+        setMatchStageAvailability(nextAvailability)
+        setMatchStageAvailabilityReady(true)
       })
       .catch(() => {
         if (cancelled) return
         // Если обзор этапов не загрузился, оставляем старое поведение и показываем все вкладки.
         setMatchStageAvailability({})
+        setMatchStageAvailabilityReady(true)
       })
 
     return () => {
@@ -2428,7 +2444,6 @@ function App() {
     ...wcPlayoffTabs.map((tab) => ({ type: 'playoff' as const, key: tab.key, label: tab.label })),
     { type: 'stage', key: 'LT', label: 'Доп. прогнозы' },
   ]
-  const matchStageRoundNumbers = [1, 2, 3, 4, 5, 6, 7, 8, 9]
   const selectedMatchStageRound = stageTab === 'PO' ? playoffTab : stageTab === 'LT' ? null : Number(stageTab)
   const getStageRound = (tab: WcStageTab) =>
     tab.type === 'playoff' ? Number(tab.key) : tab.key === 'LT' ? null : Number(tab.key)
@@ -2439,7 +2454,7 @@ function App() {
     if (!hasStageAvailability) return true
     const info = matchStageAvailability[round]
     if (predictionsFilter === 'closed') return Boolean(info && info.closed > 0)
-    return Boolean(info && info.open > 0)
+    return !info?.completed
   }
   const selectMatchStageRound = (round: number) => {
     if (round >= 4) {
@@ -2450,11 +2465,11 @@ function App() {
     setStageTab(String(round) as '1' | '2' | '3')
   }
   const latestClosedStageRound = hasStageAvailability
-    ? matchStageRoundNumbers
+    ? MATCH_STAGE_ROUND_NUMBERS
         .filter((round) => (matchStageAvailability[round]?.closed || 0) > 0)
         .sort((a, b) => {
-          const byKickoff = String(matchStageAvailability[b]?.latestClosedKickoff || '').localeCompare(
-            String(matchStageAvailability[a]?.latestClosedKickoff || '')
+          const byKickoff = String(matchStageAvailability[b]?.latest_closed_kickoff || '').localeCompare(
+            String(matchStageAvailability[a]?.latest_closed_kickoff || '')
           )
           return byKickoff !== 0 ? byKickoff : b - a
         })[0]
@@ -2462,6 +2477,7 @@ function App() {
   const visibleWcStageTabs = wcStageTabsUnified.filter(shouldShowMatchStageTab)
   const groupStageTabs = visibleWcStageTabs.filter((tab) => tab.type === 'stage' && tab.key !== 'LT')
   const knockoutStageTabs = visibleWcStageTabs.filter((tab) => tab.type === 'playoff' || tab.key === 'LT')
+  const matchStagesLoading = selectedTournamentCode === 'WC2026' && !matchStageAvailabilityReady
   const allowLongtermTab = showWcSelector
   const winnerSearchNorm = winnerSearch.trim().toLowerCase()
   const scorerSearchNorm = scorerSearch.trim().toLowerCase()
@@ -2512,34 +2528,35 @@ function App() {
   })()
 
   useEffect(() => {
-    if (selectedTournamentCode !== 'WC2026' || !hasStageAvailability || stageTab === 'LT') return
+    if (selectedTournamentCode !== 'WC2026' || !matchStageAvailabilityReady || !hasStageAvailability || stageTab === 'LT') return
     const currentRound = selectedMatchStageRound
     if (currentRound != null) {
       const currentInfo = matchStageAvailability[currentRound]
       const currentIsAvailable =
         predictionsFilter === 'closed'
           ? Boolean(currentInfo && currentInfo.closed > 0)
-          : Boolean(currentInfo && currentInfo.open > 0)
+          : !currentInfo?.completed
       if (currentIsAvailable) return
     }
 
     const nextRound =
       predictionsFilter === 'closed'
-        ? matchStageRoundNumbers
+        ? MATCH_STAGE_ROUND_NUMBERS
             .filter((round) => (matchStageAvailability[round]?.closed || 0) > 0)
             .sort((a, b) => {
-              const byKickoff = String(matchStageAvailability[b]?.latestClosedKickoff || '').localeCompare(
-                String(matchStageAvailability[a]?.latestClosedKickoff || '')
+              const byKickoff = String(matchStageAvailability[b]?.latest_closed_kickoff || '').localeCompare(
+                String(matchStageAvailability[a]?.latest_closed_kickoff || '')
               )
               return byKickoff !== 0 ? byKickoff : b - a
             })[0]
-        : matchStageRoundNumbers.find((round) => (matchStageAvailability[round]?.open || 0) > 0)
+        : MATCH_STAGE_ROUND_NUMBERS.find((round) => !matchStageAvailability[round]?.completed)
 
     if (!nextRound) return
     selectMatchStageRound(nextRound)
   }, [
     hasStageAvailability,
     matchStageAvailability,
+    matchStageAvailabilityReady,
     predictionsFilter,
     selectedMatchStageRound,
     selectedTournamentCode,
@@ -3211,36 +3228,42 @@ function App() {
                 <div className="card card-static segment-card">
                   <div className="card-title">Этап турнира</div>
                   <div className="segment-hint">Нажми, чтобы выбрать этап</div>
-                  <div className="tournament-stage-stack">
-                    {[groupStageTabs, knockoutStageTabs].map((tabs, rowIdx) => (
-                      <div className="tournament-row tournament-row-unified" key={`stage-row-${rowIdx}`}>
-                        {tabs.map((tab) => {
-                          const isActive =
-                            tab.type === 'playoff'
-                              ? stageTab === 'PO' && playoffTab === tab.key
-                              : stageTab === tab.key
-                          return (
-                            <button
-                              key={`${tab.type}-${tab.key}`}
-                              className={`tournament-chip ${tab.type === 'playoff' ? 'is-playoff' : ''} ${
-                                tab.type === 'stage' && tab.key === 'LT' ? 'is-longterm' : ''
-                              } ${isActive ? 'is-active' : ''}`}
-                              onClick={() => {
-                                if (tab.type === 'playoff') {
-                                  setStageTab('PO')
-                                  setPlayoffTab(tab.key)
-                                  return
-                                }
-                                setStageTab(tab.key)
-                              }}
-                            >
-                              {tab.label}
-                            </button>
-                          )
-                        })}
-                      </div>
-                    ))}
-                  </div>
+                  {matchStagesLoading ? (
+                    <div className="tournament-stage-loading" aria-live="polite">
+                      Загружаю этапы турнира…
+                    </div>
+                  ) : (
+                    <div className="tournament-stage-stack">
+                      {[groupStageTabs, knockoutStageTabs].map((tabs, rowIdx) => (
+                        <div className="tournament-row tournament-row-unified" key={`stage-row-${rowIdx}`}>
+                          {tabs.map((tab) => {
+                            const isActive =
+                              tab.type === 'playoff'
+                                ? stageTab === 'PO' && playoffTab === tab.key
+                                : stageTab === tab.key
+                            return (
+                              <button
+                                key={`${tab.type}-${tab.key}`}
+                                className={`tournament-chip ${tab.type === 'playoff' ? 'is-playoff' : ''} ${
+                                  tab.type === 'stage' && tab.key === 'LT' ? 'is-longterm' : ''
+                                } ${isActive ? 'is-active' : ''}`}
+                                onClick={() => {
+                                  if (tab.type === 'playoff') {
+                                    setStageTab('PO')
+                                    setPlayoffTab(tab.key)
+                                    return
+                                  }
+                                  setStageTab(tab.key)
+                                }}
+                              >
+                                {tab.label}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </section>
             ) : null}
