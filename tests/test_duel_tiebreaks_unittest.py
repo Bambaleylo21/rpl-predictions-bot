@@ -1,6 +1,11 @@
 import unittest
 
-from app.duels import duel_outcome_by_prediction_quality
+from app.duels import (
+    _elo_delta,
+    combined_elo_multiplier_bp,
+    duel_outcome_by_prediction_quality,
+    duel_quality_multiplier_bp,
+)
 
 
 class DuelTiebreaksTest(unittest.TestCase):
@@ -78,6 +83,35 @@ class DuelTiebreaksTest(unittest.TestCase):
 
         self.assertEqual(outcome, "draw")
         self.assertEqual((challenger_score, opponent_score), (0.5, 0.5))
+
+    def test_exact_score_win_has_stronger_quality_multiplier(self):
+        exact_win = duel_quality_multiplier_bp("challenger_win", 4, 0)
+        diff_win = duel_quality_multiplier_bp("challenger_win", 2, 0)
+        outcome_win = duel_quality_multiplier_bp("challenger_win", 1, 0)
+
+        self.assertGreater(exact_win, diff_win)
+        self.assertGreater(diff_win, outcome_win)
+
+    def test_closeness_win_has_minimal_quality_multiplier(self):
+        self.assertEqual(duel_quality_multiplier_bp("challenger_win", 1, 1), 50)
+
+    def test_combined_multiplier_keeps_risk_and_quality(self):
+        self.assertEqual(combined_elo_multiplier_bp(140, 125), 175)
+        self.assertEqual(combined_elo_multiplier_bp(100, 50), 50)
+
+    def test_quality_multiplier_changes_elo_delta_size(self):
+        base_delta = _elo_delta(1000, 1000, 1.0, combined_elo_multiplier_bp(100, 100))
+        exact_delta = _elo_delta(1000, 1000, 1.0, combined_elo_multiplier_bp(100, 125))
+        closeness_delta = _elo_delta(1000, 1000, 1.0, combined_elo_multiplier_bp(100, 50))
+
+        self.assertGreater(exact_delta, base_delta)
+        self.assertLess(closeness_delta, base_delta)
+
+    def test_rating_gap_still_changes_elo_delta_size(self):
+        underdog_win = _elo_delta(900, 1100, 1.0, combined_elo_multiplier_bp(100, 100))
+        favorite_win = _elo_delta(1100, 900, 1.0, combined_elo_multiplier_bp(100, 100))
+
+        self.assertGreater(underdog_win, favorite_win)
 
 
 if __name__ == "__main__":

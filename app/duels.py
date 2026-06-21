@@ -115,6 +115,37 @@ def duel_outcome_by_prediction_quality(
     return "draw", 0.5, 0.5
 
 
+def duel_quality_multiplier_bp(outcome: str, challenger_points: int, opponent_points: int) -> int:
+    """
+    Quality multiplier in basis points:
+    - exact-score win: 125
+    - diff win: 100
+    - outcome-only win: 85
+    - win by closeness tiebreak: 50
+    - draw: 100
+    """
+    if str(outcome) == "draw":
+        return 100
+
+    ch_pts = int(challenger_points)
+    op_pts = int(opponent_points)
+    if ch_pts == op_pts:
+        return 50
+
+    winner_points = max(ch_pts, op_pts)
+    if winner_points >= 4:
+        return 125
+    if winner_points == 2:
+        return 100
+    if winner_points == 1:
+        return 85
+    return 50
+
+
+def combined_elo_multiplier_bp(risk_multiplier_bp_value: int, quality_multiplier_bp_value: int) -> int:
+    return int(round((int(risk_multiplier_bp_value) * int(quality_multiplier_bp_value)) / 100.0))
+
+
 async def ensure_duel_elo(session, tournament_id: int, tg_user_id: int) -> DuelElo:
     """
     Global cross-tournament Elo:
@@ -824,6 +855,8 @@ async def finalize_duels_for_match(session, match_id: int) -> list[dict[str, Any
             int(duel.opponent_pred_home),
             int(duel.opponent_pred_away),
         )
+        quality_mult_bp = duel_quality_multiplier_bp(outcome, ch_pts, op_pts)
+        elo_mult_bp = combined_elo_multiplier_bp(mult_bp, quality_mult_bp)
 
         ch_elo = await ensure_duel_elo(session, int(duel.tournament_id), int(duel.challenger_tg_user_id))
         op_elo = await ensure_duel_elo(session, int(duel.tournament_id), int(duel.opponent_tg_user_id))
@@ -831,8 +864,8 @@ async def finalize_duels_for_match(session, match_id: int) -> list[dict[str, Any
         old_ch = int(ch_elo.rating)
         old_op = int(op_elo.rating)
 
-        d_ch = _elo_delta(old_ch, old_op, s_ch, mult_bp)
-        d_op = _elo_delta(old_op, old_ch, s_op, mult_bp)
+        d_ch = _elo_delta(old_ch, old_op, s_ch, elo_mult_bp)
+        d_op = _elo_delta(old_op, old_ch, s_op, elo_mult_bp)
 
         # keep symmetric in integer space
         if (d_ch + d_op) != 0:
