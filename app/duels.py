@@ -64,6 +64,57 @@ def risk_multiplier_bp(challenger_home: int, challenger_away: int, opponent_home
     return 140
 
 
+def score_distance(pred_home: int, pred_away: int, real_home: int, real_away: int) -> int:
+    return abs(int(pred_home) - int(real_home)) + abs(int(pred_away) - int(real_away))
+
+
+def diff_distance(pred_home: int, pred_away: int, real_home: int, real_away: int) -> int:
+    pred_diff = int(pred_home) - int(pred_away)
+    real_diff = int(real_home) - int(real_away)
+    return abs(pred_diff - real_diff)
+
+
+def duel_outcome_by_prediction_quality(
+    *,
+    challenger_points: int,
+    opponent_points: int,
+    challenger_pred_home: int,
+    challenger_pred_away: int,
+    opponent_pred_home: int,
+    opponent_pred_away: int,
+    real_home: int,
+    real_away: int,
+) -> tuple[str, float, float]:
+    """
+    Duel result:
+    1) regular prediction points,
+    2) closeness to the real score,
+    3) closeness to the real goal difference.
+    """
+    ch_pts = int(challenger_points)
+    op_pts = int(opponent_points)
+    if ch_pts > op_pts:
+        return "challenger_win", 1.0, 0.0
+    if op_pts > ch_pts:
+        return "opponent_win", 0.0, 1.0
+
+    ch_score_error = score_distance(challenger_pred_home, challenger_pred_away, real_home, real_away)
+    op_score_error = score_distance(opponent_pred_home, opponent_pred_away, real_home, real_away)
+    if ch_score_error < op_score_error:
+        return "challenger_win", 1.0, 0.0
+    if op_score_error < ch_score_error:
+        return "opponent_win", 0.0, 1.0
+
+    ch_diff_error = diff_distance(challenger_pred_home, challenger_pred_away, real_home, real_away)
+    op_diff_error = diff_distance(opponent_pred_home, opponent_pred_away, real_home, real_away)
+    if ch_diff_error < op_diff_error:
+        return "challenger_win", 1.0, 0.0
+    if op_diff_error < ch_diff_error:
+        return "opponent_win", 0.0, 1.0
+
+    return "draw", 0.5, 0.5
+
+
 async def ensure_duel_elo(session, tournament_id: int, tg_user_id: int) -> DuelElo:
     """
     Global cross-tournament Elo:
@@ -750,17 +801,21 @@ async def finalize_duels_for_match(session, match_id: int) -> list[dict[str, Any
 
         ch_pts = int(challenger_calc.points)
         op_pts = int(opponent_calc.points)
-        if ch_pts > op_pts:
-            outcome = "challenger_win"
-            s_ch, s_op = 1.0, 0.0
+        outcome, s_ch, s_op = duel_outcome_by_prediction_quality(
+            challenger_points=ch_pts,
+            opponent_points=op_pts,
+            challenger_pred_home=int(duel.challenger_pred_home),
+            challenger_pred_away=int(duel.challenger_pred_away),
+            opponent_pred_home=int(duel.opponent_pred_home),
+            opponent_pred_away=int(duel.opponent_pred_away),
+            real_home=int(match.home_score),
+            real_away=int(match.away_score),
+        )
+        if outcome == "challenger_win":
             winner_id = int(duel.challenger_tg_user_id)
-        elif op_pts > ch_pts:
-            outcome = "opponent_win"
-            s_ch, s_op = 0.0, 1.0
+        elif outcome == "opponent_win":
             winner_id = int(duel.opponent_tg_user_id)
         else:
-            outcome = "draw"
-            s_ch, s_op = 0.5, 0.5
             winner_id = None
 
         mult_bp = risk_multiplier_bp(
