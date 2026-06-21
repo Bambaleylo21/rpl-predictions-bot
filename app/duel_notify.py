@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+from html import escape
 from typing import Any
 from urllib.parse import urlencode
 
@@ -9,7 +10,7 @@ from aiogram import Bot, types
 from sqlalchemy import select
 
 from app.audience import is_blocked_send_error, mark_user_blocked
-from app.duels import get_duel_elo_rating_map
+from app.duels import diff_distance, get_duel_elo_rating_map, score_distance
 from app.models import Duel, Match, UserTournament
 from app.notify_prefs import should_send_notification
 
@@ -48,14 +49,85 @@ async def _safe_send(
     chat_id: int,
     text: str,
     reply_markup: types.InlineKeyboardMarkup | None = None,
+    parse_mode: str | None = None,
 ) -> None:
     try:
-        await bot.send_message(chat_id=int(chat_id), text=text, reply_markup=reply_markup)
+        await bot.send_message(chat_id=int(chat_id), text=text, reply_markup=reply_markup, parse_mode=parse_mode)
     except Exception as exc:
         if is_blocked_send_error(exc):
             await mark_user_blocked(session, int(chat_id))
         else:
             logger.warning("duel notify send failed for %s: %s", chat_id, exc)
+
+
+def _html(value: Any) -> str:
+    return escape(str(value), quote=False)
+
+
+def _duel_result_line(
+    *,
+    outcome: str,
+    challenger_name: str,
+    opponent_name: str,
+    challenger_points: int,
+    opponent_points: int,
+    challenger_pred_home: int,
+    challenger_pred_away: int,
+    opponent_pred_home: int,
+    opponent_pred_away: int,
+    real_home: int,
+    real_away: int,
+) -> str:
+    if str(outcome) == "draw":
+        return "🤝 Ничья. Прогнозы одинаково близки"
+
+    challenger_won = str(outcome) == "challenger_win"
+    winner_name = challenger_name if challenger_won else opponent_name
+    winner_points = int(challenger_points if challenger_won else opponent_points)
+
+    if int(challenger_points) != int(opponent_points):
+        if winner_points >= 4:
+            return f"🎯 {_html(winner_name)} победил точным счётом"
+        if winner_points == 2:
+            return f"📏 {_html(winner_name)} победил по разнице"
+        if winner_points == 1:
+            return f"✅ {_html(winner_name)} победил по исходу"
+
+    ch_score_error = score_distance(challenger_pred_home, challenger_pred_away, real_home, real_away)
+    op_score_error = score_distance(opponent_pred_home, opponent_pred_away, real_home, real_away)
+    if ch_score_error != op_score_error:
+        return f"🔎 {_html(winner_name)} победил по близости к счёту"
+
+    ch_diff_error = diff_distance(challenger_pred_home, challenger_pred_away, real_home, real_away)
+    op_diff_error = diff_distance(opponent_pred_home, opponent_pred_away, real_home, real_away)
+    if ch_diff_error != op_diff_error:
+        return f"📐 {_html(winner_name)} победил по близости к разнице"
+
+    return f"🔎 {_html(winner_name)} победил по близости"
+
+
+def _h2h_counts_for_user(h2h_rows: list[Any], recipient_tg_user_id: int) -> tuple[int, int, int]:
+    wins = 0
+    draws = 0
+    losses = 0
+    recipient_id = int(recipient_tg_user_id)
+    for row_ch_id, row_op_id, row_outcome in h2h_rows:
+        row_ch_id = int(row_ch_id)
+        row_op_id = int(row_op_id)
+        row_outcome = str(row_outcome or "")
+        if row_outcome == "draw":
+            draws += 1
+        elif row_outcome == "challenger_win":
+            if row_ch_id == recipient_id:
+                wins += 1
+            elif row_op_id == recipient_id:
+                losses += 1
+        elif row_outcome == "opponent_win":
+            if row_op_id == recipient_id:
+                wins += 1
+            elif row_ch_id == recipient_id:
+                losses += 1
+    return wins, draws, losses
 
 
 async def _duel_context(session, duel_id: int) -> dict[str, Any] | None:
@@ -258,12 +330,27 @@ async def send_duel_finished_pushes(bot: Bot, session, *, events: list[dict[str,
         op_emoji = "📈" if op_d > 0 else ("📉" if op_d < 0 else "")
 
         outcome = str(ev.get("outcome") or "")
-        if outcome == "challenger_win":
-            middle = f"{challenger_name} победил {opponent_name}"
-        elif outcome == "opponent_win":
-            middle = f"{opponent_name} победил {challenger_name}"
-        else:
-            middle = f"{challenger_name} и {opponent_name} сыграли вничью"
+        ch_pts = int(ev.get("challenger_points") or 0)
+        op_pts = int(ev.get("opponent_points") or 0)
+        match_home_score = int(match.home_score)
+        match_away_score = int(match.away_score)
+        ch_pred_home = int(duel.challenger_pred_home)
+        ch_pred_away = int(duel.challenger_pred_away)
+        op_pred_home = int(duel.opponent_pred_home or 0)
+        op_pred_away = int(duel.opponent_pred_away or 0)
+        result_line = _duel_result_line(
+            outcome=outcome,
+            challenger_name=challenger_name,
+            opponent_name=opponent_name,
+            challenger_points=ch_pts,
+            opponent_points=op_pts,
+            challenger_pred_home=ch_pred_home,
+            challenger_pred_away=ch_pred_away,
+            opponent_pred_home=op_pred_home,
+            opponent_pred_away=op_pred_away,
+            real_home=match_home_score,
+            real_away=match_away_score,
+        )
 
         pair_low = min(int(duel.challenger_tg_user_id), int(duel.opponent_tg_user_id))
         pair_high = max(int(duel.challenger_tg_user_id), int(duel.opponent_tg_user_id))
@@ -277,51 +364,37 @@ async def send_duel_finished_pushes(bot: Bot, session, *, events: list[dict[str,
                 )
             )
         ).all()
-        h2h_w = 0
-        h2h_d = 0
-        h2h_l = 0
-        challenger_id = int(duel.challenger_tg_user_id)
-        for row_ch_id, row_op_id, row_outcome in h2h_rows:
-            row_ch_id = int(row_ch_id)
-            row_op_id = int(row_op_id)
-            row_outcome = str(row_outcome or "")
-            if row_outcome == "draw":
-                h2h_d += 1
-            elif row_outcome == "challenger_win":
-                if row_ch_id == challenger_id:
-                    h2h_w += 1
-                elif row_op_id == challenger_id:
-                    h2h_l += 1
-            elif row_outcome == "opponent_win":
-                if row_op_id == challenger_id:
-                    h2h_w += 1
-                elif row_ch_id == challenger_id:
-                    h2h_l += 1
-
-        text = (
-            "🏁 Дуэль завершилась!\n"
-            f"Матч: {match.home_team} {int(match.home_score)}:{int(match.away_score)} {match.away_team}\n"
-            f"Итог: {middle}\n\n"
-            "Рейтинг:\n"
-            f"{challenger_name}: {ch_old} → {ch_new}" + (f" {ch_emoji}" if ch_emoji else "") + f" ({ch_delta_text})\n"
-            f"{opponent_name}: {op_old} → {op_new}" + (f" {op_emoji}" if op_emoji else "") + f" ({op_delta_text})\n\n"
-            f"{challenger_name} {h2h_w}-{h2h_d}-{h2h_l} {opponent_name}"
-        )
         kb = _open_duels_keyboard("Смотреть 1х1", duel_id=int(duel.id))
+
+        def message_for(recipient_tg_user_id: int) -> str:
+            h2h_w, h2h_d, h2h_l = _h2h_counts_for_user(h2h_rows, int(recipient_tg_user_id))
+            return (
+                "🏁 Дуэль завершилась!\n\n"
+                f"<b>{_html(match.home_team)} {match_home_score}:{match_away_score} {_html(match.away_team)}</b>\n"
+                "Прогнозы: "
+                f"{_html(challenger_name)} {ch_pred_home}:{ch_pred_away} · "
+                f"{_html(opponent_name)} {op_pred_home}:{op_pred_away}\n\n"
+                f"{result_line}\n\n"
+                f"{ch_emoji or '•'} {_html(challenger_name)}: {ch_old} → {ch_new} ({ch_delta_text})\n"
+                f"{op_emoji or '•'} {_html(opponent_name)}: {op_old} → {op_new} ({op_delta_text})\n\n"
+                f"Личные встречи: {h2h_w}-{h2h_d}-{h2h_l}"
+            )
 
         if await should_send_notification(session, int(duel.challenger_tg_user_id), "duels"):
             await _safe_send(
                 bot,
                 session,
                 chat_id=int(duel.challenger_tg_user_id),
-                text=text,
+                text=message_for(int(duel.challenger_tg_user_id)),
                 reply_markup=kb,
+                parse_mode="HTML",
             )
         if await should_send_notification(session, int(duel.opponent_tg_user_id), "duels"):
             await _safe_send(
                 bot,
                 session,
                 chat_id=int(duel.opponent_tg_user_id),
-                text=text,
+                text=message_for(int(duel.opponent_tg_user_id)),
                 reply_markup=kb,
+                parse_mode="HTML",
             )
