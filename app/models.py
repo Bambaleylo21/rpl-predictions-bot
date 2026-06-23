@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Integer, String, UniqueConstraint, ForeignKey, func
+from sqlalchemy import BigInteger, DateTime, Index, Integer, String, UniqueConstraint, ForeignKey, func, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -364,7 +364,15 @@ class Duel(Base):
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     __table_args__ = (
-        UniqueConstraint("match_id", "pair_low_tg_user_id", "pair_high_tg_user_id", name="uq_duels_match_pair"),
+        Index(
+            "uq_duels_match_pair_live",
+            "match_id",
+            "pair_low_tg_user_id",
+            "pair_high_tg_user_id",
+            unique=True,
+            postgresql_where=text("status IN ('pending', 'accepted', 'finished')"),
+            sqlite_where=text("status IN ('pending', 'accepted', 'finished')"),
+        ),
     )
 
 
