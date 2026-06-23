@@ -4,6 +4,7 @@ import asyncio
 import os
 import random
 import re
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from aiogram import Dispatcher, F, types
 from aiogram.filters import Command
@@ -16,7 +17,7 @@ from app.config import load_admin_ids
 from app.db import SessionLocal
 from app.display import display_round_name, display_team_name, display_tournament_name
 from app.duel_notify import send_duel_finished_pushes
-from app.duels import finalize_duels_for_match
+from app.duels import finalize_duels_for_match, get_duel_elo_rating_map
 from app.miniapp_api import send_new_achievement_pushes
 from app.models import (
     Duel,
@@ -1565,6 +1566,433 @@ async def admin_stage_moves(message: types.Message):
     await message.answer("\n".join(lines))
 
 
+def _admin_duel_fmt_count_lines(counter: Counter[int], name_map: dict[int, str], *, limit: int = 5) -> list[str]:
+    if not counter:
+        return ["—"]
+    rows = sorted(counter.items(), key=lambda item: (-int(item[1]), name_map.get(int(item[0]), str(item[0])).lower()))
+    return [f"{idx}. {name_map.get(int(uid), str(uid))}: {int(value)}" for idx, (uid, value) in enumerate(rows[:limit], start=1)]
+
+
+def _admin_duel_fmt_duration(delta: timedelta | None) -> str:
+    if delta is None:
+        return "—"
+    total = max(0, int(delta.total_seconds()))
+    hours, rem = divmod(total, 3600)
+    minutes, seconds = divmod(rem, 60)
+    if hours:
+        return f"{hours}ч {minutes}м"
+    if minutes:
+        return f"{minutes}м {seconds}с"
+    return f"{seconds}с"
+
+
+def _admin_duel_outcome_for_user(duel: Duel, user_id: int) -> str:
+    if duel.winner_tg_user_id is None:
+        return "D"
+    return "W" if int(duel.winner_tg_user_id) == int(user_id) else "L"
+
+
+def _admin_duel_best_streak(outcomes: list[str], accepted: set[str]) -> int:
+    best = 0
+    current = 0
+    for item in outcomes:
+        if item in accepted:
+            current += 1
+            best = max(best, current)
+        else:
+            current = 0
+    return best
+
+
+async def _admin_duel_name_map(session, user_ids: set[int], tournament_id: int | None = None) -> dict[int, str]:
+    if not user_ids:
+        return {}
+
+    tournament_names: dict[int, str] = {}
+    ut_query = select(UserTournament.tg_user_id, UserTournament.display_name).where(UserTournament.tg_user_id.in_(user_ids))
+    if tournament_id is not None:
+        ut_query = ut_query.where(UserTournament.tournament_id == int(tournament_id))
+    for uid_raw, display_name_raw in (await session.execute(ut_query)).all():
+        uid = int(uid_raw)
+        display_name = str(display_name_raw or "").strip()
+        if display_name and uid not in tournament_names:
+            tournament_names[uid] = display_name
+
+    users_q = await session.execute(
+        select(User.tg_user_id, User.display_name, User.username, User.full_name).where(User.tg_user_id.in_(user_ids))
+    )
+    out: dict[int, str] = {}
+    for uid_raw, display_name_raw, username_raw, full_name_raw in users_q.all():
+        uid = int(uid_raw)
+        out[uid] = _format_person_name(
+            uid,
+            tournament_names.get(uid),
+            str(display_name_raw or "").strip() or None,
+            str(username_raw or "").strip() or None,
+            str(full_name_raw or "").strip() or None,
+        )
+    for uid in user_ids:
+        out.setdefault(int(uid), tournament_names.get(int(uid), str(int(uid))))
+    return out
+
+
+async def admin_duel_digest(message: types.Message):
+    """/admin_duel_digest [CODE] — личная админ-сводка по 1х1 для публикации в чат."""
+    if not _is_admin(message):
+        await message.answer("⛔️ У вас нет прав на эту команду.")
+        return
+
+    raw = (message.text or "").strip()
+    payload = raw.split(maxsplit=1)[1].strip() if " " in raw else ""
+    code = payload.upper() if payload and payload.upper() not in {"ALL", "ВСЕ"} else ""
+
+    async with SessionLocal() as session:
+        tournament: Tournament | None = None
+        tournament_id: int | None = None
+        if code:
+            tournament = (await session.execute(select(Tournament).where(Tournament.code == code))).scalar_one_or_none()
+            if tournament is None:
+                await message.answer(f"Турнир {code} не найден.")
+                return
+            tournament_id = int(tournament.id)
+
+        duel_query = select(Duel).order_by(Duel.created_at.asc(), Duel.id.asc())
+        if tournament_id is not None:
+            duel_query = duel_query.where(Duel.tournament_id == int(tournament_id))
+        duels = (await session.execute(duel_query)).scalars().all()
+        if not duels:
+            scope = display_tournament_name(tournament.code, tournament.name) if tournament is not None else "всем турнирам"
+            await message.answer(f"По {scope} пока нет дуэлей 1х1.")
+            return
+
+        user_ids: set[int] = set()
+        for duel in duels:
+            user_ids.add(int(duel.challenger_tg_user_id))
+            user_ids.add(int(duel.opponent_tg_user_id))
+
+        if tournament_id is not None:
+            members_q = await session.execute(
+                select(UserTournament.tg_user_id).where(UserTournament.tournament_id == int(tournament_id))
+            )
+            user_ids |= {int(row[0]) for row in members_q.all()}
+
+        name_map = await _admin_duel_name_map(session, user_ids, tournament_id)
+        rating_map = await get_duel_elo_rating_map(session, list(user_ids))
+
+    finished = [duel for duel in duels if str(duel.status) == "finished"]
+    pending = [duel for duel in duels if str(duel.status) == "pending"]
+    accepted = [duel for duel in duels if str(duel.status) == "accepted"]
+    declined = [duel for duel in duels if str(duel.status) == "declined"]
+    cancelled = [duel for duel in duels if str(duel.status) == "cancelled"]
+    expired = [duel for duel in duels if str(duel.status) == "expired"]
+
+    created_counter: Counter[int] = Counter()
+    received_counter: Counter[int] = Counter()
+    accepted_counter: Counter[int] = Counter()
+    declined_counter: Counter[int] = Counter()
+    cancelled_counter: Counter[int] = Counter()
+    expired_counter: Counter[int] = Counter()
+    finished_counter: Counter[int] = Counter()
+    wins_counter: Counter[int] = Counter()
+    draws_counter: Counter[int] = Counter()
+    losses_counter: Counter[int] = Counter()
+    rating_delta_counter: Counter[int] = Counter()
+    outcomes_by_user: dict[int, list[str]] = defaultdict(list)
+
+    for duel in duels:
+        created_counter[int(duel.challenger_tg_user_id)] += 1
+        received_counter[int(duel.opponent_tg_user_id)] += 1
+        if str(duel.status) in {"accepted", "finished"}:
+            accepted_counter[int(duel.opponent_tg_user_id)] += 1
+        elif str(duel.status) == "declined":
+            declined_counter[int(duel.opponent_tg_user_id)] += 1
+        elif str(duel.status) == "cancelled":
+            cancelled_counter[int(duel.challenger_tg_user_id)] += 1
+        elif str(duel.status) == "expired":
+            expired_counter[int(duel.opponent_tg_user_id)] += 1
+
+    pair_stats: dict[tuple[int, int], dict[str, object]] = {}
+    positive_deltas: list[tuple[int, int, int]] = []
+    negative_deltas: list[tuple[int, int, int]] = []
+    accept_durations: list[tuple[int, int, timedelta]] = []
+
+    for duel in sorted(finished, key=lambda item: (item.resolved_at or item.created_at, item.id)):
+        ch_id = int(duel.challenger_tg_user_id)
+        op_id = int(duel.opponent_tg_user_id)
+        finished_counter[ch_id] += 1
+        finished_counter[op_id] += 1
+
+        ch_delta = int(duel.elo_delta_challenger or 0)
+        op_delta = int(duel.elo_delta_opponent or 0)
+        rating_delta_counter[ch_id] += ch_delta
+        rating_delta_counter[op_id] += op_delta
+        if ch_delta > 0:
+            positive_deltas.append((ch_id, op_id, ch_delta))
+        if op_delta > 0:
+            positive_deltas.append((op_id, ch_id, op_delta))
+        if ch_delta < 0:
+            negative_deltas.append((ch_id, op_id, ch_delta))
+        if op_delta < 0:
+            negative_deltas.append((op_id, ch_id, op_delta))
+
+        if duel.responded_at is not None and duel.created_at is not None:
+            accept_durations.append((op_id, ch_id, duel.responded_at - duel.created_at))
+
+        if duel.winner_tg_user_id is None:
+            draws_counter[ch_id] += 1
+            draws_counter[op_id] += 1
+        elif int(duel.winner_tg_user_id) == ch_id:
+            wins_counter[ch_id] += 1
+            losses_counter[op_id] += 1
+        else:
+            wins_counter[op_id] += 1
+            losses_counter[ch_id] += 1
+
+        outcomes_by_user[ch_id].append(_admin_duel_outcome_for_user(duel, ch_id))
+        outcomes_by_user[op_id].append(_admin_duel_outcome_for_user(duel, op_id))
+
+        pair_key = tuple(sorted((ch_id, op_id)))
+        if pair_key not in pair_stats:
+            pair_stats[pair_key] = {"total": 0, "draws": 0, "wins": Counter()}
+        pair_stats[pair_key]["total"] = int(pair_stats[pair_key]["total"]) + 1
+        if duel.winner_tg_user_id is None:
+            pair_stats[pair_key]["draws"] = int(pair_stats[pair_key]["draws"]) + 1
+        else:
+            wins = pair_stats[pair_key]["wins"]
+            if isinstance(wins, Counter):
+                wins[int(duel.winner_tg_user_id)] += 1
+
+    sorted_ratings = sorted(user_ids, key=lambda uid: (-int(rating_map.get(uid, 1000)), name_map.get(uid, str(uid)).lower()))
+    sorted_finished_counts = sorted(
+        [(uid, finished_counter.get(uid, 0)) for uid in user_ids if finished_counter.get(uid, 0) > 0],
+        key=lambda item: (-int(item[1]), name_map.get(int(item[0]), str(item[0])).lower()),
+    )
+    least_finished_counts = sorted(
+        [(uid, finished_counter.get(uid, 0)) for uid in user_ids if finished_counter.get(uid, 0) > 0],
+        key=lambda item: (int(item[1]), name_map.get(int(item[0]), str(item[0])).lower()),
+    )
+    no_finished_count = sum(1 for uid in user_ids if finished_counter.get(uid, 0) == 0)
+
+    def _pair_line(pair_key: tuple[int, int], stats: dict[str, object]) -> str:
+        a, b = pair_key
+        wins = stats.get("wins")
+        wins_counter_pair = wins if isinstance(wins, Counter) else Counter()
+        draws = int(stats.get("draws", 0))
+        return (
+            f"{name_map.get(a, str(a))} vs {name_map.get(b, str(b))}: "
+            f"{int(stats.get('total', 0))} битв · {wins_counter_pair.get(a, 0)}-{draws}-{wins_counter_pair.get(b, 0)}"
+        )
+
+    frequent_pairs = sorted(pair_stats.items(), key=lambda item: (-int(item[1].get("total", 0)), _pair_line(item[0], item[1]).lower()))
+    equal_pairs = sorted(
+        [(pair, stats) for pair, stats in pair_stats.items() if int(stats.get("total", 0)) >= 2],
+        key=lambda item: (
+            abs(
+                (item[1].get("wins") if isinstance(item[1].get("wins"), Counter) else Counter()).get(item[0][0], 0)
+                - (item[1].get("wins") if isinstance(item[1].get("wins"), Counter) else Counter()).get(item[0][1], 0)
+            ),
+            -int(item[1].get("draws", 0)),
+            -int(item[1].get("total", 0)),
+        ),
+    )
+    one_sided_pairs = sorted(
+        [(pair, stats) for pair, stats in pair_stats.items() if int(stats.get("total", 0)) >= 2],
+        key=lambda item: (
+            -abs(
+                (item[1].get("wins") if isinstance(item[1].get("wins"), Counter) else Counter()).get(item[0][0], 0)
+                - (item[1].get("wins") if isinstance(item[1].get("wins"), Counter) else Counter()).get(item[0][1], 0)
+            ),
+            -int(item[1].get("total", 0)),
+        ),
+    )
+
+    never_beat_lines: list[str] = []
+    nemesis_counter: Counter[tuple[int, int]] = Counter()
+    for pair, stats in pair_stats.items():
+        if int(stats.get("total", 0)) < 2:
+            continue
+        wins = stats.get("wins") if isinstance(stats.get("wins"), Counter) else Counter()
+        a, b = pair
+        if wins.get(a, 0) == 0 and wins.get(b, 0) > 0:
+            never_beat_lines.append(f"{name_map.get(a, str(a))} ещё не побеждал {name_map.get(b, str(b))}")
+            nemesis_counter[(a, b)] = int(wins.get(b, 0))
+        if wins.get(b, 0) == 0 and wins.get(a, 0) > 0:
+            never_beat_lines.append(f"{name_map.get(b, str(b))} ещё не побеждал {name_map.get(a, str(a))}")
+            nemesis_counter[(b, a)] = int(wins.get(a, 0))
+    nemesis_lines = [
+        f"{name_map.get(victim, str(victim))} неудобен {name_map.get(killer, str(killer))}: {count} пораж."
+        for (victim, killer), count in sorted(nemesis_counter.items(), key=lambda item: (-item[1], name_map.get(item[0][0], str(item[0][0])).lower()))[:5]
+    ]
+
+    current_streaks: list[tuple[int, str, int]] = []
+    best_win_streaks: Counter[int] = Counter()
+    best_unbeaten_streaks: Counter[int] = Counter()
+    best_loss_streaks: Counter[int] = Counter()
+    best_draw_streaks: Counter[int] = Counter()
+    for uid, outcomes in outcomes_by_user.items():
+        if not outcomes:
+            continue
+        last = outcomes[-1]
+        streak_len = 0
+        for item in reversed(outcomes):
+            if item != last:
+                break
+            streak_len += 1
+        current_streaks.append((uid, last, streak_len))
+        best_win_streaks[uid] = _admin_duel_best_streak(outcomes, {"W"})
+        best_unbeaten_streaks[uid] = _admin_duel_best_streak(outcomes, {"W", "D"})
+        best_loss_streaks[uid] = _admin_duel_best_streak(outcomes, {"L"})
+        best_draw_streaks[uid] = _admin_duel_best_streak(outcomes, {"D"})
+
+    current_streaks.sort(key=lambda item: (-int(item[2]), item[1], name_map.get(int(item[0]), str(item[0])).lower()))
+    positive_deltas.sort(key=lambda item: (-int(item[2]), name_map.get(int(item[0]), str(item[0])).lower()))
+    negative_deltas.sort(key=lambda item: (int(item[2]), name_map.get(int(item[0]), str(item[0])).lower()))
+    accept_durations.sort(key=lambda item: item[2])
+    avg_accept_duration = (
+        timedelta(seconds=sum(int(item[2].total_seconds()) for item in accept_durations) // len(accept_durations))
+        if accept_durations
+        else None
+    )
+
+    scope_title = (
+        display_tournament_name(tournament.code, tournament.name)
+        if tournament is not None
+        else "все турниры"
+    )
+    most_finished_lines = [
+        f"{idx}. {name_map.get(uid, str(uid))}: {count}"
+        for idx, (uid, count) in enumerate(sorted_finished_counts[:5], start=1)
+    ] or ["—"]
+    least_finished_lines = [
+        f"{idx}. {name_map.get(uid, str(uid))}: {count}"
+        for idx, (uid, count) in enumerate(least_finished_counts[:5], start=1)
+    ] or ["—"]
+    rating_growth_lines = [
+        f"{idx}. {name_map.get(uid, str(uid))}: +{delta}"
+        for idx, (uid, delta) in enumerate(
+            sorted(
+                [(uid, delta) for uid, delta in rating_delta_counter.items() if delta > 0],
+                key=lambda item: (-int(item[1]), name_map.get(int(item[0]), str(item[0])).lower()),
+            )[:5],
+            start=1,
+        )
+    ] or ["—"]
+    rating_fall_lines = [
+        f"{idx}. {name_map.get(uid, str(uid))}: {delta}"
+        for idx, (uid, delta) in enumerate(
+            sorted(
+                [(uid, delta) for uid, delta in rating_delta_counter.items() if delta < 0],
+                key=lambda item: (int(item[1]), name_map.get(int(item[0]), str(item[0])).lower()),
+            )[:5],
+            start=1,
+        )
+    ] or ["—"]
+    positive_delta_lines = [
+        f"{name_map.get(uid, str(uid))}: +{delta} против {name_map.get(opp_id, str(opp_id))}"
+        for uid, opp_id, delta in positive_deltas[:3]
+    ] or ["—"]
+    negative_delta_lines = [
+        f"{name_map.get(uid, str(uid))}: {delta} против {name_map.get(opp_id, str(opp_id))}"
+        for uid, opp_id, delta in negative_deltas[:3]
+    ] or ["—"]
+    current_streak_lines = [
+        f"{name_map.get(uid, str(uid))}: {kind} x{length}"
+        for uid, kind, length in current_streaks[:5]
+    ] or ["—"]
+    lines: list[str] = [
+        f"⚔️ Сводка 1х1: {scope_title}",
+        f"Всего вызовов: {len(duels)} · завершено {len(finished)} · активно {len(pending) + len(accepted)}",
+        f"Отклонено {len(declined)} · отменено {len(cancelled)} · истекло {len(expired)}",
+        "",
+        "Активность",
+        "Больше всего завершённых дуэлей:",
+        *most_finished_lines,
+        "Меньше всего завершённых дуэлей среди игравших:",
+        *least_finished_lines,
+        f"Без завершённых дуэлей: {no_finished_count}",
+        "Чаще бросают вызовы:",
+        *_admin_duel_fmt_count_lines(created_counter, name_map),
+        "Чаще получают вызовы:",
+        *_admin_duel_fmt_count_lines(received_counter, name_map),
+        "",
+        "Соперничества",
+        "Самые частые пары:",
+        *([_pair_line(pair, stats) for pair, stats in frequent_pairs[:5]] or ["—"]),
+        "Самые равные пары:",
+        *([_pair_line(pair, stats) for pair, stats in equal_pairs[:3]] or ["—"]),
+        "Самые односторонние пары:",
+        *([_pair_line(pair, stats) for pair, stats in one_sided_pairs[:3]] or ["—"]),
+        "Неудобные соперники:",
+        *(nemesis_lines or ["—"]),
+        "Кто кого ещё не побеждал:",
+        *(never_beat_lines[:5] or ["—"]),
+        "",
+        "Рейтинг и динамика",
+        "Текущий Elo:",
+        *[
+            f"{idx}. {name_map.get(uid, str(uid))}: {int(rating_map.get(uid, 1000))}"
+            for idx, uid in enumerate(sorted_ratings[:10], start=1)
+        ],
+        "Лучший рост Elo за период:",
+        *rating_growth_lines,
+        "Самое большое падение Elo за период:",
+        *rating_fall_lines,
+        "Самая дорогая победа/плюс:",
+        *positive_delta_lines,
+        "Самый болезненный минус:",
+        *negative_delta_lines,
+        "",
+        "Серии",
+        "Текущие серии:",
+        *current_streak_lines,
+        "Лучшая серия побед:",
+        *_admin_duel_fmt_count_lines(Counter({uid: value for uid, value in best_win_streaks.items() if value > 0}), name_map),
+        "Лучшая серия без поражений:",
+        *_admin_duel_fmt_count_lines(Counter({uid: value for uid, value in best_unbeaten_streaks.items() if value > 0}), name_map),
+        "Самая длинная серия поражений:",
+        *_admin_duel_fmt_count_lines(Counter({uid: value for uid, value in best_loss_streaks.items() if value > 0}), name_map),
+        "Самая длинная серия ничьих:",
+        *_admin_duel_fmt_count_lines(Counter({uid: value for uid, value in best_draw_streaks.items() if value > 0}), name_map),
+        "",
+        "Поведение с вызовами",
+        "Чаще принимают:",
+        *_admin_duel_fmt_count_lines(accepted_counter, name_map),
+        "Чаще отклоняют:",
+        *_admin_duel_fmt_count_lines(declined_counter, name_map),
+        "Чаще отменяют свои вызовы:",
+        *_admin_duel_fmt_count_lines(cancelled_counter, name_map),
+        "Чаще не успевают принять:",
+        *_admin_duel_fmt_count_lines(expired_counter, name_map),
+        f"Среднее время принятия: {_admin_duel_fmt_duration(avg_accept_duration)}",
+    ]
+
+    if accept_durations:
+        fastest = accept_durations[0]
+        slowest = accept_durations[-1]
+        lines.extend(
+            [
+                f"Самое быстрое принятие: {name_map.get(fastest[0], str(fastest[0]))} за {_admin_duel_fmt_duration(fastest[2])}",
+                f"Самое долгое принятие: {name_map.get(slowest[0], str(slowest[0]))} за {_admin_duel_fmt_duration(slowest[2])}",
+            ]
+        )
+
+    text = "\n".join(lines)
+    chunks: list[str] = []
+    current = ""
+    for line in text.splitlines():
+        candidate = f"{current}\n{line}" if current else line
+        if len(candidate) > 3800:
+            chunks.append(current)
+            current = line
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+
+    for chunk in chunks:
+        await message.answer(chunk)
+
+
 def register_admin_handlers(dp: Dispatcher) -> None:
     dp.message.register(admin_panel, Command("admin_panel"))
     dp.message.register(admin_status, Command("admin_status"))
@@ -1589,6 +2017,7 @@ def register_admin_handlers(dp: Dispatcher) -> None:
     dp.message.register(admin_tournament_open, Command("admin_tournament_open"))
     dp.message.register(admin_tournament_close, Command("admin_tournament_close"))
     dp.message.register(admin_test_reminder, Command("admin_test_reminder"))
+    dp.message.register(admin_duel_digest, Command("admin_duel_digest"))
     dp.message.register(admin_health, Command("admin_health"))
 
     # Новое: управление окном турнира и удаление участников
