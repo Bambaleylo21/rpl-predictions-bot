@@ -1649,20 +1649,21 @@ async def admin_duel_digest(message: types.Message):
     async with SessionLocal() as session:
         tournament: Tournament | None = None
         tournament_id: int | None = None
+        scope_title = "все турниры"
         if code:
             tournament = (await session.execute(select(Tournament).where(Tournament.code == code))).scalar_one_or_none()
             if tournament is None:
                 await message.answer(f"Турнир {code} не найден.")
                 return
             tournament_id = int(tournament.id)
+            scope_title = display_tournament_name(tournament.name)
 
         duel_query = select(Duel).order_by(Duel.created_at.asc(), Duel.id.asc())
         if tournament_id is not None:
             duel_query = duel_query.where(Duel.tournament_id == int(tournament_id))
         duels = (await session.execute(duel_query)).scalars().all()
         if not duels:
-            scope = display_tournament_name(tournament.code, tournament.name) if tournament is not None else "всем турнирам"
-            await message.answer(f"По {scope} пока нет дуэлей 1х1.")
+            await message.answer(f"По {scope_title} пока нет дуэлей 1х1.")
             return
 
         user_ids: set[int] = set()
@@ -1854,11 +1855,6 @@ async def admin_duel_digest(message: types.Message):
         else None
     )
 
-    scope_title = (
-        display_tournament_name(tournament.code, tournament.name)
-        if tournament is not None
-        else "все турниры"
-    )
     most_finished_lines = [
         f"{idx}. {name_map.get(uid, str(uid))}: {count}"
         for idx, (uid, count) in enumerate(sorted_finished_counts[:5], start=1)
