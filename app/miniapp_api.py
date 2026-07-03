@@ -4418,6 +4418,120 @@ async def predict_current(request: web.Request) -> web.Response:
         )
 
 
+async def match_predictions_current(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = user.get("id") if isinstance(user, dict) else None
+        if not tg_user_id:
+            return web.json_response({"ok": False, "error": "user_not_found_in_init_data"}, status=400)
+
+        match_id_raw = (request.query.get("match_id") or "").strip()
+        match_id = int(match_id_raw) if match_id_raw.isdigit() else 0
+        if match_id <= 0:
+            return web.json_response({"ok": False, "error": "invalid_match_id"}, status=400)
+
+        now = _now_msk_naive()
+
+        async with SessionLocal() as session:
+            tournament = await _resolve_tournament(session, int(tg_user_id), requested_code=request.query.get("t"))
+            in_tournament = (
+                await session.execute(
+                    select(UserTournament.id).where(
+                        UserTournament.tg_user_id == int(tg_user_id),
+                        UserTournament.tournament_id == int(tournament.id),
+                    )
+                )
+            ).first() is not None
+            if not in_tournament:
+                return web.json_response({"ok": False, "error": "user_not_joined_tournament"}, status=403)
+
+            match = (
+                await session.execute(
+                    select(Match).where(
+                        Match.id == int(match_id),
+                        Match.tournament_id == int(tournament.id),
+                        Match.is_placeholder == 0,
+                    )
+                )
+            ).scalar_one_or_none()
+            if match is None:
+                return web.json_response({"ok": False, "error": "match_not_found"}, status=404)
+            if match.kickoff_time > now:
+                return web.json_response({"ok": False, "error": "match_not_started"}, status=403)
+
+            rows = (
+                await session.execute(
+                    select(
+                        UserTournament.tg_user_id,
+                        UserTournament.display_name,
+                        User.display_name.label("user_display_name"),
+                        User.username,
+                        User.full_name,
+                        Prediction.pred_home,
+                        Prediction.pred_away,
+                    )
+                    .select_from(UserTournament)
+                    .outerjoin(User, User.tg_user_id == UserTournament.tg_user_id)
+                    .outerjoin(
+                        Prediction,
+                        (Prediction.tg_user_id == UserTournament.tg_user_id)
+                        & (Prediction.match_id == int(match.id)),
+                    )
+                    .where(UserTournament.tournament_id == int(tournament.id))
+                    .order_by(UserTournament.created_at.asc(), UserTournament.id.asc())
+                )
+            ).all()
+
+            items: list[dict[str, Any]] = []
+            for uid, tournament_display_name, user_display_name, username, full_name, pred_home, pred_away in rows:
+                name = (
+                    tournament_display_name
+                    or user_display_name
+                    or (f"@{username}" if username else None)
+                    or full_name
+                    or f"ID {int(uid)}"
+                )
+                prediction = f"{int(pred_home)}:{int(pred_away)}" if pred_home is not None and pred_away is not None else None
+                items.append(
+                    {
+                        "tg_user_id": int(uid),
+                        "name": str(name),
+                        "prediction": prediction,
+                        "is_me": int(uid) == int(tg_user_id),
+                    }
+                )
+
+            return web.json_response(
+                {
+                    "ok": True,
+                    "trusted": True,
+                    "tournament_code": tournament.code,
+                    "tournament": tournament.name,
+                    "match_id": int(match.id),
+                    "home_team": match.home_team,
+                    "away_team": match.away_team,
+                    "group_label": match.group_label,
+                    "kickoff": match.kickoff_time.strftime("%d.%m %H:%M"),
+                    "status": "closed" if match.home_score is not None and match.away_score is not None else "live",
+                    "items": items,
+                }
+            )
+    except Exception as e:
+        logger.exception("miniapp match_predictions_current error")
+        return web.json_response(
+            {
+                "ok": False,
+                "error": "match_predictions_failed",
+                "reason": str(e),
+                "signature_checked": True,
+            },
+            status=500,
+        )
+
+
 async def predict_set(request: web.Request) -> web.Response:
     try:
         auth_result = _extract_verified_user(request)
@@ -5133,6 +5247,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/miniapp/table/current", table_current)
     app.router.add_get("/api/miniapp/matches/stages", match_stages_current)
     app.router.add_get("/api/miniapp/predict/current", predict_current)
+    app.router.add_get("/api/miniapp/match/predictions", match_predictions_current)
     app.router.add_post("/api/miniapp/predict/set", predict_set)
     app.router.add_get("/api/miniapp/longterm/current", longterm_current)
     app.router.add_post("/api/miniapp/longterm/set", longterm_set)

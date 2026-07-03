@@ -175,6 +175,27 @@ type PredictCurrentResponse = {
   }>
 }
 
+type MatchPredictionsResponse = {
+  ok: boolean
+  error?: string
+  reason?: string
+  trusted?: boolean
+  tournament_code?: string
+  tournament?: string
+  match_id?: number
+  home_team?: string
+  away_team?: string
+  group_label?: string | null
+  kickoff?: string
+  status?: 'live' | 'closed'
+  items?: Array<{
+    tg_user_id: number
+    name: string
+    prediction: string | null
+    is_me?: boolean
+  }>
+}
+
 type TableResponse = {
   ok: boolean
   error?: string
@@ -817,6 +838,9 @@ function App() {
   const [savingMatchId, setSavingMatchId] = useState<number | null>(null)
   const [savingAllPredictions, setSavingAllPredictions] = useState<boolean>(false)
   const [predictNotice, setPredictNotice] = useState<string | null>(null)
+  const [matchPredictionsSheet, setMatchPredictionsSheet] = useState<MatchPredictionsResponse | null>(null)
+  const [matchPredictionsLoadingId, setMatchPredictionsLoadingId] = useState<number | null>(null)
+  const [matchPredictionsError, setMatchPredictionsError] = useState<string | null>(null)
   const [tableData, setTableData] = useState<TableResponse | null>(null)
   const [tableError, setTableError] = useState<string | null>(null)
   const [longtermData, setLongtermData] = useState<LongtermResponse | null>(null)
@@ -1622,6 +1646,34 @@ function App() {
       setPredictNotice('Не удалось сохранить все прогнозы. Проверь счета и попробуй ещё раз.')
     } finally {
       setSavingAllPredictions(false)
+    }
+  }
+
+  const openMatchPredictions = async (matchId: number) => {
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    if (!initData) return
+    const tParam = encodeURIComponent(selectedTournamentCode || 'RPL')
+    setMatchPredictionsLoadingId(matchId)
+    setMatchPredictionsError(null)
+    try {
+      const res = await fetch(
+        `${apiBase}/api/miniapp/match/predictions?t=${tParam}&match_id=${encodeURIComponent(String(matchId))}`,
+        {
+          headers: {
+            'X-Telegram-Init-Data': initData,
+          },
+        }
+      )
+      const data = (await res.json()) as MatchPredictionsResponse
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      setMatchPredictionsSheet(data)
+    } catch (_err) {
+      setMatchPredictionsError('Не удалось загрузить прогнозы матча. Попробуй ещё раз.')
+    } finally {
+      setMatchPredictionsLoadingId(null)
     }
   }
 
@@ -3482,7 +3534,12 @@ function App() {
               </>
             ) : (
               <>
-                {(predictError || predictionsError || predictNotice || (!predictData || !predictionsData) || (predictData?.joined === false)) ? (
+                {(predictError ||
+                  predictionsError ||
+                  predictNotice ||
+                  matchPredictionsError ||
+                  (!predictData || !predictionsData) ||
+                  (predictData?.joined === false)) ? (
                   <section className="cards">
                     <div className="card">
                       <div className="card-text">
@@ -3506,6 +3563,12 @@ function App() {
                           <>
                             <br />
                             {predictNotice}
+                          </>
+                        ) : null}
+                        {matchPredictionsError ? (
+                          <>
+                            <br />
+                            {matchPredictionsError}
                           </>
                         ) : null}
                       </div>
@@ -3600,13 +3663,27 @@ function App() {
                                               : 'Сохранить'}
                                         </button>
                                       </div>
-                                      {crowdText(m) ? (
+                                      {crowdText(m) || isLocked ? (
                                         <div className="match-card-bottom">
-                                          <span className="community-triplet">
-                                            {crowdPercentParts(m).map((part, index) => (
-                                              <span key={`${m.match_id}-crowd-${index}`}>{part}</span>
-                                            ))}
-                                          </span>
+                                          {crowdText(m) ? (
+                                            <span className="community-triplet">
+                                              {crowdPercentParts(m).map((part, index) => (
+                                                <span key={`${m.match_id}-crowd-${index}`}>{part}</span>
+                                              ))}
+                                            </span>
+                                          ) : (
+                                            <span />
+                                          )}
+                                          {isLocked ? (
+                                            <button
+                                              type="button"
+                                              className="match-predictions-btn"
+                                              onClick={() => openMatchPredictions(m.match_id)}
+                                              disabled={matchPredictionsLoadingId === m.match_id}
+                                            >
+                                              {matchPredictionsLoadingId === m.match_id ? '...' : 'Прогнозы'}
+                                            </button>
+                                          ) : null}
                                         </div>
                                       ) : null}
                                     </>
@@ -4785,6 +4862,48 @@ function App() {
                 })}
               </div>
               {notifError && showDebugPanels ? <div className="notif-modal-error">Debug: {notifError}</div> : null}
+            </div>
+          </div>
+        ) : null}
+
+        {matchPredictionsSheet ? (
+          <div className="match-predictions-sheet-overlay" onClick={() => setMatchPredictionsSheet(null)}>
+            <div className="match-predictions-sheet" onClick={(ev) => ev.stopPropagation()}>
+              <div className="match-predictions-sheet-head">
+                <div>
+                  <div className="match-predictions-title">Прогнозы участников</div>
+                  <div className="match-predictions-subtitle">
+                    {teamWithFlag(matchPredictionsSheet.home_team || '')} — {teamWithFlag(matchPredictionsSheet.away_team || '')}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="match-predictions-close"
+                  onClick={() => setMatchPredictionsSheet(null)}
+                  aria-label="Закрыть прогнозы матча"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="match-predictions-note">Открыто после старта матча. Прогнозы уже нельзя изменить.</div>
+              <div className="match-predictions-list">
+                {(matchPredictionsSheet.items || []).length ? (
+                  (matchPredictionsSheet.items || []).map((row) => (
+                    <div
+                      className={`match-prediction-row ${row.is_me ? 'is-me' : ''} ${row.prediction ? '' : 'is-missed'}`}
+                      key={`match-prediction-${matchPredictionsSheet.match_id}-${row.tg_user_id}`}
+                    >
+                      <div className="match-prediction-name-line">
+                        <span className="match-prediction-name">{row.name}</span>
+                        {row.is_me ? <span className="match-prediction-me-badge">ты</span> : null}
+                      </div>
+                      <div className="match-prediction-score">{row.prediction || '—'}</div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="match-predictions-empty">Прогнозов пока нет.</div>
+                )}
+              </div>
             </div>
           </div>
         ) : null}
