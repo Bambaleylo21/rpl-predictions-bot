@@ -3159,13 +3159,13 @@ body {
 }
 
 .match-predictions-sheet.is-closed .match-prediction-row {
-  grid-template-columns: minmax(0, 1fr) 42px 48px;
-  gap: 7px;
+  grid-template-columns: 26px minmax(0, 1fr) 38px 42px;
+  gap: 6px;
   border: 0;
   border-bottom: 1px solid rgba(230, 230, 230, 0.12);
   border-radius: 0;
   background: transparent;
-  padding: 6px 1px;
+  padding: 6px 0;
 }
 
 .match-prediction-row + .match-prediction-row {
@@ -3187,6 +3187,28 @@ body {
 
 .match-prediction-row.is-missed {
   opacity: 0.68;
+}
+
+.match-prediction-position {
+  justify-self: start;
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1;
+  min-width: 24px;
+  white-space: nowrap;
+}
+
+.match-prediction-position.is-up {
+  color: #5fd18a;
+}
+
+.match-prediction-position.is-down {
+  color: #ff6f6f;
+}
+
+.match-prediction-position.is-same {
+  color: rgba(230, 230, 230, 0.58);
 }
 
 .match-prediction-name-line {

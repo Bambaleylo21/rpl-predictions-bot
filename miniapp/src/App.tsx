@@ -197,6 +197,9 @@ type MatchPredictionsResponse = {
     category?: string | null
     emoji?: string | null
     is_me?: boolean
+    place_before?: number | null
+    place_after?: number | null
+    place_delta?: number | null
   }>
 }
 
@@ -641,6 +644,17 @@ const crowdPercentParts = (item: {
   const d = Number(item.crowd_draw_pct || 0)
   const a = Number(item.crowd_away_pct || 0)
   return [`${h}%`, `${d}%`, `${a}%`]
+}
+
+const positionChangeLabel = (row: {
+  place_after?: number | null
+  place_delta?: number | null
+}): { label: string; tone: 'up' | 'down' | 'same' } | null => {
+  const delta = Number(row.place_delta ?? 0)
+  if (delta > 0) return { label: `↑${delta}`, tone: 'up' }
+  if (delta < 0) return { label: `↓${Math.abs(delta)}`, tone: 'down' }
+  const placeAfter = Number(row.place_after || 0)
+  return placeAfter > 0 ? { label: `•${placeAfter}`, tone: 'same' } : null
 }
 
 const intOrZero = (value: unknown): number => {
@@ -4906,23 +4920,31 @@ function App() {
               ) : null}
               <div className="match-predictions-list">
                 {(matchPredictionsSheet.items || []).length ? (
-                  (matchPredictionsSheet.items || []).map((row) => (
-                    <div
-                      className={`match-prediction-row ${row.is_me ? 'is-me' : ''} ${row.prediction ? '' : 'is-missed'}`}
-                      key={`match-prediction-${matchPredictionsSheet.match_id}-${row.tg_user_id}`}
-                    >
-                      <div className="match-prediction-name-line">
-                        <span className="match-prediction-name">{row.name}</span>
-                        {row.is_me ? <span className="match-prediction-me-badge">ты</span> : null}
-                      </div>
-                      <div className="match-prediction-score">{row.prediction || '—'}</div>
-                      {matchPredictionsSheet.status === 'closed' ? (
-                        <div className="match-prediction-result">
-                          {row.prediction ? `${row.emoji || '❌'} ${Number(row.points ?? 0) > 0 ? '+' : ''}${row.points ?? 0}` : '—'}
+                  (matchPredictionsSheet.items || []).map((row) => {
+                    const pos = matchPredictionsSheet.status === 'closed' ? positionChangeLabel(row) : null
+                    return (
+                      <div
+                        className={`match-prediction-row ${row.is_me ? 'is-me' : ''} ${row.prediction ? '' : 'is-missed'}`}
+                        key={`match-prediction-${matchPredictionsSheet.match_id}-${row.tg_user_id}`}
+                      >
+                        {matchPredictionsSheet.status === 'closed' ? (
+                          <div className={`match-prediction-position ${pos ? `is-${pos.tone}` : ''}`}>
+                            {pos?.label || '—'}
+                          </div>
+                        ) : null}
+                        <div className="match-prediction-name-line">
+                          <span className="match-prediction-name">{row.name}</span>
+                          {row.is_me ? <span className="match-prediction-me-badge">ты</span> : null}
                         </div>
-                      ) : null}
-                    </div>
-                  ))
+                        <div className="match-prediction-score">{row.prediction || '—'}</div>
+                        {matchPredictionsSheet.status === 'closed' ? (
+                          <div className="match-prediction-result">
+                            {row.prediction ? `${row.emoji || '❌'} ${Number(row.points ?? 0) > 0 ? '+' : ''}${row.points ?? 0}` : '—'}
+                          </div>
+                        ) : null}
+                      </div>
+                    )
+                  })
                 ) : (
                   <div className="match-predictions-empty">Прогнозов пока нет.</div>
                 )}

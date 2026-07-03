@@ -3852,6 +3852,90 @@ async def _build_longterm_table_rows(
     return rows, len(rows)
 
 
+async def _build_match_position_changes(
+    session,
+    tournament_id: int,
+    match: Match,
+) -> dict[int, dict[str, int | None]]:
+    def _scope_before(target: Match):
+        return or_(
+            Match.kickoff_time < target.kickoff_time,
+            (Match.kickoff_time == target.kickoff_time) & (Match.id < int(target.id)),
+        )
+
+    def _scope_after(target: Match):
+        return or_(
+            Match.kickoff_time < target.kickoff_time,
+            (Match.kickoff_time == target.kickoff_time) & (Match.id <= int(target.id)),
+        )
+
+    async def _places_for_scope(scope_filter) -> dict[int, int]:
+        points_subq = (
+            select(
+                Point.tg_user_id.label("tg_user_id"),
+                func.coalesce(func.sum(Point.points), 0).label("total"),
+                func.coalesce(func.sum(case((Point.category == "exact", 1), else_=0)), 0).label("exact"),
+                func.coalesce(func.sum(case((Point.category == "diff", 1), else_=0)), 0).label("diff"),
+                func.coalesce(func.sum(case((Point.category == "outcome", 1), else_=0)), 0).label("outcome"),
+            )
+            .select_from(Point)
+            .join(Match, Match.id == Point.match_id)
+            .where(
+                Match.tournament_id == int(tournament_id),
+                Match.is_placeholder == 0,
+                scope_filter,
+            )
+            .group_by(Point.tg_user_id)
+            .subquery()
+        )
+
+        rows_q = await session.execute(
+            select(
+                UserTournament.tg_user_id,
+                UserTournament.bonus_points,
+                func.coalesce(points_subq.c.total, 0).label("total"),
+                func.coalesce(points_subq.c.exact, 0).label("exact"),
+                func.coalesce(points_subq.c.diff, 0).label("diff"),
+                func.coalesce(points_subq.c.outcome, 0).label("outcome"),
+            )
+            .select_from(UserTournament)
+            .outerjoin(points_subq, points_subq.c.tg_user_id == UserTournament.tg_user_id)
+            .where(UserTournament.tournament_id == int(tournament_id))
+        )
+
+        rows = []
+        for uid, bonus_points, total, exact, diff, outcome in rows_q.all():
+            rows.append(
+                (
+                    int(uid),
+                    int(total or 0) + int(bonus_points or 0),
+                    int(exact or 0),
+                    int(diff or 0),
+                    int(outcome or 0),
+                )
+            )
+        rows.sort(key=lambda item: (-item[1], -item[2], -item[3], -item[4], item[0]))
+        return {uid: place for place, (uid, *_rest) in enumerate(rows, start=1)}
+
+    before_places = await _places_for_scope(_scope_before(match))
+    after_places = await _places_for_scope(_scope_after(match))
+
+    out: dict[int, dict[str, int | None]] = {}
+    user_ids = set(before_places.keys()) | set(after_places.keys())
+    for uid in user_ids:
+        before_place = before_places.get(uid)
+        after_place = after_places.get(uid)
+        delta = None
+        if before_place is not None and after_place is not None:
+            delta = int(before_place) - int(after_place)
+        out[int(uid)] = {
+            "place_before": before_place,
+            "place_after": after_place,
+            "place_delta": delta,
+        }
+    return out
+
+
 async def predictions_current(request: web.Request) -> web.Response:
     try:
         auth_result = _extract_verified_user(request)
@@ -4494,6 +4578,11 @@ async def match_predictions_current(request: web.Request) -> web.Response:
 
             items: list[dict[str, Any]] = []
             match_closed = match.home_score is not None and match.away_score is not None
+            position_changes = (
+                await _build_match_position_changes(session, int(tournament.id), match)
+                if match_closed
+                else {}
+            )
             for (
                 uid,
                 tournament_display_name,
@@ -4505,6 +4594,7 @@ async def match_predictions_current(request: web.Request) -> web.Response:
                 points,
                 category,
             ) in rows:
+                position_change = position_changes.get(int(uid), {})
                 name = (
                     tournament_display_name
                     or user_display_name
@@ -4524,8 +4614,13 @@ async def match_predictions_current(request: web.Request) -> web.Response:
                         "category": category_val,
                         "emoji": _point_category_emoji(category_val, points_val) if match_closed and prediction is not None else None,
                         "is_me": int(uid) == int(tg_user_id),
+                        "place_before": position_change.get("place_before") if match_closed else None,
+                        "place_after": position_change.get("place_after") if match_closed else None,
+                        "place_delta": position_change.get("place_delta") if match_closed else None,
                     }
                 )
+            if match_closed:
+                items.sort(key=lambda item: (int(item.get("place_after") or 999999), str(item.get("name") or "")))
 
             return web.json_response(
                 {
