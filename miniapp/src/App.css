@@ -3140,7 +3140,7 @@ body {
 
 .match-predictions-list {
   overflow: auto;
-  padding: 10px 0 2px;
+  padding: 6px 0 2px;
 }
 
 .match-predictions-sheet.is-closed .match-predictions-list {
@@ -3149,17 +3149,8 @@ body {
 
 .match-prediction-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) 42px;
   align-items: center;
-  gap: 10px;
-  border: 1px solid var(--line-3);
-  border-radius: 16px;
-  background: rgba(17, 17, 17, 0.72);
-  padding: 10px 12px;
-}
-
-.match-predictions-sheet.is-closed .match-prediction-row {
-  grid-template-columns: 26px minmax(0, 1fr) 38px 42px;
   gap: 6px;
   border: 0;
   border-bottom: 1px solid rgba(230, 230, 230, 0.12);
@@ -3168,8 +3159,12 @@ body {
   padding: 6px 0;
 }
 
+.match-predictions-sheet.is-closed .match-prediction-row {
+  grid-template-columns: 26px minmax(0, 1fr) 38px 42px;
+}
+
 .match-prediction-row + .match-prediction-row {
-  margin-top: 8px;
+  margin-top: 0;
 }
 
 .match-predictions-sheet.is-closed .match-prediction-row + .match-prediction-row {
@@ -3177,11 +3172,6 @@ body {
 }
 
 .match-prediction-row.is-me {
-  border-color: rgba(185, 154, 85, 0.55);
-  background: rgba(185, 154, 85, 0.1);
-}
-
-.match-predictions-sheet.is-closed .match-prediction-row.is-me {
   background: rgba(185, 154, 85, 0.06);
 }
 
@@ -3222,16 +3212,11 @@ body {
   min-width: 0;
   overflow: hidden;
   color: var(--text-main);
-  font-size: 14px;
-  font-weight: 800;
+  font-size: 11px;
+  font-weight: 750;
   line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.match-predictions-sheet.is-closed .match-prediction-name {
-  font-size: 11px;
-  font-weight: 750;
 }
 
 .match-prediction-me-badge {
@@ -3239,31 +3224,20 @@ body {
   border: 1px solid rgba(185, 154, 85, 0.5);
   border-radius: 999px;
   color: var(--gold);
-  font-size: 9px;
+  font-size: 7px;
   font-weight: 900;
   line-height: 1;
-  padding: 3px 6px;
+  padding: 2px 5px;
   text-transform: uppercase;
 }
 
-.match-predictions-sheet.is-closed .match-prediction-me-badge {
-  font-size: 7px;
-  padding: 2px 5px;
-}
-
 .match-prediction-score {
-  color: var(--gold);
-  font-size: 18px;
-  font-weight: 900;
-  line-height: 1;
-  white-space: nowrap;
-}
-
-.match-predictions-sheet.is-closed .match-prediction-score {
   justify-self: end;
   color: var(--text-main);
   font-size: 12px;
   font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .match-prediction-result {

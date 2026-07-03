@@ -4915,9 +4915,6 @@ function App() {
                   ✕
                 </button>
               </div>
-              {matchPredictionsSheet.status !== 'closed' ? (
-                <div className="match-predictions-note">Открыто после старта матча. Прогнозы уже нельзя изменить.</div>
-              ) : null}
               <div className="match-predictions-list">
                 {(matchPredictionsSheet.items || []).length ? (
                   (matchPredictionsSheet.items || []).map((row) => {
