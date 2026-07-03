@@ -867,7 +867,7 @@ body {
 
 .closed-match {
   position: relative;
-  padding: 8px 50px 9px 2px;
+  padding: 8px 54px 16px 2px;
 }
 
 .closed-match-main {
@@ -904,11 +904,13 @@ body {
 }
 
 .closed-match-meta {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 38px minmax(0, 1fr);
-  justify-items: center;
-  gap: 6px;
-  margin-top: 4px;
+  position: absolute;
+  left: calc(50% - 27px);
+  bottom: 5px;
+  width: 66px;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
 }
 
 .closed-result-score {
@@ -922,8 +924,8 @@ body {
 }
 
 .closed-community-triplet {
-  grid-column: 2;
-  min-width: 66px;
+  width: 66px;
+  min-width: 0;
   color: var(--text-dim);
   font-size: 7.5px;
   line-height: 1;
@@ -941,34 +943,39 @@ body {
 }
 
 .closed-points-badge {
-  display: inline-flex;
+  display: inline-block;
   align-items: center;
   justify-content: center;
-  min-width: 34px;
-  border: 1px solid rgba(185, 154, 85, 0.28);
-  border-radius: 999px;
-  background: rgba(185, 154, 85, 0.08);
   color: var(--text-strong);
-  font-size: 9.5px;
+  font-size: 10px;
   font-weight: 800;
   line-height: 1;
-  padding: 4px 6px;
+  padding: 0;
+  text-align: right;
   white-space: nowrap;
 }
 
 .match-predictions-link {
-  border: 0;
-  background: transparent;
-  color: var(--text-dim);
-  font-size: 7.5px;
+  border: 1px solid rgba(230, 230, 230, 0.28);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-main);
+  font-size: 7px;
   font-weight: 800;
   line-height: 1;
-  padding: 2px 0;
+  padding: 3px 5px;
   white-space: nowrap;
   cursor: pointer;
   transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
     color 0.16s ease,
     transform 0.16s ease;
+}
+
+.match-predictions-link:hover {
+  border-color: rgba(185, 154, 85, 0.45);
+  background: rgba(185, 154, 85, 0.1);
 }
 
 .match-predictions-link:active {
