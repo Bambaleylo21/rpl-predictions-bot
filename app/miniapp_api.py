@@ -4472,6 +4472,8 @@ async def match_predictions_current(request: web.Request) -> web.Response:
                         User.full_name,
                         Prediction.pred_home,
                         Prediction.pred_away,
+                        Point.points,
+                        Point.category,
                     )
                     .select_from(UserTournament)
                     .outerjoin(User, User.tg_user_id == UserTournament.tg_user_id)
@@ -4480,13 +4482,29 @@ async def match_predictions_current(request: web.Request) -> web.Response:
                         (Prediction.tg_user_id == UserTournament.tg_user_id)
                         & (Prediction.match_id == int(match.id)),
                     )
+                    .outerjoin(
+                        Point,
+                        (Point.tg_user_id == UserTournament.tg_user_id)
+                        & (Point.match_id == int(match.id)),
+                    )
                     .where(UserTournament.tournament_id == int(tournament.id))
                     .order_by(UserTournament.created_at.asc(), UserTournament.id.asc())
                 )
             ).all()
 
             items: list[dict[str, Any]] = []
-            for uid, tournament_display_name, user_display_name, username, full_name, pred_home, pred_away in rows:
+            match_closed = match.home_score is not None and match.away_score is not None
+            for (
+                uid,
+                tournament_display_name,
+                user_display_name,
+                username,
+                full_name,
+                pred_home,
+                pred_away,
+                points,
+                category,
+            ) in rows:
                 name = (
                     tournament_display_name
                     or user_display_name
@@ -4495,11 +4513,16 @@ async def match_predictions_current(request: web.Request) -> web.Response:
                     or f"ID {int(uid)}"
                 )
                 prediction = f"{int(pred_home)}:{int(pred_away)}" if pred_home is not None and pred_away is not None else None
+                points_val = int(points or 0) if match_closed and prediction is not None else None
+                category_val = str(category) if match_closed and category is not None and prediction is not None else None
                 items.append(
                     {
                         "tg_user_id": int(uid),
                         "name": str(name),
                         "prediction": prediction,
+                        "points": points_val,
+                        "category": category_val,
+                        "emoji": _point_category_emoji(category_val, points_val) if match_closed and prediction is not None else None,
                         "is_me": int(uid) == int(tg_user_id),
                     }
                 )
@@ -4515,7 +4538,12 @@ async def match_predictions_current(request: web.Request) -> web.Response:
                     "away_team": match.away_team,
                     "group_label": match.group_label,
                     "kickoff": match.kickoff_time.strftime("%d.%m %H:%M"),
-                    "status": "closed" if match.home_score is not None and match.away_score is not None else "live",
+                    "status": "closed" if match_closed else "live",
+                    "result": (
+                        f"{int(match.home_score)}:{int(match.away_score)}"
+                        if match.home_score is not None and match.away_score is not None
+                        else None
+                    ),
                     "items": items,
                 }
             )

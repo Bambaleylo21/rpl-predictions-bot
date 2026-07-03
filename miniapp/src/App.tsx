@@ -188,10 +188,14 @@ type MatchPredictionsResponse = {
   group_label?: string | null
   kickoff?: string
   status?: 'live' | 'closed'
+  result?: string | null
   items?: Array<{
     tg_user_id: number
     name: string
     prediction: string | null
+    points?: number | null
+    category?: string | null
+    emoji?: string | null
     is_me?: boolean
   }>
 }
@@ -4876,12 +4880,17 @@ function App() {
 
         {matchPredictionsSheet ? (
           <div className="match-predictions-sheet-overlay" onClick={() => setMatchPredictionsSheet(null)}>
-            <div className="match-predictions-sheet" onClick={(ev) => ev.stopPropagation()}>
+            <div
+              className={`match-predictions-sheet ${matchPredictionsSheet.status === 'closed' ? 'is-closed' : ''}`}
+              onClick={(ev) => ev.stopPropagation()}
+            >
               <div className="match-predictions-sheet-head">
                 <div>
                   <div className="match-predictions-title">Прогнозы участников</div>
                   <div className="match-predictions-subtitle">
-                    {teamWithFlag(matchPredictionsSheet.home_team || '')} — {teamWithFlag(matchPredictionsSheet.away_team || '')}
+                    {teamWithFlag(matchPredictionsSheet.home_team || '')}{' '}
+                    {matchPredictionsSheet.status === 'closed' && matchPredictionsSheet.result ? matchPredictionsSheet.result : '—'}{' '}
+                    {teamWithFlag(matchPredictionsSheet.away_team || '')}
                   </div>
                 </div>
                 <button
@@ -4893,7 +4902,9 @@ function App() {
                   ✕
                 </button>
               </div>
-              <div className="match-predictions-note">Открыто после старта матча. Прогнозы уже нельзя изменить.</div>
+              {matchPredictionsSheet.status !== 'closed' ? (
+                <div className="match-predictions-note">Открыто после старта матча. Прогнозы уже нельзя изменить.</div>
+              ) : null}
               <div className="match-predictions-list">
                 {(matchPredictionsSheet.items || []).length ? (
                   (matchPredictionsSheet.items || []).map((row) => (
@@ -4906,6 +4917,11 @@ function App() {
                         {row.is_me ? <span className="match-prediction-me-badge">ты</span> : null}
                       </div>
                       <div className="match-prediction-score">{row.prediction || '—'}</div>
+                      {matchPredictionsSheet.status === 'closed' ? (
+                        <div className="match-prediction-result">
+                          {row.prediction ? `${row.emoji || '❌'} ${Number(row.points ?? 0) > 0 ? '+' : ''}${row.points ?? 0}` : '—'}
+                        </div>
+                      ) : null}
                     </div>
                   ))
                 ) : (
