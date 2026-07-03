@@ -866,65 +866,93 @@ body {
 }
 
 .closed-match {
-  padding: 8px 2px 9px;
+  padding: 8px 2px 10px;
 }
 
 .closed-match-main {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
 }
 
 .closed-team-name {
-  font-size: 13px;
-  line-height: 1.14;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.12;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.closed-score-stack {
+  display: grid;
+  justify-items: center;
+  min-width: 54px;
 }
 
 .closed-result-score {
   color: var(--text-strong);
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 800;
   letter-spacing: -0.03em;
   line-height: 1;
   white-space: nowrap;
 }
 
+.closed-community-triplet {
+  margin-top: 5px;
+  min-width: 82px;
+  color: var(--text-dim);
+  font-size: 9px;
+  line-height: 1;
+}
+
+.closed-action-stack {
+  display: grid;
+  justify-items: end;
+  gap: 5px;
+  min-width: 54px;
+}
+
 .closed-points-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 50px;
-  border: 1px solid rgba(185, 154, 85, 0.46);
+  min-width: 42px;
+  border: 1px solid rgba(185, 154, 85, 0.28);
   border-radius: 999px;
-  background: rgba(185, 154, 85, 0.15);
+  background: rgba(185, 154, 85, 0.08);
   color: var(--text-strong);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
   line-height: 1;
-  padding: 7px 9px;
+  padding: 5px 7px;
   white-space: nowrap;
 }
 
-.closed-match-details {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 8px;
-  margin-top: 5px;
+.match-predictions-link {
+  border: 0;
+  background: transparent;
   color: var(--text-dim);
-  font-size: 10px;
-  line-height: 1.2;
-}
-
-.closed-match-details .community-triplet {
-  min-width: 82px;
-}
-
-.match-predictions-btn-closed {
-  grid-column: auto;
-  padding: 5px 8px;
   font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+  padding: 2px 0;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color 0.16s ease,
+    transform 0.16s ease;
+}
+
+.match-predictions-link:active {
+  transform: translateX(1px);
+}
+
+.match-predictions-link:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
 
 .compact-main-predict .team-name,

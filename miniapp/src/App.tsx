@@ -610,6 +610,13 @@ const teamWithFlag = (team: string): string => {
   return found ? `${found} ${name}` : name
 }
 
+const kickoffSortValue = (value?: string | null): number => {
+  const match = String(value || '').match(/^(\d{2})\.(\d{2})(?:\s+(\d{2}):(\d{2}))?/)
+  if (!match) return 0
+  const [, day, month, hour = '00', minute = '00'] = match
+  return Number(month) * 1000000 + Number(day) * 10000 + Number(hour) * 100 + Number(minute)
+}
+
 const teamOptionsWithFlags = Object.keys(TEAM_FLAGS).sort((a, b) => a.localeCompare(b, 'ru'))
 
 const crowdText = (item: {
@@ -2524,9 +2531,9 @@ function App() {
     ? MATCH_STAGE_ROUND_NUMBERS
         .filter((round) => (matchStageAvailability[round]?.closed || 0) > 0)
         .sort((a, b) => {
-          const byKickoff = String(matchStageAvailability[b]?.latest_closed_kickoff || '').localeCompare(
-            String(matchStageAvailability[a]?.latest_closed_kickoff || '')
-          )
+          const byKickoff =
+            kickoffSortValue(matchStageAvailability[b]?.latest_closed_kickoff) -
+            kickoffSortValue(matchStageAvailability[a]?.latest_closed_kickoff)
           return byKickoff !== 0 ? byKickoff : b - a
         })[0]
     : undefined
@@ -2561,7 +2568,7 @@ function App() {
   const closedPredictionItems = (predictionsData?.items || [])
     .filter((m) => m.status === 'closed')
     .sort((a, b) => {
-      const byKickoff = String(b.kickoff || '').localeCompare(String(a.kickoff || ''))
+      const byKickoff = kickoffSortValue(b.kickoff) - kickoffSortValue(a.kickoff)
       if (byKickoff !== 0) return byKickoff
       return Number(b.match_id || 0) - Number(a.match_id || 0)
     })
@@ -2600,9 +2607,9 @@ function App() {
         ? MATCH_STAGE_ROUND_NUMBERS
             .filter((round) => (matchStageAvailability[round]?.closed || 0) > 0)
             .sort((a, b) => {
-              const byKickoff = String(matchStageAvailability[b]?.latest_closed_kickoff || '').localeCompare(
-                String(matchStageAvailability[a]?.latest_closed_kickoff || '')
-              )
+              const byKickoff =
+                kickoffSortValue(matchStageAvailability[b]?.latest_closed_kickoff) -
+                kickoffSortValue(matchStageAvailability[a]?.latest_closed_kickoff)
               return byKickoff !== 0 ? byKickoff : b - a
             })[0]
         : MATCH_STAGE_ROUND_NUMBERS.find((round) => !matchStageAvailability[round]?.completed)
@@ -3722,31 +3729,32 @@ function App() {
                             <div className="compact-match closed-match" key={m.match_id}>
                               <div className="closed-match-main">
                                 <span className="team-name closed-team-name team-left">{teamWithFlag(m.home_team)}</span>
-                                <span className="closed-result-score">{m.result || '—'}</span>
+                                <div className="closed-score-stack">
+                                  <span className="closed-result-score">{m.result || '—'}</span>
+                                  {crowdText(m) ? (
+                                    <span className="community-triplet closed-community-triplet">
+                                      {crowdPercentParts(m).map((part, index) => (
+                                        <span key={`${m.match_id}-closed-crowd-${index}`}>{part}</span>
+                                      ))}
+                                    </span>
+                                  ) : null}
+                                </div>
                                 <span className="team-name closed-team-name team-right">{teamWithFlag(m.away_team)}</span>
-                                <span className="closed-points-badge">
-                                  {m.prediction
-                                    ? `${m.emoji} ${Number(m.points ?? 0) > 0 ? '+' : ''}${m.points ?? 0}`
-                                    : '❌ 0'}
-                                </span>
-                              </div>
-                              <div className="closed-match-details">
-                                <span>{m.prediction ? `Твой прогноз: ${m.prediction}` : 'Прогноз не был сделан'}</span>
-                                {crowdText(m) ? (
-                                  <span className="community-triplet">
-                                    {crowdPercentParts(m).map((part, index) => (
-                                      <span key={`${m.match_id}-closed-crowd-${index}`}>{part}</span>
-                                    ))}
+                                <div className="closed-action-stack">
+                                  <span className="closed-points-badge">
+                                    {m.prediction
+                                      ? `${m.emoji} ${Number(m.points ?? 0) > 0 ? '+' : ''}${m.points ?? 0}`
+                                      : '❌ 0'}
                                   </span>
-                                ) : null}
-                                <button
-                                  type="button"
-                                  className="match-predictions-btn match-predictions-btn-closed"
-                                  onClick={() => openMatchPredictions(m.match_id)}
-                                  disabled={matchPredictionsLoadingId === m.match_id}
-                                >
-                                  {matchPredictionsLoadingId === m.match_id ? '...' : 'Прогнозы'}
-                                </button>
+                                  <button
+                                    type="button"
+                                    className="match-predictions-link"
+                                    onClick={() => openMatchPredictions(m.match_id)}
+                                    disabled={matchPredictionsLoadingId === m.match_id}
+                                  >
+                                    {matchPredictionsLoadingId === m.match_id ? '...' : 'Прогнозы ›'}
+                                  </button>
+                                </div>
                               </div>
                             </div>
                           ))}
