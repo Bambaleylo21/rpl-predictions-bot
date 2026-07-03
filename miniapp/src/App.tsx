@@ -3729,16 +3729,7 @@ function App() {
                             <div className="compact-match closed-match" key={m.match_id}>
                               <div className="closed-match-main">
                                 <span className="team-name closed-team-name team-left">{teamWithFlag(m.home_team)}</span>
-                                <div className="closed-score-stack">
-                                  <span className="closed-result-score">{m.result || '—'}</span>
-                                  {crowdText(m) ? (
-                                    <span className="community-triplet closed-community-triplet">
-                                      {crowdPercentParts(m).map((part, index) => (
-                                        <span key={`${m.match_id}-closed-crowd-${index}`}>{part}</span>
-                                      ))}
-                                    </span>
-                                  ) : null}
-                                </div>
+                                <span className="closed-result-score">{m.result || '—'}</span>
                                 <span className="team-name closed-team-name team-right">{teamWithFlag(m.away_team)}</span>
                                 <div className="closed-action-stack">
                                   <span className="closed-points-badge">
@@ -3756,6 +3747,15 @@ function App() {
                                   </button>
                                 </div>
                               </div>
+                              {crowdText(m) ? (
+                                <div className="closed-match-meta">
+                                  <span className="community-triplet closed-community-triplet">
+                                    {crowdPercentParts(m).map((part, index) => (
+                                      <span key={`${m.match_id}-closed-crowd-${index}`}>{part}</span>
+                                    ))}
+                                  </span>
+                                </div>
+                              ) : null}
                             </div>
                           ))}
                         </div>
