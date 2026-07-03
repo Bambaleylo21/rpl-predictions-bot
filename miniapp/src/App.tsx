@@ -3735,6 +3735,14 @@ function App() {
                                     ))}
                                   </span>
                                 ) : null}
+                                <button
+                                  type="button"
+                                  className="match-predictions-btn match-predictions-btn-closed"
+                                  onClick={() => openMatchPredictions(m.match_id)}
+                                  disabled={matchPredictionsLoadingId === m.match_id}
+                                >
+                                  {matchPredictionsLoadingId === m.match_id ? '...' : 'Прогнозы'}
+                                </button>
                               </div>
                             </div>
                           ))}

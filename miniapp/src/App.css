@@ -908,7 +908,7 @@ body {
 
 .closed-match-details {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 8px;
   margin-top: 5px;
@@ -919,6 +919,12 @@ body {
 
 .closed-match-details .community-triplet {
   min-width: 82px;
+}
+
+.match-predictions-btn-closed {
+  grid-column: auto;
+  padding: 5px 8px;
+  font-size: 9px;
 }
 
 .compact-main-predict .team-name,
