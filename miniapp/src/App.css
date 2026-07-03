@@ -866,20 +866,18 @@ body {
 }
 
 .closed-match {
-  padding: 9px 2px 10px;
+  padding: 10px 10px 10px 2px;
 }
 
 .closed-match-main {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 42px minmax(0, 1fr) 58px;
-  grid-template-rows: auto auto;
+  grid-template-columns: minmax(0, 1fr) 42px minmax(0, 1fr) 64px;
   align-items: center;
   column-gap: 7px;
-  row-gap: 3px;
 }
 
 .closed-team-name {
-  display: block;
+  display: inline-block;
   min-width: 0;
   width: 100%;
   overflow: hidden;
@@ -897,10 +895,12 @@ body {
 
 .closed-team-name.team-left {
   justify-self: end;
+  text-align: right;
 }
 
 .closed-team-name.team-right {
   justify-self: start;
+  text-align: left;
 }
 
 .closed-result-score {
@@ -913,25 +913,14 @@ body {
   white-space: nowrap;
 }
 
-.closed-community-triplet {
-  grid-column: 2;
-  grid-row: 2;
-  justify-self: center;
-  width: 74px;
-  min-width: 0;
-  color: var(--text-dim);
-  font-size: 8px;
-  line-height: 1;
-}
-
 .closed-action-stack {
   grid-column: 4;
-  grid-row: 1 / span 2;
   display: grid;
   justify-items: end;
   align-self: center;
-  gap: 5px;
+  gap: 7px;
   min-width: 0;
+  padding-right: 2px;
 }
 
 .closed-points-badge {
@@ -956,6 +945,7 @@ body {
   font-weight: 800;
   line-height: 1;
   padding: 4px 7px;
+  margin-top: 1px;
   white-space: nowrap;
   cursor: pointer;
   transition:
