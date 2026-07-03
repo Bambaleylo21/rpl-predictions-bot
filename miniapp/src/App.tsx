@@ -3731,6 +3731,13 @@ function App() {
                                 <span className="team-name closed-team-name team-left">{teamWithFlag(m.home_team)}</span>
                                 <span className="closed-result-score">{m.result || '—'}</span>
                                 <span className="team-name closed-team-name team-right">{teamWithFlag(m.away_team)}</span>
+                                {crowdText(m) ? (
+                                  <span className="community-triplet closed-community-triplet">
+                                    {crowdPercentParts(m).map((part, index) => (
+                                      <span key={`${m.match_id}-closed-crowd-${index}`}>{part}</span>
+                                    ))}
+                                  </span>
+                                ) : null}
                                 <div className="closed-action-stack">
                                   <span className="closed-points-badge">
                                     {m.prediction
@@ -3747,15 +3754,6 @@ function App() {
                                   </button>
                                 </div>
                               </div>
-                              {crowdText(m) ? (
-                                <div className="closed-match-meta">
-                                  <span className="community-triplet closed-community-triplet">
-                                    {crowdPercentParts(m).map((part, index) => (
-                                      <span key={`${m.match_id}-closed-crowd-${index}`}>{part}</span>
-                                    ))}
-                                  </span>
-                                </div>
-                              ) : null}
                             </div>
                           ))}
                         </div>
