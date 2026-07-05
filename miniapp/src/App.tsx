@@ -3760,6 +3760,9 @@ function App() {
                                     {matchPredictionsLoadingId === m.match_id ? '...' : 'Прогнозы ›'}
                                   </button>
                                 </div>
+                                <div className="closed-own-prediction">
+                                  мой прогноз: <b>{m.prediction || '—'}</b>
+                                </div>
                               </div>
                             </div>
                           ))}
