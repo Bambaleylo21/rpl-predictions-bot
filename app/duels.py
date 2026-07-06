@@ -88,8 +88,8 @@ def duel_outcome_by_prediction_quality(
     """
     Duel result:
     1) regular prediction points,
-    2) closeness to the real score,
-    3) closeness to the real goal difference.
+    2) closeness to the real goal difference,
+    3) closeness to the real score.
     """
     ch_pts = int(challenger_points)
     op_pts = int(opponent_points)
@@ -98,18 +98,18 @@ def duel_outcome_by_prediction_quality(
     if op_pts > ch_pts:
         return "opponent_win", 0.0, 1.0
 
-    ch_score_error = score_distance(challenger_pred_home, challenger_pred_away, real_home, real_away)
-    op_score_error = score_distance(opponent_pred_home, opponent_pred_away, real_home, real_away)
-    if ch_score_error < op_score_error:
-        return "challenger_win", 1.0, 0.0
-    if op_score_error < ch_score_error:
-        return "opponent_win", 0.0, 1.0
-
     ch_diff_error = diff_distance(challenger_pred_home, challenger_pred_away, real_home, real_away)
     op_diff_error = diff_distance(opponent_pred_home, opponent_pred_away, real_home, real_away)
     if ch_diff_error < op_diff_error:
         return "challenger_win", 1.0, 0.0
     if op_diff_error < ch_diff_error:
+        return "opponent_win", 0.0, 1.0
+
+    ch_score_error = score_distance(challenger_pred_home, challenger_pred_away, real_home, real_away)
+    op_score_error = score_distance(opponent_pred_home, opponent_pred_away, real_home, real_away)
+    if ch_score_error < op_score_error:
+        return "challenger_win", 1.0, 0.0
+    if op_score_error < ch_score_error:
         return "opponent_win", 0.0, 1.0
 
     return "draw", 0.5, 0.5

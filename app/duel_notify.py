@@ -93,15 +93,15 @@ def _duel_result_line(
         if winner_points == 1:
             return f"✅ {_html(winner_name)} победил по исходу"
 
-    ch_score_error = score_distance(challenger_pred_home, challenger_pred_away, real_home, real_away)
-    op_score_error = score_distance(opponent_pred_home, opponent_pred_away, real_home, real_away)
-    if ch_score_error != op_score_error:
-        return f"🔎 {_html(winner_name)} победил по близости к счёту"
-
     ch_diff_error = diff_distance(challenger_pred_home, challenger_pred_away, real_home, real_away)
     op_diff_error = diff_distance(opponent_pred_home, opponent_pred_away, real_home, real_away)
     if ch_diff_error != op_diff_error:
         return f"📐 {_html(winner_name)} победил по близости к разнице"
+
+    ch_score_error = score_distance(challenger_pred_home, challenger_pred_away, real_home, real_away)
+    op_score_error = score_distance(opponent_pred_home, opponent_pred_away, real_home, real_away)
+    if ch_score_error != op_score_error:
+        return f"🔎 {_html(winner_name)} победил по близости к счёту"
 
     return f"🔎 {_html(winner_name)} победил по близости"
 
