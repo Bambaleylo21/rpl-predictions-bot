@@ -74,6 +74,21 @@ def diff_distance(pred_home: int, pred_away: int, real_home: int, real_away: int
     return abs(pred_diff - real_diff)
 
 
+def advantage_draw_scores(error_delta: int) -> tuple[float, float]:
+    """
+    Elo scores for a draw with advantage.
+    At equal ratings and 100% multiplier these are roughly +/-5, +/-7, +/-9.
+    """
+    delta = abs(int(error_delta))
+    if delta >= 3:
+        edge = 0.875
+    elif delta == 2:
+        edge = 0.79
+    else:
+        edge = 0.70
+    return edge, 1.0 - edge
+
+
 def duel_outcome_by_prediction_quality(
     *,
     challenger_points: int,
@@ -100,6 +115,23 @@ def duel_outcome_by_prediction_quality(
 
     ch_diff_error = diff_distance(challenger_pred_home, challenger_pred_away, real_home, real_away)
     op_diff_error = diff_distance(opponent_pred_home, opponent_pred_away, real_home, real_away)
+    if ch_pts == 0 and op_pts == 0:
+        if ch_diff_error != op_diff_error:
+            better_score, worse_score = advantage_draw_scores(ch_diff_error - op_diff_error)
+            if ch_diff_error < op_diff_error:
+                return "draw", better_score, worse_score
+            return "draw", worse_score, better_score
+
+        ch_score_error = score_distance(challenger_pred_home, challenger_pred_away, real_home, real_away)
+        op_score_error = score_distance(opponent_pred_home, opponent_pred_away, real_home, real_away)
+        if ch_score_error != op_score_error:
+            better_score, worse_score = advantage_draw_scores(ch_score_error - op_score_error)
+            if ch_score_error < op_score_error:
+                return "draw", better_score, worse_score
+            return "draw", worse_score, better_score
+
+        return "draw", 0.5, 0.5
+
     if ch_diff_error < op_diff_error:
         return "challenger_win", 1.0, 0.0
     if op_diff_error < ch_diff_error:

@@ -79,6 +79,19 @@ def _duel_result_line(
     real_away: int,
 ) -> str:
     if str(outcome) == "draw":
+        if int(challenger_points) == 0 and int(opponent_points) == 0:
+            ch_diff_error = diff_distance(challenger_pred_home, challenger_pred_away, real_home, real_away)
+            op_diff_error = diff_distance(opponent_pred_home, opponent_pred_away, real_home, real_away)
+            if ch_diff_error != op_diff_error:
+                edge_name = challenger_name if ch_diff_error < op_diff_error else opponent_name
+                return f"🤝 Ничья, но {_html(edge_name)} был ближе к разнице"
+
+            ch_score_error = score_distance(challenger_pred_home, challenger_pred_away, real_home, real_away)
+            op_score_error = score_distance(opponent_pred_home, opponent_pred_away, real_home, real_away)
+            if ch_score_error != op_score_error:
+                edge_name = challenger_name if ch_score_error < op_score_error else opponent_name
+                return f"🤝 Ничья, но {_html(edge_name)} был ближе к счёту"
+
         return "🤝 Ничья. Прогнозы одинаково близки"
 
     challenger_won = str(outcome) == "challenger_win"

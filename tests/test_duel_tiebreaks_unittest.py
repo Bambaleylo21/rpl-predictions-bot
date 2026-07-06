@@ -2,6 +2,7 @@ import unittest
 
 from app.duels import (
     _elo_delta,
+    advantage_draw_scores,
     combined_elo_multiplier_bp,
     duel_outcome_by_prediction_quality,
     duel_quality_multiplier_bp,
@@ -24,20 +25,20 @@ class DuelTiebreaksTest(unittest.TestCase):
         self.assertEqual(outcome, "challenger_win")
         self.assertEqual((challenger_score, opponent_score), (1.0, 0.0))
 
-    def test_score_closeness_breaks_equal_points(self):
+    def test_both_miss_outcome_stays_draw_with_score_advantage(self):
         outcome, challenger_score, opponent_score = duel_outcome_by_prediction_quality(
-            challenger_points=1,
-            opponent_points=1,
-            challenger_pred_home=1,
-            challenger_pred_away=1,
-            opponent_pred_home=7,
-            opponent_pred_away=7,
+            challenger_points=0,
+            opponent_points=0,
+            challenger_pred_home=3,
+            challenger_pred_away=2,
+            opponent_pred_home=5,
+            opponent_pred_away=3,
             real_home=0,
             real_away=0,
         )
 
-        self.assertEqual(outcome, "challenger_win")
-        self.assertEqual((challenger_score, opponent_score), (1.0, 0.0))
+        self.assertEqual(outcome, "draw")
+        self.assertGreater(challenger_score, opponent_score)
 
     def test_opponent_can_win_by_goal_difference_closeness(self):
         outcome, challenger_score, opponent_score = duel_outcome_by_prediction_quality(
@@ -66,23 +67,47 @@ class DuelTiebreaksTest(unittest.TestCase):
             real_away=3,
         )
 
-        self.assertEqual(outcome, "challenger_win")
-        self.assertEqual((challenger_score, opponent_score), (1.0, 0.0))
+        self.assertEqual(outcome, "draw")
+        self.assertGreater(challenger_score, opponent_score)
 
-    def test_score_closeness_breaks_equal_goal_difference_distance(self):
+    def test_score_closeness_breaks_equal_goal_difference_distance_for_advantage_draw(self):
         outcome, challenger_score, opponent_score = duel_outcome_by_prediction_quality(
             challenger_points=0,
             opponent_points=0,
-            challenger_pred_home=1,
-            challenger_pred_away=2,
+            challenger_pred_home=2,
+            challenger_pred_away=1,
             opponent_pred_home=3,
             opponent_pred_away=2,
-            real_home=2,
-            real_away=1,
+            real_home=0,
+            real_away=0,
         )
 
-        self.assertEqual(outcome, "opponent_win")
-        self.assertEqual((challenger_score, opponent_score), (0.0, 1.0))
+        self.assertEqual(outcome, "draw")
+        self.assertGreater(challenger_score, opponent_score)
+
+    def test_outcome_win_stays_win_even_if_other_prediction_has_better_score_distance(self):
+        outcome, challenger_score, opponent_score = duel_outcome_by_prediction_quality(
+            challenger_points=1,
+            opponent_points=0,
+            challenger_pred_home=1,
+            challenger_pred_away=0,
+            opponent_pred_home=4,
+            opponent_pred_away=4,
+            real_home=5,
+            real_away=3,
+        )
+
+        self.assertEqual(outcome, "challenger_win")
+        self.assertEqual((challenger_score, opponent_score), (1.0, 0.0))
+
+    def test_advantage_draw_scores_are_noticeable(self):
+        small_edge, _ = advantage_draw_scores(1)
+        medium_edge, _ = advantage_draw_scores(2)
+        large_edge, _ = advantage_draw_scores(3)
+
+        self.assertEqual(_elo_delta(1000, 1000, small_edge, 100), 5)
+        self.assertEqual(_elo_delta(1000, 1000, medium_edge, 100), 7)
+        self.assertEqual(_elo_delta(1000, 1000, large_edge, 100), 9)
 
     def test_full_tie_stays_draw(self):
         outcome, challenger_score, opponent_score = duel_outcome_by_prediction_quality(
