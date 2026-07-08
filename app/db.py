@@ -49,8 +49,11 @@ async def _apply_postgres_schema_fixes(conn) -> None:
         "ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 100",
         "ALTER TABLE tournaments ADD COLUMN IF NOT EXISTS planned_matches_total INTEGER NOT NULL DEFAULT 0",
         "CREATE INDEX IF NOT EXISTS ix_tournaments_status ON tournaments (status)",
-        "INSERT INTO tournaments (code, name, round_min, round_max, is_active) VALUES ('RPL', 'РПЛ', 19, 30, 1) ON CONFLICT (code) DO NOTHING",
-        "UPDATE tournaments SET name='РПЛ', round_min=19, round_max=30, status='active', visible_in_miniapp=1, join_open=0, predict_open=0, sort_order=100, is_active=1 WHERE code='RPL'",
+        "INSERT INTO tournaments (code, name, round_min, round_max, is_active) VALUES ('RPL', 'РПЛ', 1, 30, 1) ON CONFLICT (code) DO NOTHING",
+        # Внимание: round_min/round_max/join_open/predict_open для RPL теперь управляются
+        # динамически через app/season_setup.py и admin-эндпоинты в mini app — здесь их
+        # больше не сбрасываем на каждом старте, чтобы не затирать текущий сезон/набор.
+        "UPDATE tournaments SET name='РПЛ', status='active', visible_in_miniapp=1, sort_order=100, is_active=1 WHERE code='RPL'",
         "UPDATE tournaments SET name='ЧМ 2026', status='active', visible_in_miniapp=1, join_open=1, predict_open=1, sort_order=10, planned_matches_total = 104 WHERE code='WC2026'",
         "UPDATE tournaments SET status='active' WHERE status IS NULL OR trim(status) = ''",
         "DELETE FROM tournaments WHERE code='EPL'",
@@ -155,8 +158,11 @@ async def _apply_sqlite_schema_fixes(conn) -> None:
         "ALTER TABLE tournaments ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 100",
         "ALTER TABLE tournaments ADD COLUMN planned_matches_total INTEGER NOT NULL DEFAULT 0",
         "CREATE INDEX IF NOT EXISTS ix_tournaments_status ON tournaments (status)",
-        "INSERT OR IGNORE INTO tournaments (code, name, round_min, round_max, is_active) VALUES ('RPL', 'РПЛ', 19, 30, 1)",
-        "UPDATE tournaments SET name='РПЛ', round_min=19, round_max=30, status='active', visible_in_miniapp=1, join_open=0, predict_open=0, sort_order=100, is_active=1 WHERE code='RPL'",
+        "INSERT OR IGNORE INTO tournaments (code, name, round_min, round_max, is_active) VALUES ('RPL', 'РПЛ', 1, 30, 1)",
+        # Внимание: round_min/round_max/join_open/predict_open для RPL теперь управляются
+        # динамически через app/season_setup.py и admin-эндпоинты в mini app — здесь их
+        # больше не сбрасываем на каждом старте, чтобы не затирать текущий сезон/набор.
+        "UPDATE tournaments SET name='РПЛ', status='active', visible_in_miniapp=1, sort_order=100, is_active=1 WHERE code='RPL'",
         "UPDATE tournaments SET name='ЧМ 2026', status='active', visible_in_miniapp=1, join_open=1, predict_open=1, sort_order=10, planned_matches_total = 104 WHERE code='WC2026'",
         "UPDATE tournaments SET status='active' WHERE status IS NULL OR trim(status) = ''",
         "DELETE FROM tournaments WHERE code='EPL'",

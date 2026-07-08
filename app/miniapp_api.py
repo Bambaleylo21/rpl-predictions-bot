@@ -2070,7 +2070,25 @@ async def tournament_join(request: web.Request) -> web.Response:
     async with SessionLocal() as session:
         await _upsert_user_from_webapp(session, user if isinstance(user, dict) else {})
         tournament = await _resolve_tournament(session, int(tg_user_id), requested_code=requested_code)
-        if not _is_tournament_join_open(tournament):
+
+        join_open = _is_tournament_join_open(tournament)
+        if (tournament.code or "").strip().upper() == "RPL":
+            # РПЛ управляется отдельным сезонным флагом набора (см. app/season_setup.py),
+            # а не общим tournament.join_open — это гибкий переключатель "Открыть/закрыть набор".
+            from app.season_setup import is_enrollment_open as _rpl_is_enrollment_open
+
+            join_open = await _rpl_is_enrollment_open(session)
+
+            # Самолечение: старая миграция когда-то форсированно держала эти флаги
+            # выключенными — подчищаем на любом обращении к турниру RPL.
+            if (
+                int(getattr(tournament, "predict_open", 0) or 0) != 1
+                or str(getattr(tournament, "status", "") or "").strip().lower() != "active"
+            ):
+                tournament.predict_open = 1
+                tournament.status = "active"
+
+        if not join_open:
             await session.commit()
             return web.json_response(
                 {
@@ -5378,6 +5396,20 @@ async def admin_rpl_season_status(request: web.Request) -> web.Response:
             )
             leagues = leagues_q.scalars().all()
 
+            # Самолечение: если сезон уже существует, турнир RPL должен быть полностью
+            # "включён" (раньше эти флаги форсированно сбрасывались миграцией в app/db.py).
+            rpl_fix_q = await session.execute(select(Tournament).where(Tournament.code == "RPL"))
+            rpl_fix = rpl_fix_q.scalar_one_or_none()
+            if rpl_fix is not None and (
+                int(getattr(rpl_fix, "predict_open", 0) or 0) != 1
+                or str(getattr(rpl_fix, "status", "") or "").strip().lower() != "active"
+                or int(getattr(rpl_fix, "visible_in_miniapp", 0) or 0) != 1
+            ):
+                rpl_fix.predict_open = 1
+                rpl_fix.status = "active"
+                rpl_fix.visible_in_miniapp = 1
+                await session.commit()
+
             enrollment_open = await is_enrollment_open(session)
             active_stage = await get_active_stage(session, season.id)
 
@@ -5468,6 +5500,16 @@ async def admin_rpl_season_init(request: web.Request) -> web.Response:
                 stage_2_round_min=stage2_min,
                 stage_2_round_max=stage2_max,
             )
+
+            # Разрешаем прогнозы и джойн на уровне самого турнира РПЛ — тонкая настройка
+            # "открыт ли сейчас набор" живёт отдельно в Setting (see admin_rpl_enroll_set).
+            rpl_q = await session.execute(select(Tournament).where(Tournament.code == "RPL"))
+            rpl = rpl_q.scalar_one_or_none()
+            if rpl is not None:
+                rpl.status = "active"
+                rpl.predict_open = 1
+                rpl.visible_in_miniapp = 1
+
             await session.commit()
 
         return web.json_response(
