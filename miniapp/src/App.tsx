@@ -953,6 +953,8 @@ function App() {
   const [selectedTournamentCode, setSelectedTournamentCode] = useState<string>('WC2026')
   const [tournamentNotice, setTournamentNotice] = useState<string | null>(null)
   const [predictionsFilter, setPredictionsFilter] = useState<'open' | 'closed'>('open')
+  const [rplRoundOverride, setRplRoundOverride] = useState<number | null>(null)
+  const [rplRoundPickerOpen, setRplRoundPickerOpen] = useState<boolean>(false)
   const [profileTargetUserId, setProfileTargetUserId] = useState<number | null>(null)
   const [stageTab, setStageTab] = useState<'1' | '2' | '3' | 'PO' | 'LT'>('1')
   const [playoffTab, setPlayoffTab] = useState<4 | 5 | 6 | 7 | 8 | 9>(4)
@@ -1042,7 +1044,9 @@ function App() {
   const selectedRoundNumber =
     selectedTournamentCode === 'WC2026'
       ? (stageTab === 'PO' ? playoffTab : stageTab === 'LT' ? undefined : Number(stageTab))
-      : undefined
+      : selectedTournamentCode === 'RPL'
+        ? rplRoundOverride ?? undefined
+        : undefined
 
   const formatScoreInput = (raw: string): string => {
     const digits = raw.replace(/\D/g, '').slice(0, 2)
@@ -1087,6 +1091,7 @@ function App() {
     if (screen !== 'predict') {
       setWinnerPickerOpen(false)
       setScorerPickerOpen(false)
+      setRplRoundPickerOpen(false)
     }
   }, [screen])
 
@@ -2832,6 +2837,19 @@ function App() {
     return Object.entries(grouped)
   })()
 
+  const rplRoundBoundsSource = predictData?.round_min != null ? predictData : predictionsData
+  const rplRoundMin = rplRoundBoundsSource?.round_min ?? null
+  const rplRoundMax = rplRoundBoundsSource?.round_max ?? null
+  const rplBackendRound = rplRoundBoundsSource?.round_number ?? null
+  const rplCurrentRound =
+    rplRoundMin != null && rplRoundMax != null
+      ? Math.min(Math.max(rplRoundOverride ?? rplBackendRound ?? rplRoundMin, rplRoundMin), rplRoundMax)
+      : null
+  const goToRplRound = (target: number) => {
+    if (rplRoundMin == null || rplRoundMax == null) return
+    setRplRoundOverride(Math.min(Math.max(target, rplRoundMin), rplRoundMax))
+  }
+
   useEffect(() => {
     if (selectedTournamentCode !== 'WC2026' || !matchStageAvailabilityReady || !hasStageAvailability || stageTab === 'LT') return
     const currentRound = selectedMatchStageRound
@@ -3885,6 +3903,36 @@ function App() {
                       ))}
                     </div>
                   )}
+                </div>
+              </section>
+            ) : null}
+
+            {selectedTournamentCode === 'RPL' && rplCurrentRound != null ? (
+              <section className="cards">
+                <div className="card card-static round-nav-card">
+                  <div className="round-nav">
+                    <button
+                      type="button"
+                      className="round-nav-arrow"
+                      onClick={() => goToRplRound(rplCurrentRound - 1)}
+                      disabled={rplRoundMin != null && rplCurrentRound <= rplRoundMin}
+                      aria-label="Предыдущий тур"
+                    >
+                      ‹
+                    </button>
+                    <button type="button" className="round-nav-label" onClick={() => setRplRoundPickerOpen(true)}>
+                      Тур {rplCurrentRound}{rplRoundMax != null ? ` из ${rplRoundMax}` : ''}
+                    </button>
+                    <button
+                      type="button"
+                      className="round-nav-arrow"
+                      onClick={() => goToRplRound(rplCurrentRound + 1)}
+                      disabled={rplRoundMax != null && rplCurrentRound >= rplRoundMax}
+                      aria-label="Следующий тур"
+                    >
+                      ›
+                    </button>
+                  </div>
                 </div>
               </section>
             ) : null}
@@ -5534,6 +5582,39 @@ function App() {
                 ) : (
                   <div className="match-predictions-empty">Прогнозов пока нет.</div>
                 )}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {rplRoundPickerOpen && rplRoundMin != null && rplRoundMax != null ? (
+          <div className="round-picker-overlay" onClick={() => setRplRoundPickerOpen(false)}>
+            <div className="round-picker-sheet" onClick={(ev) => ev.stopPropagation()}>
+              <div className="round-picker-head">
+                <div className="round-picker-title">Выбери тур</div>
+                <button
+                  type="button"
+                  className="round-picker-close"
+                  onClick={() => setRplRoundPickerOpen(false)}
+                  aria-label="Закрыть"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="round-picker-grid">
+                {Array.from({ length: rplRoundMax - rplRoundMin + 1 }, (_, i) => rplRoundMin + i).map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    className={`round-picker-chip ${r === rplCurrentRound ? 'is-active' : ''}`}
+                    onClick={() => {
+                      goToRplRound(r)
+                      setRplRoundPickerOpen(false)
+                    }}
+                  >
+                    {r}
+                  </button>
+                ))}
               </div>
             </div>
           </div>
