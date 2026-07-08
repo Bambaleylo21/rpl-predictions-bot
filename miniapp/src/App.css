@@ -774,11 +774,15 @@ body {
 
 .team-name-tappable {
   cursor: pointer;
-  border-bottom: 1px dashed rgba(185, 154, 85, 0.4);
 }
 
 .team-name-tappable:active {
   opacity: 0.75;
+}
+
+.match-center-chevron {
+  color: var(--accent);
+  font-weight: 700;
 }
 
 .match-card-top .day-title {
@@ -4195,11 +4199,18 @@ select:focus-visible {
   color: var(--text-main);
 }
 
+.match-center-crest-logo-wrap {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .match-center-crest-img {
-  width: 100%;
-  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
   object-fit: contain;
-  border-radius: 50%;
 }
 
 .match-center-team-name {
@@ -4274,34 +4285,6 @@ select:focus-visible {
   font-size: 12px;
   color: var(--text-dim);
   padding: 2px 0;
-}
-
-.match-center-prob-bar {
-  display: flex;
-  width: 100%;
-  height: 8px;
-  border-radius: 999px;
-  overflow: hidden;
-  margin-bottom: 8px;
-}
-
-.match-center-prob-home {
-  background: var(--accent);
-}
-
-.match-center-prob-draw {
-  background: rgba(230, 230, 230, 0.3);
-}
-
-.match-center-prob-away {
-  background: #6b7280;
-}
-
-.match-center-prob-legend {
-  display: flex;
-  justify-content: space-between;
-  font-size: 11px;
-  color: var(--text-dim);
 }
 
 .match-center-odds-row {

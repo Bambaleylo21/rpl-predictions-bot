@@ -284,11 +284,6 @@ type MatchCenterResponse = {
   }
   h2h?: MatchCenterH2hItem[]
   lineups?: Record<string, MatchCenterLineup> | null
-  predictions?: {
-    home_pct?: number | null
-    draw_pct?: number | null
-    away_pct?: number | null
-  } | null
   odds?: {
     bookmaker?: string
     home_odd?: string | null
@@ -826,10 +821,9 @@ const TEAM_LOGO_SLUGS: Record<string, string> = {
 const TeamCrest = ({ name, alt }: { name: string; alt?: boolean }) => {
   const slug = TEAM_LOGO_SLUGS[name.trim()]
   const [failed, setFailed] = useState(false)
-  const className = `match-center-crest ${alt ? 'match-center-crest-alt' : ''}`
   if (slug && !failed) {
     return (
-      <div className={className}>
+      <div className="match-center-crest-logo-wrap">
         <img
           src={`/team-logos/${slug}.png`}
           alt=""
@@ -839,7 +833,7 @@ const TeamCrest = ({ name, alt }: { name: string; alt?: boolean }) => {
       </div>
     )
   }
-  return <div className={className}>{name.slice(0, 3).toUpperCase()}</div>
+  return <div className={`match-center-crest ${alt ? 'match-center-crest-alt' : ''}`}>{name.slice(0, 3).toUpperCase()}</div>
 }
 
 const crowdText = (item: {
@@ -1088,6 +1082,9 @@ function App() {
   const [matchCenterId, setMatchCenterId] = useState<number | null>(null)
   const [matchCenterData, setMatchCenterData] = useState<MatchCenterResponse | null>(null)
   const [matchCenterError, setMatchCenterError] = useState<string | null>(null)
+  const [matchCenterCrowd, setMatchCenterCrowd] = useState<MatchPredictionsResponse | null>(null)
+  const [matchCenterCrowdError, setMatchCenterCrowdError] = useState<string | null>(null)
+  const [matchCenterCrowdNotStarted, setMatchCenterCrowdNotStarted] = useState<boolean>(false)
   const [matchPredictionsError, setMatchPredictionsError] = useState<string | null>(null)
   const [tableData, setTableData] = useState<TableResponse | null>(null)
   const [tableError, setTableError] = useState<string | null>(null)
@@ -1279,6 +1276,7 @@ function App() {
       return
     }
     loadMatchCenter(matchCenterId)
+    loadMatchCenterCrowd(matchCenterId)
     try {
       ;(WebApp as any).BackButton?.show()
       const handler = () => closeMatchCenter()
@@ -2031,6 +2029,33 @@ function App() {
       setMatchCenterData(data)
     } catch (err) {
       setMatchCenterError(String(err))
+    }
+  }
+
+  const loadMatchCenterCrowd = async (matchId: number) => {
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    if (!initData) return
+    const tParam = encodeURIComponent(selectedTournamentCode || 'RPL')
+    setMatchCenterCrowdError(null)
+    setMatchCenterCrowdNotStarted(false)
+    setMatchCenterCrowd(null)
+    try {
+      const res = await fetch(
+        `${apiBase}/api/miniapp/match/predictions?t=${tParam}&match_id=${encodeURIComponent(String(matchId))}`,
+        { headers: { 'X-Telegram-Init-Data': initData } }
+      )
+      const data = (await res.json()) as MatchPredictionsResponse
+      if (!res.ok || !data.ok) {
+        if (data.error === 'match_not_started') {
+          setMatchCenterCrowdNotStarted(true)
+          return
+        }
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      setMatchCenterCrowd(data)
+    } catch (err) {
+      setMatchCenterCrowdError(String(err))
     }
   }
 
@@ -4551,7 +4576,15 @@ function App() {
                                       >
                                         {showDateBadge ? <span className="day-title">{dateKey}</span> : <span />}
                                         {m.group_label ? <span className="group-small">[{m.group_label}]</span> : <span className="group-small">—</span>}
-                                        <span className="kickoff-small">{(m.kickoff || '').split(' ')[1] || ''} МСК</span>
+                                        <span className="kickoff-small">
+                                          {(m.kickoff || '').split(' ')[1] || ''} МСК
+                                          {canOpenMatchCenter ? (
+                                            <span className="match-center-chevron" aria-hidden="true">
+                                              {' '}
+                                              ›
+                                            </span>
+                                          ) : null}
+                                        </span>
                                       </div>
                                       <div className="compact-main compact-main-predict">
                                         <span
@@ -4598,7 +4631,7 @@ function App() {
                                               : 'Сохранить'}
                                         </button>
                                       </div>
-                                      {crowdText(m) || isLocked ? (
+                                      {crowdText(m) || (isLocked && !canOpenMatchCenter) ? (
                                         <div className="match-card-bottom">
                                           {crowdText(m) ? (
                                             <span className="community-triplet">
@@ -4609,7 +4642,7 @@ function App() {
                                           ) : (
                                             <span />
                                           )}
-                                          {isLocked ? (
+                                          {isLocked && !canOpenMatchCenter ? (
                                             <button
                                               type="button"
                                               className="match-predictions-btn"
@@ -6069,39 +6102,11 @@ function App() {
                       )}
                     </div>
 
-                    {matchCenterData.predictions &&
-                    (matchCenterData.predictions.home_pct != null ||
-                      matchCenterData.predictions.draw_pct != null ||
-                      matchCenterData.predictions.away_pct != null) ? (
-                      <div className="card match-center-card">
-                        <div className="match-center-card-title">По данным статистики</div>
-                        <div className="match-center-prob-bar">
-                          <span
-                            className="match-center-prob-home"
-                            style={{ width: `${matchCenterData.predictions.home_pct ?? 0}%` }}
-                          />
-                          <span
-                            className="match-center-prob-draw"
-                            style={{ width: `${matchCenterData.predictions.draw_pct ?? 0}%` }}
-                          />
-                          <span
-                            className="match-center-prob-away"
-                            style={{ width: `${matchCenterData.predictions.away_pct ?? 0}%` }}
-                          />
-                        </div>
-                        <div className="match-center-prob-legend">
-                          <span>П1 {matchCenterData.predictions.home_pct ?? '—'}%</span>
-                          <span>Х {matchCenterData.predictions.draw_pct ?? '—'}%</span>
-                          <span>П2 {matchCenterData.predictions.away_pct ?? '—'}%</span>
-                        </div>
-                      </div>
-                    ) : null}
-
                     {matchCenterData.odds &&
                     (matchCenterData.odds.home_odd || matchCenterData.odds.draw_odd || matchCenterData.odds.away_odd) ? (
                       <div className="card match-center-card">
                         <div className="match-center-card-title">
-                          Коэффициенты{matchCenterData.odds.bookmaker ? ` · ${matchCenterData.odds.bookmaker}` : ''}
+                          Котировки букмекеров{matchCenterData.odds.bookmaker ? ` · ${matchCenterData.odds.bookmaker}` : ''}
                         </div>
                         <div className="match-center-odds-row">
                           <div className="match-center-odds-cell">
@@ -6119,6 +6124,50 @@ function App() {
                         </div>
                       </div>
                     ) : null}
+
+                    <div className="card match-center-card">
+                      <div className="match-center-card-title">Прогнозы соперников</div>
+                      {matchCenterCrowdError ? (
+                        <div className="match-center-dim match-center-empty">Не удалось загрузить прогнозы.</div>
+                      ) : matchCenterCrowdNotStarted ? (
+                        <div className="match-center-dim match-center-empty">Появятся после начала матча</div>
+                      ) : !matchCenterCrowd ? (
+                        <SkeletonBlock rows={3} />
+                      ) : (matchCenterCrowd.items || []).length === 0 ? (
+                        <div className="match-center-dim match-center-empty">Прогнозов пока нет</div>
+                      ) : (
+                        <div className="match-predictions-list">
+                          {(matchCenterCrowd.items || []).map((row) => {
+                            const isClosed = matchCenterCrowd.status === 'closed'
+                            const pos = isClosed ? positionChangeLabel(row) : null
+                            return (
+                              <div
+                                className={`match-prediction-row ${row.is_me ? 'is-me' : ''} ${row.prediction ? '' : 'is-missed'}`}
+                                key={row.tg_user_id}
+                              >
+                                {isClosed ? (
+                                  <div className={`match-prediction-position ${pos ? `is-${pos.tone}` : ''}`}>
+                                    {pos?.label || '—'}
+                                  </div>
+                                ) : null}
+                                <div className="match-prediction-name-line">
+                                  <span className="match-prediction-name">{row.name}</span>
+                                  {row.is_me ? <span className="match-prediction-me-badge">ты</span> : null}
+                                </div>
+                                <div className="match-prediction-score">{row.prediction || '—'}</div>
+                                {isClosed ? (
+                                  <div className="match-prediction-result">
+                                    {row.prediction
+                                      ? `${row.emoji || '❌'} ${Number(row.points ?? 0) > 0 ? '+' : ''}${row.points ?? 0}`
+                                      : '—'}
+                                  </div>
+                                ) : null}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
                   </>
                 )}
               </div>

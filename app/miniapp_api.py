@@ -4744,7 +4744,6 @@ async def match_center_current(request: web.Request) -> web.Response:
             fetch_h2h,
             fetch_lineups,
             fetch_odds,
-            fetch_predictions,
             fetch_standings,
             fetch_team_id_map,
         )
@@ -4780,12 +4779,10 @@ async def match_center_current(request: web.Request) -> web.Response:
             ]
 
         lineups_out: dict[str, Any] | None = None
-        predictions_out: dict[str, Any] | None = None
         odds_out: dict[str, Any] | None = None
         if api_fixture_id:
-            raw_lineups, predictions_out, odds_out = await asyncio.gather(
+            raw_lineups, odds_out = await asyncio.gather(
                 fetch_lineups(int(api_fixture_id)),
-                fetch_predictions(int(api_fixture_id)),
                 fetch_odds(int(api_fixture_id)),
             )
             if raw_lineups:
@@ -4808,7 +4805,6 @@ async def match_center_current(request: web.Request) -> web.Response:
                 },
                 "h2h": h2h,
                 "lineups": lineups_out,
-                "predictions": predictions_out,
                 "odds": odds_out,
             }
         )
