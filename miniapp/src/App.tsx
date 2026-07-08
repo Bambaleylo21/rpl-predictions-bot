@@ -501,6 +501,54 @@ type AdminParticipantsCurrentResponse = {
   items?: AdminParticipantItem[]
 }
 
+type RplStageInfo = {
+  id: number
+  name: string
+  round_min: number
+  round_max: number
+  is_active: boolean
+  is_completed: boolean
+}
+
+type RplLeagueInfo = {
+  id: number
+  code: string
+  name: string
+}
+
+type RplSeasonCounts = {
+  total_members: number
+  unassigned: number
+  HIGH: number
+  LOW: number
+}
+
+type AdminRplSeasonResponse = {
+  ok: boolean
+  error?: string
+  reason?: string
+  season: { id: number; name: string } | null
+  stages: RplStageInfo[]
+  leagues: RplLeagueInfo[]
+  enrollment_open: boolean
+  counts: RplSeasonCounts
+}
+
+type RplParticipantItem = {
+  tg_user_id: number
+  display_name: string
+  league_code: string | null
+}
+
+type AdminRplParticipantsResponse = {
+  ok: boolean
+  error?: string
+  reason?: string
+  season_name?: string
+  stage_name?: string
+  items?: RplParticipantItem[]
+}
+
 const ENGLAND_FLAG = String.fromCodePoint(
   0x1f3f4,
   0xe0067,
@@ -905,7 +953,7 @@ function App() {
   const [currentInsight, setCurrentInsight] = useState<string | null>(null)
   const [adminRounds, setAdminRounds] = useState<AdminRound[]>([])
   const [adminRound, setAdminRound] = useState<number | null>(null)
-  const [adminViewMode, setAdminViewMode] = useState<'matches' | 'playoff' | 'longterm' | 'participants' | 'duels' | null>('matches')
+  const [adminViewMode, setAdminViewMode] = useState<'matches' | 'playoff' | 'longterm' | 'participants' | 'duels' | 'rpl_season' | 'rpl_participants' | null>('matches')
   const [adminMode, setAdminMode] = useState<'open' | 'all'>('open')
   const [adminResults, setAdminResults] = useState<AdminResultItem[]>([])
   const [adminRoundName, setAdminRoundName] = useState<string>('')
@@ -924,6 +972,17 @@ function App() {
   const [adminPlayoffTeamInputs, setAdminPlayoffTeamInputs] = useState<Record<number, { home_team: string; away_team: string }>>({})
   const [adminParticipants, setAdminParticipants] = useState<AdminParticipantItem[]>([])
   const [adminRemovingUserId, setAdminRemovingUserId] = useState<number | null>(null)
+  const [adminRplSeason, setAdminRplSeason] = useState<AdminRplSeasonResponse | null>(null)
+  const [adminRplParticipants, setAdminRplParticipants] = useState<RplParticipantItem[]>([])
+  const [adminRplAssigningId, setAdminRplAssigningId] = useState<number | null>(null)
+  const [adminRplSeasonNameInput, setAdminRplSeasonNameInput] = useState<string>('')
+  const [adminRplStage1Min, setAdminRplStage1Min] = useState<string>('1')
+  const [adminRplStage1Max, setAdminRplStage1Max] = useState<string>('17')
+  const [adminRplStage2Min, setAdminRplStage2Min] = useState<string>('18')
+  const [adminRplStage2Max, setAdminRplStage2Max] = useState<string>('30')
+  const [adminRplConfirmInit, setAdminRplConfirmInit] = useState<boolean>(false)
+  const [adminRplEnrollBusy, setAdminRplEnrollBusy] = useState<boolean>(false)
+  const [adminRplInitBusy, setAdminRplInitBusy] = useState<boolean>(false)
   const [adminDuels, setAdminDuels] = useState<AdminDuelsCurrentResponse | null>(null)
   const [adminDuelsFilter, setAdminDuelsFilter] = useState<'active' | 'finished'>('active')
   const [adminDuelCancelBusyId, setAdminDuelCancelBusyId] = useState<number | null>(null)
@@ -950,7 +1009,7 @@ function App() {
   const [joinBusy, setJoinBusy] = useState<boolean>(false)
   const [refreshTick, setRefreshTick] = useState<number>(0)
 
-  const toggleAdminViewMode = (mode: 'matches' | 'playoff' | 'longterm' | 'participants' | 'duels') => {
+  const toggleAdminViewMode = (mode: 'matches' | 'playoff' | 'longterm' | 'participants' | 'duels' | 'rpl_season' | 'rpl_participants') => {
     setAdminViewMode((current) => (current === mode ? null : mode))
   }
 
@@ -2004,6 +2063,116 @@ function App() {
     setAdminParticipants(data.items || [])
   }
 
+  const loadAdminRplSeason = async (apiBase: string, initData: string) => {
+    const headers = { 'X-Telegram-Init-Data': initData }
+    const res = await fetch(`${apiBase}/api/miniapp/admin/rpl/season`, { headers })
+    const data = (await res.json()) as AdminRplSeasonResponse
+    if (!res.ok || !data.ok) {
+      throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+    }
+    setAdminRplSeason(data)
+    if (data.season?.name) setAdminRplSeasonNameInput(data.season.name)
+    if (data.stages && data.stages.length >= 2) {
+      setAdminRplStage1Min(String(data.stages[0].round_min))
+      setAdminRplStage1Max(String(data.stages[0].round_max))
+      setAdminRplStage2Min(String(data.stages[1].round_min))
+      setAdminRplStage2Max(String(data.stages[1].round_max))
+    }
+  }
+
+  const loadAdminRplParticipants = async (apiBase: string, initData: string) => {
+    const headers = { 'X-Telegram-Init-Data': initData }
+    const res = await fetch(`${apiBase}/api/miniapp/admin/rpl/participants`, { headers })
+    const data = (await res.json()) as AdminRplParticipantsResponse
+    if (!res.ok || !data.ok) {
+      throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+    }
+    setAdminRplParticipants(data.items || [])
+  }
+
+  const submitRplSeasonInit = async () => {
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    if (!adminRplConfirmInit) {
+      setAdminNotice('Отметь подтверждение перед созданием сезона.')
+      return
+    }
+    setAdminRplInitBusy(true)
+    setAdminNotice(null)
+    try {
+      const res = await fetch(`${apiBase}/api/miniapp/admin/rpl/season/init`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': initData },
+        body: JSON.stringify({
+          season_name: adminRplSeasonNameInput.trim(),
+          stage1_min: Number(adminRplStage1Min) || 1,
+          stage1_max: Number(adminRplStage1Max) || 17,
+          stage2_min: Number(adminRplStage2Min) || 18,
+          stage2_max: Number(adminRplStage2Max) || 30,
+          confirm: true,
+        }),
+      })
+      const data = (await res.json()) as { ok?: boolean; error?: string; reason?: string }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      setAdminNotice('Сезон создан.')
+      setAdminRplConfirmInit(false)
+      await loadAdminRplSeason(apiBase, initData)
+    } catch (err) {
+      setAdminNotice(`Не удалось создать сезон: ${String(err)}`)
+    } finally {
+      setAdminRplInitBusy(false)
+    }
+  }
+
+  const toggleRplEnrollment = async (open: boolean) => {
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    setAdminRplEnrollBusy(true)
+    setAdminNotice(null)
+    try {
+      const res = await fetch(`${apiBase}/api/miniapp/admin/rpl/enroll`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': initData },
+        body: JSON.stringify({ open }),
+      })
+      const data = (await res.json()) as { ok?: boolean; error?: string; reason?: string }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      await loadAdminRplSeason(apiBase, initData)
+    } catch (err) {
+      setAdminNotice(`Не удалось изменить набор: ${String(err)}`)
+    } finally {
+      setAdminRplEnrollBusy(false)
+    }
+  }
+
+  const assignRplParticipant = async (tgUserId: number, leagueCode: 'HIGH' | 'LOW') => {
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    setAdminRplAssigningId(tgUserId)
+    setAdminNotice(null)
+    try {
+      const res = await fetch(`${apiBase}/api/miniapp/admin/rpl/participants/assign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': initData },
+        body: JSON.stringify({ tg_user_id: tgUserId, league_code: leagueCode }),
+      })
+      const data = (await res.json()) as { ok?: boolean; error?: string; reason?: string }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      await loadAdminRplParticipants(apiBase, initData)
+      await loadAdminRplSeason(apiBase, initData)
+    } catch (err) {
+      setAdminNotice(`Не удалось назначить лигу: ${String(err)}`)
+    } finally {
+      setAdminRplAssigningId(null)
+    }
+  }
+
   const loadAdminDuels = async (apiBase: string, initData: string, tournamentCode: string) => {
     const headers = { 'X-Telegram-Init-Data': initData }
     const tParam = encodeURIComponent(tournamentCode || 'RPL')
@@ -2420,7 +2589,28 @@ function App() {
   }, [meData?.is_admin, selectedTournamentCode, adminViewMode])
 
   useEffect(() => {
+    if (!meData?.is_admin) return
+    if (adminViewMode !== 'rpl_season') return
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    if (!initData) return
+    loadAdminRplSeason(apiBase, initData).catch((err) => setAdminError(String(err)))
+  }, [meData?.is_admin, adminViewMode])
+
+  useEffect(() => {
+    if (!meData?.is_admin) return
+    if (adminViewMode !== 'rpl_participants') return
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    if (!initData) return
+    loadAdminRplParticipants(apiBase, initData).catch((err) => setAdminError(String(err)))
+  }, [meData?.is_admin, adminViewMode])
+
+  useEffect(() => {
     if (selectedTournamentCode !== 'WC2026' && (adminViewMode === 'longterm' || adminViewMode === 'playoff')) {
+      setAdminViewMode('matches')
+    }
+    if (selectedTournamentCode !== 'RPL' && (adminViewMode === 'rpl_season' || adminViewMode === 'rpl_participants')) {
       setAdminViewMode('matches')
     }
   }, [selectedTournamentCode, adminViewMode])
@@ -3006,6 +3196,197 @@ function App() {
       </div>
     </div>
   )
+
+  const renderAdminRplSeasonContent = () => {
+    const season = adminRplSeason?.season
+    const stages = adminRplSeason?.stages || []
+    const counts = adminRplSeason?.counts
+    const enrollOpen = !!adminRplSeason?.enrollment_open
+    return (
+      <div className="admin-inline-panel">
+        {season ? (
+          <>
+            <div className="admin-participants-summary">
+              <div>
+                <span>Сезон</span>
+                <b>{season.name}</b>
+              </div>
+              <div>
+                <span>Набор</span>
+                <b>{enrollOpen ? 'Открыт' : 'Закрыт'}</b>
+              </div>
+              <div>
+                <span>Участников</span>
+                <b>{counts?.total_members ?? 0}</b>
+              </div>
+            </div>
+            <div className="compact-list-card admin-inline-list">
+              {stages.map((s) => (
+                <div className="compact-match" key={`stage-${s.id}`}>
+                  <div className="admin-participant-main">
+                    <div className="admin-participant-name">
+                      <span className="team-name team-left">
+                        {s.name}
+                        {s.is_active ? ' (активен)' : ''}
+                      </span>
+                      <span className="group-small">
+                        Туры {s.round_min}–{s.round_max}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="admin-participants-summary">
+              <div>
+                <span>Высшая лига</span>
+                <b>{counts?.HIGH ?? 0}</b>
+              </div>
+              <div>
+                <span>Низшая лига</span>
+                <b>{counts?.LOW ?? 0}</b>
+              </div>
+              <div>
+                <span>Не распределены</span>
+                <b>{counts?.unassigned ?? 0}</b>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="admin-reset-btn admin-reset-btn-wide"
+              onClick={() => toggleRplEnrollment(!enrollOpen)}
+              disabled={adminRplEnrollBusy}
+            >
+              {adminRplEnrollBusy ? '…' : enrollOpen ? 'Закрыть набор' : 'Открыть набор'}
+            </button>
+          </>
+        ) : (
+          <div className="card-text admin-empty-text">Сезон РПЛ ещё не создан.</div>
+        )}
+
+        <div className="card-title" style={{ marginTop: 16 }}>
+          {season ? 'Пересоздать сезон' : 'Создать сезон'}
+        </div>
+        <div className="segment-hint">
+          {season
+            ? 'Внимание: пересоздание сотрёт текущие лиги, этапы и распределение участников по ним.'
+            : 'Задай при необходимости диапазоны туров — по умолчанию 1–17 (осень) и 18–30 (весна).'}
+        </div>
+        <input
+          className="admin-text-input"
+          placeholder="Название сезона, напр. РПЛ 2026/27"
+          value={adminRplSeasonNameInput}
+          onChange={(e) => setAdminRplSeasonNameInput(e.target.value)}
+        />
+        <div className="admin-range-row">
+          <span>Осенний этап, туры</span>
+          <input
+            className="admin-number-input"
+            value={adminRplStage1Min}
+            onChange={(e) => setAdminRplStage1Min(e.target.value)}
+          />
+          <span>–</span>
+          <input
+            className="admin-number-input"
+            value={adminRplStage1Max}
+            onChange={(e) => setAdminRplStage1Max(e.target.value)}
+          />
+        </div>
+        <div className="admin-range-row">
+          <span>Весенний этап, туры</span>
+          <input
+            className="admin-number-input"
+            value={adminRplStage2Min}
+            onChange={(e) => setAdminRplStage2Min(e.target.value)}
+          />
+          <span>–</span>
+          <input
+            className="admin-number-input"
+            value={adminRplStage2Max}
+            onChange={(e) => setAdminRplStage2Max(e.target.value)}
+          />
+        </div>
+        <label className="admin-confirm-row">
+          <input
+            type="checkbox"
+            checked={adminRplConfirmInit}
+            onChange={(e) => setAdminRplConfirmInit(e.target.checked)}
+          />
+          <span>Понимаю, что это сотрёт текущие лиги/этапы</span>
+        </label>
+        <button
+          type="button"
+          className="admin-reset-btn admin-reset-btn-wide"
+          onClick={submitRplSeasonInit}
+          disabled={adminRplInitBusy || !adminRplConfirmInit}
+        >
+          {adminRplInitBusy ? '…' : season ? 'Пересоздать сезон' : 'Создать сезон'}
+        </button>
+      </div>
+    )
+  }
+
+  const renderAdminRplParticipantsContent = () => {
+    const unassigned = adminRplParticipants.filter((p) => !p.league_code)
+    const high = adminRplParticipants.filter((p) => p.league_code === 'HIGH')
+    const low = adminRplParticipants.filter((p) => p.league_code === 'LOW')
+    const renderRow = (p: RplParticipantItem) => (
+      <div className="compact-match admin-participant-row" key={`rpl-p-${p.tg_user_id}`}>
+        <div className="admin-participant-main">
+          <div className="admin-participant-name">
+            <span className="team-name team-left">{p.display_name}</span>
+            <span className="group-small">
+              ID {p.tg_user_id}
+              {p.league_code ? ` · ${p.league_code === 'HIGH' ? 'Высшая' : 'Низшая'}` : ''}
+            </span>
+          </div>
+          <button
+            className="admin-reset-btn"
+            onClick={() => assignRplParticipant(p.tg_user_id, 'HIGH')}
+            disabled={adminRplAssigningId === p.tg_user_id || p.league_code === 'HIGH'}
+          >
+            {adminRplAssigningId === p.tg_user_id ? '…' : '→ Высшая'}
+          </button>
+          <button
+            className="admin-reset-btn"
+            onClick={() => assignRplParticipant(p.tg_user_id, 'LOW')}
+            disabled={adminRplAssigningId === p.tg_user_id || p.league_code === 'LOW'}
+          >
+            {adminRplAssigningId === p.tg_user_id ? '…' : '→ Низшая'}
+          </button>
+        </div>
+      </div>
+    )
+    return (
+      <div className="admin-inline-panel">
+        <div className="admin-participants-summary">
+          <div>
+            <span>Не распределены</span>
+            <b>{unassigned.length}</b>
+          </div>
+          <div>
+            <span>Высшая</span>
+            <b>{high.length}</b>
+          </div>
+          <div>
+            <span>Низшая</span>
+            <b>{low.length}</b>
+          </div>
+        </div>
+        <div className="compact-list-card admin-inline-list">
+          {adminRplParticipants.length === 0 ? (
+            <div className="card-text admin-empty-text">Пока никто не вступил в РПЛ.</div>
+          ) : (
+            <>
+              {unassigned.map(renderRow)}
+              {high.map(renderRow)}
+              {low.map(renderRow)}
+            </>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   const renderAdminDuelsContent = () => {
     const visibleAdminDuels = adminDuelsFilter === 'active' ? adminDuels?.active || [] : adminDuels?.finished || []
@@ -4697,6 +5078,42 @@ function App() {
                     <span className="admin-accordion-caret">{adminViewMode === 'participants' ? '⌃' : '⌄'}</span>
                   </button>
                   {adminViewMode === 'participants' ? renderAdminParticipantsContent() : null}
+
+                  {selectedTournamentCode === 'RPL' ? (
+                    <>
+                      <button
+                        className={`admin-accordion-head ${adminViewMode === 'rpl_season' ? 'is-active' : ''}`}
+                        onClick={() => toggleAdminViewMode('rpl_season')}
+                      >
+                        <span>
+                          <b>Сезон РПЛ</b>
+                          <small>
+                            {adminRplSeason?.season
+                              ? `${adminRplSeason.season.name} · набор ${adminRplSeason.enrollment_open ? 'открыт' : 'закрыт'}`
+                              : 'сезон ещё не создан'}
+                          </small>
+                        </span>
+                        <span className="admin-accordion-caret">{adminViewMode === 'rpl_season' ? '⌃' : '⌄'}</span>
+                      </button>
+                      {adminViewMode === 'rpl_season' ? renderAdminRplSeasonContent() : null}
+
+                      <button
+                        className={`admin-accordion-head ${adminViewMode === 'rpl_participants' ? 'is-active' : ''}`}
+                        onClick={() => toggleAdminViewMode('rpl_participants')}
+                      >
+                        <span>
+                          <b>Участники и лиги</b>
+                          <small>
+                            {adminRplSeason?.counts
+                              ? `не распределено ${adminRplSeason.counts.unassigned}`
+                              : 'распределение по Высшей/Низшей'}
+                          </small>
+                        </span>
+                        <span className="admin-accordion-caret">{adminViewMode === 'rpl_participants' ? '⌃' : '⌄'}</span>
+                      </button>
+                      {adminViewMode === 'rpl_participants' ? renderAdminRplParticipantsContent() : null}
+                    </>
+                  ) : null}
 
                   <button
                     className={`admin-accordion-head ${adminViewMode === 'duels' ? 'is-active' : ''}`}

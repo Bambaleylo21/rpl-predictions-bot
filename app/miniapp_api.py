@@ -5343,6 +5343,346 @@ async def table_current(request: web.Request) -> web.Response:
         )
 
 
+async def admin_rpl_season_status(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_admin_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, _user = auth_result
+
+        from app.season_setup import get_active_season, get_active_stage, is_enrollment_open
+
+        async with SessionLocal() as session:
+            season = await get_active_season(session)
+            if season is None:
+                return web.json_response(
+                    {
+                        "ok": True,
+                        "trusted": True,
+                        "is_admin": True,
+                        "season": None,
+                        "stages": [],
+                        "leagues": [],
+                        "enrollment_open": False,
+                        "counts": {"total_members": 0, "unassigned": 0, "HIGH": 0, "LOW": 0},
+                    }
+                )
+
+            stages_q = await session.execute(
+                select(Stage).where(Stage.season_id == season.id).order_by(Stage.stage_order.asc())
+            )
+            stages = stages_q.scalars().all()
+
+            leagues_q = await session.execute(
+                select(League).where(League.season_id == season.id, League.is_active == 1).order_by(League.code.asc())
+            )
+            leagues = leagues_q.scalars().all()
+
+            enrollment_open = await is_enrollment_open(session)
+            active_stage = await get_active_stage(session, season.id)
+
+            counts = {"total_members": 0, "unassigned": 0, "HIGH": 0, "LOW": 0}
+            rpl_q = await session.execute(select(Tournament).where(Tournament.code == "RPL"))
+            rpl = rpl_q.scalar_one_or_none()
+            if rpl is not None:
+                total_q = await session.execute(
+                    select(func.count(UserTournament.id)).where(UserTournament.tournament_id == rpl.id)
+                )
+                counts["total_members"] = int(total_q.scalar_one() or 0)
+
+                if active_stage is not None:
+                    by_league_q = await session.execute(
+                        select(League.code, func.count(LeagueParticipant.id))
+                        .select_from(LeagueParticipant)
+                        .join(League, League.id == LeagueParticipant.league_id)
+                        .where(LeagueParticipant.stage_id == active_stage.id, LeagueParticipant.is_active == 1)
+                        .group_by(League.code)
+                    )
+                    assigned_total = 0
+                    for code, cnt in by_league_q.all():
+                        c = int(cnt or 0)
+                        counts[str(code).upper()] = c
+                        assigned_total += c
+                    counts["unassigned"] = max(0, counts["total_members"] - assigned_total)
+
+            await session.commit()
+
+        return web.json_response(
+            {
+                "ok": True,
+                "trusted": True,
+                "is_admin": True,
+                "season": {"id": int(season.id), "name": str(season.name)},
+                "stages": [
+                    {
+                        "id": int(s.id),
+                        "name": str(s.name),
+                        "round_min": int(s.round_min),
+                        "round_max": int(s.round_max),
+                        "is_active": bool(int(s.is_active or 0)),
+                        "is_completed": bool(int(s.is_completed or 0)),
+                    }
+                    for s in stages
+                ],
+                "leagues": [{"id": int(l.id), "code": str(l.code), "name": str(l.name)} for l in leagues],
+                "enrollment_open": bool(enrollment_open),
+                "counts": counts,
+            }
+        )
+    except Exception as e:
+        logger.exception("miniapp admin_rpl_season_status error")
+        return web.json_response(
+            {"ok": False, "error": "admin_rpl_season_status_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
+async def admin_rpl_season_init(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_admin_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, _user = auth_result
+
+        body = await request.json()
+        if not bool(body.get("confirm")):
+            return web.json_response(
+                {"ok": False, "error": "confirmation_required", "reason": "Нужно подтверждение (confirm=true)."},
+                status=400,
+            )
+
+        season_name = str(body.get("season_name") or "").strip()
+        stage1_min = int(body.get("stage1_min") or 1)
+        stage1_max = int(body.get("stage1_max") or 17)
+        stage2_min = int(body.get("stage2_min") or 18)
+        stage2_max = int(body.get("stage2_max") or 30)
+
+        from app.season_setup import DEFAULT_SEASON_NAME, setup_new_season_foundation
+
+        async with SessionLocal() as session:
+            summary = await setup_new_season_foundation(
+                session=session,
+                season_name=season_name or DEFAULT_SEASON_NAME,
+                stage_1_round_min=stage1_min,
+                stage_1_round_max=stage1_max,
+                stage_2_round_min=stage2_min,
+                stage_2_round_max=stage2_max,
+            )
+            await session.commit()
+
+        return web.json_response(
+            {
+                "ok": True,
+                "trusted": True,
+                "is_admin": True,
+                "season_id": summary.season_id,
+                "season_name": summary.season_name,
+            }
+        )
+    except (ValueError, TypeError):
+        return web.json_response({"ok": False, "error": "invalid_payload"}, status=400)
+    except Exception as e:
+        logger.exception("miniapp admin_rpl_season_init error")
+        return web.json_response(
+            {"ok": False, "error": "admin_rpl_season_init_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
+async def admin_rpl_season_name(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_admin_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, _user = auth_result
+
+        body = await request.json()
+        season_name = str(body.get("season_name") or "").strip()
+        if not season_name:
+            return web.json_response({"ok": False, "error": "invalid_payload"}, status=400)
+
+        from app.season_setup import set_active_season_name
+
+        async with SessionLocal() as session:
+            season = await set_active_season_name(session, season_name)
+            await session.commit()
+            if season is None:
+                return web.json_response({"ok": False, "error": "no_active_season"}, status=404)
+
+        return web.json_response({"ok": True, "trusted": True, "is_admin": True, "season_name": season_name})
+    except Exception as e:
+        logger.exception("miniapp admin_rpl_season_name error")
+        return web.json_response(
+            {"ok": False, "error": "admin_rpl_season_name_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
+async def admin_rpl_enroll_set(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_admin_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, _user = auth_result
+
+        body = await request.json()
+        is_open = bool(body.get("open"))
+
+        from app.season_setup import set_enrollment_open
+
+        async with SessionLocal() as session:
+            await set_enrollment_open(session, is_open)
+            await session.commit()
+
+        return web.json_response({"ok": True, "trusted": True, "is_admin": True, "enrollment_open": is_open})
+    except Exception as e:
+        logger.exception("miniapp admin_rpl_enroll_set error")
+        return web.json_response(
+            {"ok": False, "error": "admin_rpl_enroll_set_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
+async def admin_rpl_participants_current(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_admin_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, _user = auth_result
+
+        from app.season_setup import get_active_season, get_active_stage
+
+        async with SessionLocal() as session:
+            rpl_q = await session.execute(select(Tournament).where(Tournament.code == "RPL"))
+            rpl = rpl_q.scalar_one_or_none()
+            if rpl is None:
+                return web.json_response({"ok": False, "error": "rpl_tournament_not_found"}, status=404)
+
+            season = await get_active_season(session)
+            if season is None:
+                return web.json_response(
+                    {"ok": False, "error": "no_active_season", "reason": "Сначала создай сезон."}, status=400
+                )
+            stage = await get_active_stage(session, season.id)
+            if stage is None:
+                return web.json_response(
+                    {"ok": False, "error": "no_active_stage", "reason": "Сначала создай сезон."}, status=400
+                )
+
+            members_q = await session.execute(
+                select(UserTournament.tg_user_id, UserTournament.display_name)
+                .where(UserTournament.tournament_id == rpl.id)
+                .order_by(UserTournament.tg_user_id.asc())
+            )
+            members = members_q.all()
+
+            member_ids = [int(m[0]) for m in members]
+            user_map: dict[int, dict[str, Any]] = {}
+            if member_ids:
+                users_q = await session.execute(
+                    select(User.tg_user_id, User.display_name, User.full_name, User.username).where(
+                        User.tg_user_id.in_(member_ids)
+                    )
+                )
+                user_map = {
+                    int(tg_id): {"display_name": dn, "full_name": fn, "username": un}
+                    for tg_id, dn, fn, un in users_q.all()
+                }
+
+            league_q = await session.execute(
+                select(LeagueParticipant.tg_user_id, League.code)
+                .select_from(LeagueParticipant)
+                .join(League, League.id == LeagueParticipant.league_id)
+                .where(LeagueParticipant.stage_id == stage.id, LeagueParticipant.is_active == 1)
+            )
+            league_map = {int(uid): str(code).upper() for uid, code in league_q.all()}
+
+            items = []
+            for tg_user_id_raw, ut_display_name in members:
+                uid = int(tg_user_id_raw)
+                u = user_map.get(uid, {})
+                display_name = (
+                    (ut_display_name or "").strip()
+                    or str(u.get("display_name") or "").strip()
+                    or str(u.get("full_name") or "").strip()
+                    or (f"@{u.get('username')}" if u.get("username") else "")
+                    or str(uid)
+                )
+                items.append(
+                    {
+                        "tg_user_id": uid,
+                        "display_name": display_name,
+                        "league_code": league_map.get(uid),
+                    }
+                )
+
+            items.sort(key=lambda x: x["display_name"].lower())
+            await session.commit()
+
+        return web.json_response(
+            {
+                "ok": True,
+                "trusted": True,
+                "is_admin": True,
+                "season_name": str(season.name),
+                "stage_name": str(stage.name),
+                "items": items,
+            }
+        )
+    except Exception as e:
+        logger.exception("miniapp admin_rpl_participants_current error")
+        return web.json_response(
+            {"ok": False, "error": "admin_rpl_participants_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
+async def admin_rpl_participant_assign(request: web.Request) -> web.Response:
+    try:
+        auth_result = _extract_verified_admin_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, _user = auth_result
+
+        body = await request.json()
+        tg_user_id = int(body.get("tg_user_id") or 0)
+        league_code = str(body.get("league_code") or "").strip().upper()
+        if tg_user_id <= 0 or league_code not in ("HIGH", "LOW"):
+            return web.json_response({"ok": False, "error": "invalid_payload"}, status=400)
+
+        from app.season_setup import assign_user_to_active_stage_league
+
+        async with SessionLocal() as session:
+            result = await assign_user_to_active_stage_league(session, tg_user_id=tg_user_id, league_code=league_code)
+            await session.commit()
+
+        if result is None:
+            return web.json_response(
+                {"ok": False, "error": "assign_failed", "reason": "Сначала создай сезон (/admin_season_init)."},
+                status=400,
+            )
+        display_name, league_name = result
+        return web.json_response(
+            {
+                "ok": True,
+                "trusted": True,
+                "is_admin": True,
+                "tg_user_id": tg_user_id,
+                "display_name": display_name,
+                "league_code": league_code,
+                "league_name": league_name,
+            }
+        )
+    except (ValueError, TypeError):
+        return web.json_response({"ok": False, "error": "invalid_payload"}, status=400)
+    except Exception as e:
+        logger.exception("miniapp admin_rpl_participant_assign error")
+        return web.json_response(
+            {"ok": False, "error": "admin_rpl_participant_assign_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
 @web.middleware
 async def cors_middleware(request: web.Request, handler):
     if request.method == "OPTIONS":
@@ -5394,6 +5734,12 @@ def build_app() -> web.Application:
     app.router.add_get("/api/miniapp/admin/longterm/current", admin_longterm_current)
     app.router.add_post("/api/miniapp/admin/longterm/set", admin_longterm_set)
     app.router.add_post("/api/miniapp/admin/longterm/reset", admin_longterm_reset)
+    app.router.add_get("/api/miniapp/admin/rpl/season", admin_rpl_season_status)
+    app.router.add_post("/api/miniapp/admin/rpl/season/init", admin_rpl_season_init)
+    app.router.add_post("/api/miniapp/admin/rpl/season/name", admin_rpl_season_name)
+    app.router.add_post("/api/miniapp/admin/rpl/enroll", admin_rpl_enroll_set)
+    app.router.add_get("/api/miniapp/admin/rpl/participants", admin_rpl_participants_current)
+    app.router.add_post("/api/miniapp/admin/rpl/participants/assign", admin_rpl_participant_assign)
     return app
 
 
