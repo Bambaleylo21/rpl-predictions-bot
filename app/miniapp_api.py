@@ -2067,6 +2067,20 @@ async def tournament_join(request: web.Request) -> web.Response:
     username = str(user.get("username") or "").strip() if isinstance(user, dict) else ""
     display_name = " ".join(x for x in (first_name, last_name) if x).strip() or (f"@{username}" if username else None)
 
+    # Имя для таблицы задаёт сам участник (2-24 символа) — как раньше было при вступлении через бота.
+    requested_display_name_raw = str(body.get("display_name") or "")
+    requested_display_name = " ".join(requested_display_name_raw.strip().split())
+    if not (2 <= len(requested_display_name) <= 24):
+        return web.json_response(
+            {
+                "ok": False,
+                "error": "invalid_display_name",
+                "reason": "Имя для таблицы должно быть длиной 2-24 символа.",
+            },
+            status=400,
+        )
+    display_name = requested_display_name
+
     async with SessionLocal() as session:
         await _upsert_user_from_webapp(session, user if isinstance(user, dict) else {})
         tournament = await _resolve_tournament(session, int(tg_user_id), requested_code=requested_code)

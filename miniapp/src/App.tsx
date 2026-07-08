@@ -1008,6 +1008,8 @@ function App() {
   const [duelRulesOpen, setDuelRulesOpen] = useState<boolean>(false)
   const [duelLeaderboardOpen, setDuelLeaderboardOpen] = useState<boolean>(false)
   const [joinBusy, setJoinBusy] = useState<boolean>(false)
+  const [joinNameInput, setJoinNameInput] = useState<string>('')
+  const [joinNameTouched, setJoinNameTouched] = useState<boolean>(false)
   const [refreshTick, setRefreshTick] = useState<number>(0)
 
   const toggleAdminViewMode = (mode: 'matches' | 'playoff' | 'longterm' | 'participants' | 'duels' | 'rpl_season' | 'rpl_participants') => {
@@ -1071,6 +1073,13 @@ function App() {
       setScorerPickerOpen(false)
     }
   }, [stageTab])
+
+  useEffect(() => {
+    if (joinNameTouched) return
+    if (meData?.first_name) {
+      setJoinNameInput(meData.first_name)
+    }
+  }, [meData?.first_name, joinNameTouched])
 
   useEffect(() => {
     try {
@@ -1575,6 +1584,11 @@ function App() {
 
   const joinSelectedTournament = async () => {
     const joinTournamentCode = selectedTournamentCode || 'WC2026'
+    const displayName = joinNameInput.trim().replace(/\s+/g, ' ')
+    if (displayName.length < 2 || displayName.length > 24) {
+      setTournamentNotice('Введи имя для таблицы — от 2 до 24 символов.')
+      return
+    }
     const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
     const initData = getInitData()
     const headers = {
@@ -1587,7 +1601,7 @@ function App() {
       const res = await fetch(`${apiBase}/api/miniapp/tournament/join`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ tournament_code: joinTournamentCode }),
+        body: JSON.stringify({ tournament_code: joinTournamentCode, display_name: displayName }),
       })
       const data = (await res.json()) as {
         ok?: boolean
@@ -3693,10 +3707,23 @@ function App() {
                   </>
                 )}
               </div>
+              <label className="join-name-label">
+                <span>Имя для таблицы (2–24 символа)</span>
+                <input
+                  className="admin-text-input join-name-input"
+                  value={joinNameInput}
+                  onChange={(e) => {
+                    setJoinNameTouched(true)
+                    setJoinNameInput(e.target.value)
+                  }}
+                  placeholder="Например, Роман"
+                  maxLength={24}
+                />
+              </label>
               <button
                 className="save-btn join-onboarding-btn is-dirty"
                 onClick={joinSelectedTournament}
-                disabled={joinBusy}
+                disabled={joinBusy || joinNameInput.trim().length < 2}
               >
                 {joinBusy ? 'Вступаю…' : `Вступить в турнир ${selectedTournamentCode === 'RPL' ? 'РПЛ' : 'WC'}`}
               </button>

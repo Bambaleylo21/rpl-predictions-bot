@@ -2174,6 +2174,17 @@ body {
   padding: 12px 14px;
 }
 
+.join-name-label {
+  display: block;
+  margin-top: var(--vr-md);
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.join-name-input {
+  margin-top: 6px;
+}
+
 .card-title {
   font-weight: 700;
   font-size: 18px;
