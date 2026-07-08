@@ -6,22 +6,36 @@ TOURNAMENT_NAME_MAP: dict[str, str] = {
 }
 
 TEAM_NAME_MAP: dict[str, str] = {
+    # Старые/альтернативные написания (прошлые сезоны, оставлены для совместимости)
     "Rostov": "Ростов",
-    "Baltika": "Балтика",
     "Pari Nizhniy Novgorod": "Пари НН",
     "Sochi": "Сочи",
     "Orenburg": "Оренбург",
-    "Zenit": "Зенит",
     "Krylya Sovetov": "Кр. Советов",
     "Makhachkala D": "Динамо Мхч",
-    "Rubin": "Рубин",
     "Krasnodar": "Краснодар",
     "CSKA": "ЦСКА",
     "Moscow D": "Динамо Москва",
     "Lokomotiv M": "Локомотив",
-    "Akhmat": "Ахмат",
     "Spartak M": "Спартак",
+
+    # Названия из API-Football, сезон РПЛ 2026/27
+    "Akhmat": "Ахмат",
     "Akron": "Акрон",
+    "Baltika": "Балтика",
+    "CSKA Moscow": "ЦСКА",
+    "Dinamo Makhachkala": "Динамо Мхч",
+    "Dynamo": "Динамо Москва",
+    "FC Krasnodar": "Краснодар",
+    "FC Orenburg": "Оренбург",
+    "FC Rostov": "Ростов",
+    "Fakel": "Факел",
+    "Krylia Sovetov": "Кр. Советов",
+    "Lokomotiv": "Локомотив",
+    "Rodina Moskva": "Родина",
+    "Rubin": "Рубин",
+    "Spartak Moscow": "Спартак",
+    "Zenit": "Зенит",
 }
 
 

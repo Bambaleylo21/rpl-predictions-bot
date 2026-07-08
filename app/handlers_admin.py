@@ -2007,7 +2007,6 @@ def register_admin_handlers(dp: Dispatcher) -> None:
     dp.message.register(admin_set_result_score_input, AdminSetResultStates.waiting_for_score)
     dp.message.register(admin_recalc, Command("admin_recalc"))
     dp.message.register(admin_longterm_award, Command("admin_longterm_award"))
-    dp.message.register(admin_manual_only_cleanup, Command("admin_manual_only_cleanup"))
     dp.message.register(admin_tournament_reset, Command("admin_tournament_reset"))
     dp.message.register(admin_tournament_create, Command("admin_tournament_create"))
     dp.message.register(admin_tournament_open, Command("admin_tournament_open"))
@@ -2623,100 +2622,6 @@ async def admin_longterm_award(message: types.Message):
         f"Обновлено строк участников: {updated_count}\n"
         f"Фактически изменилось: {changed_count}\n"
         "Команда идемпотентная: повторный запуск не создаёт дублей."
-    )
-
-
-async def admin_manual_only_cleanup(message: types.Message):
-    """/admin_manual_only_cleanup — удалить всё API и оставить только ручной RPL"""
-    if message.from_user.id not in ADMIN_IDS:
-        await message.answer("⛔️ У вас нет прав на эту команду.")
-        return
-
-    async with SessionLocal() as session:
-        rpl_q = await session.execute(select(Tournament).where(Tournament.code == "RPL"))
-        rpl = rpl_q.scalar_one_or_none()
-        if rpl is None:
-            await message.answer("❌ Турнир RPL не найден. Операция остановлена.")
-            return
-
-        rpl.round_min = 19
-        rpl.round_max = 30
-
-        non_rpl_ids_q = await session.execute(select(Tournament.id).where(Tournament.id != rpl.id))
-        non_rpl_ids = [int(x[0]) for x in non_rpl_ids_q.all()]
-
-        bad_ids_subq = select(Match.id).where(
-            (Match.source != "manual")
-            | Match.api_fixture_id.isnot(None)
-            | (Match.tournament_id != rpl.id)
-        )
-        del_points = await session.execute(delete(Point).where(Point.match_id.in_(bad_ids_subq)))
-        del_preds = await session.execute(delete(Prediction).where(Prediction.match_id.in_(bad_ids_subq)))
-        del_matches = await session.execute(delete(Match).where(Match.id.in_(bad_ids_subq)))
-
-        del_ut_non_rpl = 0
-        del_tournaments = 0
-        if non_rpl_ids:
-            del_ut_res = await session.execute(delete(UserTournament).where(UserTournament.tournament_id.in_(non_rpl_ids)))
-            del_ut_non_rpl = int(del_ut_res.rowcount or 0)
-
-            del_t_res = await session.execute(delete(Tournament).where(Tournament.id.in_(non_rpl_ids)))
-            del_tournaments = int(del_t_res.rowcount or 0)
-
-        rpl_member_ids_subq = select(UserTournament.tg_user_id).where(UserTournament.tournament_id == rpl.id)
-
-        # Удаляем пользователей, не состоящих в RPL (включая следы их данных).
-        del_user_points = await session.execute(delete(Point).where(Point.tg_user_id.not_in(rpl_member_ids_subq)))
-        del_user_preds = await session.execute(delete(Prediction).where(Prediction.tg_user_id.not_in(rpl_member_ids_subq)))
-        del_users = await session.execute(delete(User).where(User.tg_user_id.not_in(rpl_member_ids_subq)))
-
-        # Чистим настройки выхода из не-RPL турниров.
-        left_keys_q = await session.execute(select(Setting).where(Setting.key.like("LEFT_T%_U%")))
-        removed_left_keys = 0
-        for row in left_keys_q.scalars().all():
-            key = str(row.key or "")
-            if key.startswith(f"LEFT_T{rpl.id}_"):
-                continue
-            await session.delete(row)
-            removed_left_keys += 1
-
-        await session.commit()
-
-        left_matches = int(
-            (
-                await session.execute(
-                    select(func.count(Match.id)).where(
-                        Match.tournament_id == rpl.id,
-                    )
-                )
-            ).scalar_one()
-            or 0
-        )
-        left_members = int(
-            (
-                await session.execute(
-                    select(func.count(func.distinct(UserTournament.tg_user_id))).where(
-                        UserTournament.tournament_id == rpl.id
-                    )
-                )
-            ).scalar_one()
-            or 0
-        )
-
-    await message.answer(
-        "✅ Manual-only cleanup завершён.\n"
-        f"Удалено матчей (не-RPL/API): {int(del_matches.rowcount or 0)}\n"
-        f"Удалено прогнозов по матчам: {int(del_preds.rowcount or 0)}\n"
-        f"Удалено очков по матчам: {int(del_points.rowcount or 0)}\n"
-        f"Удалено участий в не-RPL: {del_ut_non_rpl}\n"
-        f"Удалено турниров не-RPL: {del_tournaments}\n"
-        f"Удалено прогнозов пользователей вне RPL: {int(del_user_preds.rowcount or 0)}\n"
-        f"Удалено очков пользователей вне RPL: {int(del_user_points.rowcount or 0)}\n"
-        f"Удалено пользователей вне RPL: {int(del_users.rowcount or 0)}\n"
-        f"Удалено LEFT-настроек не-RPL: {removed_left_keys}\n"
-        f"Осталось матчей в RPL: {left_matches}\n"
-        f"Осталось участников в RPL: {left_members}\n"
-        "Теперь бот полностью очищен от других турниров."
     )
 
 
