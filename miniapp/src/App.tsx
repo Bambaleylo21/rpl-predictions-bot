@@ -6,6 +6,51 @@ import wcInactiveIcon from './assets/tournaments/wc-inactive.png'
 import rplActiveIcon from './assets/tournaments/rpl-active.png'
 import rplInactiveIcon from './assets/tournaments/rpl-inactive.png'
 
+const haptic = {
+  success: () => {
+    try {
+      ;(WebApp as any).HapticFeedback?.notificationOccurred('success')
+    } catch {
+      // no-op for clients without haptics support
+    }
+  },
+  error: () => {
+    try {
+      ;(WebApp as any).HapticFeedback?.notificationOccurred('error')
+    } catch {
+      // no-op for clients without haptics support
+    }
+  },
+  light: () => {
+    try {
+      ;(WebApp as any).HapticFeedback?.impactOccurred('light')
+    } catch {
+      // no-op for clients without haptics support
+    }
+  },
+  select: () => {
+    try {
+      ;(WebApp as any).HapticFeedback?.selectionChanged()
+    } catch {
+      // no-op for clients without haptics support
+    }
+  },
+}
+
+const shareViaTelegram = (text: string) => {
+  const shareUrl = `https://t.me/share/url?url=&text=${encodeURIComponent(text)}`
+  try {
+    const opened = (WebApp as any).openTelegramLink?.(shareUrl)
+    if (opened === undefined && typeof window !== 'undefined') {
+      window.open(shareUrl, '_blank')
+    }
+  } catch {
+    if (typeof window !== 'undefined') {
+      window.open(shareUrl, '_blank')
+    }
+  }
+}
+
 type MeResponse = {
   ok: boolean
   error?: string
@@ -561,6 +606,7 @@ type RplParticipantItem = {
   tg_user_id: number
   display_name: string
   league_code: string | null
+  bonus_points?: number
 }
 
 type AdminRplParticipantsResponse = {
@@ -692,6 +738,17 @@ const kickoffSortValue = (value?: string | null): number => {
 }
 
 const teamOptionsWithFlags = Object.keys(TEAM_FLAGS).sort((a, b) => a.localeCompare(b, 'ru'))
+
+const SkeletonBlock = ({ rows = 3 }: { rows?: number }) => (
+  <div className="skeleton-stack" aria-hidden="true">
+    {Array.from({ length: rows }, (_, i) => (
+      <div className="skeleton-row" key={i}>
+        <div className="skeleton-bar skeleton-bar-lg" />
+        <div className="skeleton-bar skeleton-bar-sm" />
+      </div>
+    ))}
+  </div>
+)
 
 const crowdText = (item: {
   crowd_count?: number
@@ -1000,6 +1057,8 @@ function App() {
   const [adminRplSeason, setAdminRplSeason] = useState<AdminRplSeasonResponse | null>(null)
   const [adminRplParticipants, setAdminRplParticipants] = useState<RplParticipantItem[]>([])
   const [adminRplAssigningId, setAdminRplAssigningId] = useState<number | null>(null)
+  const [adminRplPointsInputs, setAdminRplPointsInputs] = useState<Record<number, string>>({})
+  const [adminRplPointsBusyId, setAdminRplPointsBusyId] = useState<number | null>(null)
   const [adminRplSeasonNameInput, setAdminRplSeasonNameInput] = useState<string>('')
   const [adminRplStage1Min, setAdminRplStage1Min] = useState<string>('1')
   const [adminRplStage1Max, setAdminRplStage1Max] = useState<string>('17')
@@ -1101,6 +1160,17 @@ function App() {
       setScorerPickerOpen(false)
     }
   }, [stageTab])
+
+  // Тихое автообновление данных на экранах "Матчи" и "Таблица", пока приложение открыто и активно.
+  useEffect(() => {
+    if (screen !== 'predict' && screen !== 'table') return
+    const intervalId = setInterval(() => {
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        setRefreshTick((v) => v + 1)
+      }
+    }, 75000)
+    return () => clearInterval(intervalId)
+  }, [screen])
 
   useEffect(() => {
     if (joinNameTouched) return
@@ -1645,8 +1715,10 @@ function App() {
         setSelectedTournamentCode(data.selected_tournament_code)
       }
       setTournamentNotice(`Ты вступил в ${data.selected_tournament_name || data.selected_tournament_code || joinTournamentCode}.`)
+      haptic.success()
       setRefreshTick((v) => v + 1)
     } catch (_err) {
+      haptic.error()
       setTournamentNotice('Не удалось вступить в турнир. Попробуй ещё раз.')
     } finally {
       setJoinBusy(false)
@@ -1735,8 +1807,10 @@ function App() {
     try {
       const saved = await savePredictionRequest(apiBase, initData, selectedTournamentCode, matchId, score)
       setPredictNotice(`Прогноз сохранён: ${saved}`)
+      haptic.success()
       await loadPredictCurrent(apiBase, initData, selectedTournamentCode, selectedRoundNumber)
     } catch (_err) {
+      haptic.error()
       setPredictNotice('Не удалось сохранить прогноз. Попробуй ещё раз.')
     } finally {
       setSavingMatchId(null)
@@ -1768,8 +1842,10 @@ function App() {
         await savePredictionRequest(apiBase, initData, selectedTournamentCode, item.match_id, currentInput)
       }
       setPredictNotice(`Сохранено прогнозов: ${itemsToSave.length}`)
+      haptic.success()
       await loadPredictCurrent(apiBase, initData, selectedTournamentCode, selectedRoundNumber)
     } catch (_err) {
+      haptic.error()
       setPredictNotice('Не удалось сохранить все прогнозы. Проверь счета и попробуй ещё раз.')
     } finally {
       setSavingAllPredictions(false)
@@ -1933,8 +2009,10 @@ function App() {
       }
       setDuelsNotice('Вызов отправлен.')
       setDuelScoreInput('')
+      haptic.success()
       await loadDuelsCurrent(apiBase, initData, selectedTournamentCode)
     } catch (err) {
+      haptic.error()
       setDuelsNotice(duelErrorMessage(err instanceof Error ? err.message : String(err)))
     } finally {
       setDuelBusyId(null)
@@ -1972,8 +2050,10 @@ function App() {
         throw new Error(data.reason || data.error || `HTTP ${res.status}`)
       }
       setDuelsNotice(action === 'accept' ? 'Вызов принят.' : 'Вызов отклонён.')
+      haptic.success()
       await loadDuelsCurrent(apiBase, initData, selectedTournamentCode)
     } catch (err) {
+      haptic.error()
       setDuelsNotice(duelErrorMessage(err instanceof Error ? err.message : String(err)))
     } finally {
       setDuelBusyId(null)
@@ -2000,8 +2080,10 @@ function App() {
         throw new Error(data.reason || data.error || `HTTP ${res.status}`)
       }
       setDuelsNotice('Вызов отменён.')
+      haptic.light()
       await loadDuelsCurrent(apiBase, initData, selectedTournamentCode)
     } catch (err) {
+      haptic.error()
       setDuelsNotice(duelErrorMessage(err instanceof Error ? err.message : String(err)))
     } finally {
       setDuelBusyId(null)
@@ -2213,6 +2295,39 @@ function App() {
       setAdminNotice(`Не удалось назначить лигу: ${String(err)}`)
     } finally {
       setAdminRplAssigningId(null)
+    }
+  }
+
+  const adjustRplPoints = async (tgUserId: number) => {
+    const raw = (adminRplPointsInputs[tgUserId] || '').trim().replace(',', '.')
+    const delta = Number(raw)
+    if (!raw || !Number.isFinite(delta) || !Number.isInteger(delta) || delta === 0) {
+      setAdminNotice('Введи целое число очков (можно со знаком минус), не равное нулю.')
+      return
+    }
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    setAdminRplPointsBusyId(tgUserId)
+    setAdminNotice(null)
+    try {
+      const res = await fetch(`${apiBase}/api/miniapp/admin/rpl/points/adjust`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': initData },
+        body: JSON.stringify({ tg_user_id: tgUserId, delta }),
+      })
+      const data = (await res.json()) as { ok?: boolean; error?: string; reason?: string; bonus_points?: number }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      haptic.success()
+      setAdminNotice(`Очки скорректированы: ${delta > 0 ? '+' : ''}${delta}. Итоговая корректировка: ${data.bonus_points ?? 0}.`)
+      setAdminRplPointsInputs((prev) => ({ ...prev, [tgUserId]: '' }))
+      await loadAdminRplParticipants(apiBase, initData)
+    } catch (err) {
+      haptic.error()
+      setAdminNotice(`Не удалось скорректировать очки: ${String(err)}`)
+    } finally {
+      setAdminRplPointsBusyId(null)
     }
   }
 
@@ -2847,6 +2962,7 @@ function App() {
       : null
   const goToRplRound = (target: number) => {
     if (rplRoundMin == null || rplRoundMax == null) return
+    haptic.select()
     setRplRoundOverride(Math.min(Math.max(target, rplRoundMin), rplRoundMax))
   }
 
@@ -3030,6 +3146,20 @@ function App() {
             <span className="legend-item"><span className="legend-dot legend-dot-promotion" />переход в Высшую ({promoteCount})</span>
           )}
         </div>
+
+        {isMyLeague && tableData?.user_place ? (
+          <button
+            type="button"
+            className="league-share-btn"
+            onClick={() =>
+              shareViaTelegram(
+                `🏆 Моё место в ${isHigh ? 'Высшей' : 'Низшей'} лиге РПЛ: ${tableData.user_place} из ${participants}!`
+              )
+            }
+          >
+            Поделиться местом
+          </button>
+        ) : null}
       </div>
     )
   }
@@ -3495,6 +3625,7 @@ function App() {
             <span className="group-small">
               ID {p.tg_user_id}
               {p.league_code ? ` · ${p.league_code === 'HIGH' ? 'Высшая' : 'Низшая'}` : ''}
+              {p.bonus_points ? ` · корректировка ${p.bonus_points > 0 ? '+' : ''}${p.bonus_points}` : ''}
             </span>
           </div>
           <button
@@ -3510,6 +3641,24 @@ function App() {
             disabled={adminRplAssigningId === p.tg_user_id || p.league_code === 'LOW'}
           >
             {adminRplAssigningId === p.tg_user_id ? '…' : '→ Низшая'}
+          </button>
+        </div>
+        <div className="admin-points-adjust-row">
+          <input
+            className="admin-text-input admin-points-input"
+            value={adminRplPointsInputs[p.tg_user_id] || ''}
+            onChange={(e) =>
+              setAdminRplPointsInputs((prev) => ({ ...prev, [p.tg_user_id]: e.target.value.replace(/[^0-9-]/g, '') }))
+            }
+            placeholder="+5 / -3"
+            inputMode="numeric"
+          />
+          <button
+            className="admin-reset-btn"
+            onClick={() => adjustRplPoints(p.tg_user_id)}
+            disabled={adminRplPointsBusyId === p.tg_user_id || !(adminRplPointsInputs[p.tg_user_id] || '').trim()}
+          >
+            {adminRplPointsBusyId === p.tg_user_id ? '…' : 'Скорректировать очки'}
           </button>
         </div>
       </div>
@@ -3581,7 +3730,7 @@ function App() {
         </div>
         <div className="admin-duels-list">
           {!adminDuels ? (
-            <div className="card-text admin-empty-text">Загружаю дуэли…</div>
+            <SkeletonBlock rows={3} />
           ) : visibleAdminDuels.length ? (
             visibleAdminDuels.map((d) => {
               const isFinished = adminDuelsFilter === 'finished'
@@ -4172,7 +4321,7 @@ function App() {
                             ) : null}
                           </>
                         ) : !predictData || !predictionsData ? (
-                          'Загружаю матчи...'
+                          <SkeletonBlock rows={4} />
                         ) : predictData.joined === false ? (
                           predictData.message || 'Нужно вступить в турнир, чтобы ставить прогнозы.'
                         ) : null}
@@ -4394,7 +4543,7 @@ function App() {
                   ) : null}
                 </div>
               ) : !profileData ? (
-                <div className="card-text">Загружаю профиль...</div>
+                <SkeletonBlock rows={4} />
               ) : profileData.joined ? (
                 <>
                   <div className="profile-hero">
@@ -4674,7 +4823,7 @@ function App() {
                     ) : null}
                   </div>
                 ) : !duelsData ? (
-                  <div className="card-text">Загружаю блок 1x1...</div>
+                  <SkeletonBlock rows={3} />
                 ) : duelsData.joined === false ? (
                   <div className="card-text">{duelsData.message || 'Сначала вступи в турнир.'}</div>
                 ) : (
@@ -4986,6 +5135,21 @@ function App() {
                               </button>
                             </div>
                           ) : null}
+                          {duelsFilter === 'finished' ? (
+                            <div className="duel-card-actions">
+                              <button
+                                type="button"
+                                className="duel-share-btn"
+                                onClick={() =>
+                                  shareViaTelegram(
+                                    `⚔️ Дуэль 1x1 завершена!\n${d.challenger_name} (${d.challenger_pred}) vs ${d.opponent_name} (${d.opponent_pred || '—'})\nМатч: ${teamWithFlag(d.home_team)} ${d.result || ''} ${teamWithFlag(d.away_team)}`
+                                  )
+                                }
+                              >
+                                Поделиться
+                              </button>
+                            </div>
+                          ) : null}
                         </div>
                       )
                     })
@@ -5095,7 +5259,7 @@ function App() {
                 </div>
               ) : !tableData ? (
                 <div className="card">
-                  <div className="card-text">Загружаю таблицу...</div>
+                  <SkeletonBlock rows={5} />
                 </div>
               ) : tableData?.leagues && tableData.leagues.length > 0 ? (
                 <>{tableData.leagues.map((lg) => renderLeagueTableCard(lg))}</>
@@ -5708,6 +5872,9 @@ function App() {
             onClick={() => {
               if (tab.key === 'profile') {
                 setProfileTargetUserId(null)
+              }
+              if (screen !== tab.key) {
+                haptic.select()
               }
               setScreen(tab.key)
             }}

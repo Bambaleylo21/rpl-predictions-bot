@@ -5662,7 +5662,7 @@ async def admin_rpl_participants_current(request: web.Request) -> web.Response:
                 )
 
             members_q = await session.execute(
-                select(UserTournament.tg_user_id, UserTournament.display_name)
+                select(UserTournament.tg_user_id, UserTournament.display_name, UserTournament.bonus_points)
                 .where(UserTournament.tournament_id == rpl.id)
                 .order_by(UserTournament.tg_user_id.asc())
             )
@@ -5690,7 +5690,7 @@ async def admin_rpl_participants_current(request: web.Request) -> web.Response:
             league_map = {int(uid): str(code).upper() for uid, code in league_q.all()}
 
             items = []
-            for tg_user_id_raw, ut_display_name in members:
+            for tg_user_id_raw, ut_display_name, ut_bonus_points in members:
                 uid = int(tg_user_id_raw)
                 u = user_map.get(uid, {})
                 display_name = (
@@ -5705,6 +5705,7 @@ async def admin_rpl_participants_current(request: web.Request) -> web.Response:
                         "tg_user_id": uid,
                         "display_name": display_name,
                         "league_code": league_map.get(uid),
+                        "bonus_points": int(ut_bonus_points or 0),
                     }
                 )
 
@@ -5775,6 +5776,73 @@ async def admin_rpl_participant_assign(request: web.Request) -> web.Response:
         )
 
 
+async def admin_rpl_points_adjust(request: web.Request) -> web.Response:
+    """Точечная ручная корректировка очков одного участника РПЛ.
+
+    Технически прибавляет (или вычитает) значение к UserTournament.bonus_points —
+    то же поле, что уже участвует в подсчёте общей суммы очков в build_active_stage_league_table
+    (total = очки за прогнозы + bonus_points). На ЧМ это поле используется для доп.
+    прогнозов (доп. очков за победителя/бомбардира) и не затрагивается этим эндпоинтом,
+    так как правки применяются только к участникам турнира с кодом RPL.
+    """
+    try:
+        auth_result = _extract_verified_admin_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, _user = auth_result
+
+        body = await request.json()
+        tg_user_id = int(body.get("tg_user_id") or 0)
+        delta_raw = body.get("delta")
+        if tg_user_id <= 0 or delta_raw is None:
+            return web.json_response({"ok": False, "error": "invalid_payload"}, status=400)
+        delta = int(delta_raw)
+        if delta == 0:
+            return web.json_response({"ok": False, "error": "zero_delta"}, status=400)
+
+        async with SessionLocal() as session:
+            rpl_q = await session.execute(select(Tournament).where(Tournament.code == "RPL"))
+            rpl = rpl_q.scalar_one_or_none()
+            if rpl is None:
+                return web.json_response({"ok": False, "error": "rpl_tournament_not_found"}, status=404)
+
+            ut_q = await session.execute(
+                select(UserTournament).where(
+                    UserTournament.tournament_id == rpl.id,
+                    UserTournament.tg_user_id == tg_user_id,
+                )
+            )
+            ut = ut_q.scalar_one_or_none()
+            if ut is None:
+                return web.json_response(
+                    {"ok": False, "error": "participant_not_found", "reason": "Участник не найден в РПЛ."},
+                    status=404,
+                )
+
+            ut.bonus_points = int(ut.bonus_points or 0) + delta
+            new_total = int(ut.bonus_points)
+            await session.commit()
+
+        return web.json_response(
+            {
+                "ok": True,
+                "trusted": True,
+                "is_admin": True,
+                "tg_user_id": tg_user_id,
+                "delta": delta,
+                "bonus_points": new_total,
+            }
+        )
+    except (ValueError, TypeError):
+        return web.json_response({"ok": False, "error": "invalid_payload"}, status=400)
+    except Exception as e:
+        logger.exception("miniapp admin_rpl_points_adjust error")
+        return web.json_response(
+            {"ok": False, "error": "admin_rpl_points_adjust_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
 @web.middleware
 async def cors_middleware(request: web.Request, handler):
     if request.method == "OPTIONS":
@@ -5832,6 +5900,7 @@ def build_app() -> web.Application:
     app.router.add_post("/api/miniapp/admin/rpl/enroll", admin_rpl_enroll_set)
     app.router.add_get("/api/miniapp/admin/rpl/participants", admin_rpl_participants_current)
     app.router.add_post("/api/miniapp/admin/rpl/participants/assign", admin_rpl_participant_assign)
+    app.router.add_post("/api/miniapp/admin/rpl/points/adjust", admin_rpl_points_adjust)
     return app
 
 
