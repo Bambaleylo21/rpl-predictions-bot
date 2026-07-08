@@ -165,3 +165,85 @@ async def fetch_lineups(fixture_id: int) -> dict[str, Any] | None:
         ]
         out[name] = {"formation": formation, "starters": [s for s in starters if s]}
     return out or None
+
+
+async def fetch_predictions(fixture_id: int) -> dict[str, Any] | None:
+    """Алгоритмический прогноз API-Football по конкретному матчу (% на П1/Х/П2).
+
+    Это не наш прогноз и не прогноз участников — просто статистическая оценка
+    от поставщика данных. Кэш на 6 часов, обычно не меняется в течение дня.
+    """
+    data = await _api_get(
+        "/predictions",
+        {"fixture": str(fixture_id)},
+        cache_key=f"predictions:{fixture_id}",
+        ttl_seconds=6 * 3600,
+    )
+    if not data:
+        return None
+    response = data.get("response") or []
+    if not response:
+        return None
+    try:
+        predictions = (response[0] or {}).get("predictions") or {}
+        percent = predictions.get("percent") or {}
+
+        def _pct(raw: Any) -> int | None:
+            if raw is None:
+                return None
+            s = str(raw).strip().rstrip("%")
+            try:
+                return int(round(float(s)))
+            except (TypeError, ValueError):
+                return None
+
+        home_pct = _pct(percent.get("home"))
+        draw_pct = _pct(percent.get("draw"))
+        away_pct = _pct(percent.get("away"))
+        if home_pct is None and draw_pct is None and away_pct is None:
+            return None
+        return {"home_pct": home_pct, "draw_pct": draw_pct, "away_pct": away_pct}
+    except Exception:
+        logger.exception("[match_center] unexpected predictions payload shape")
+        return None
+
+
+async def fetch_odds(fixture_id: int) -> dict[str, Any] | None:
+    """Коэффициенты одного букмекера на исход матча (П1/Х/П2), просто как
+    ещё один статистический ориентир — без ссылок на сами ставки.
+
+    Кэш на 1 час: предматчевые коэффициенты могут немного двигаться.
+    """
+    data = await _api_get(
+        "/odds",
+        {"fixture": str(fixture_id)},
+        cache_key=f"odds:{fixture_id}",
+        ttl_seconds=3600,
+    )
+    if not data:
+        return None
+    response = data.get("response") or []
+    if not response:
+        return None
+    try:
+        bookmakers = (response[0] or {}).get("bookmakers") or []
+        for bookmaker in bookmakers:
+            for bet in bookmaker.get("bets") or []:
+                bet_name = str(bet.get("name") or "").strip().lower()
+                if bet_name not in ("match winner", "1x2"):
+                    continue
+                values = {str(v.get("value") or "").strip().lower(): v.get("odd") for v in bet.get("values") or []}
+                home_odd = values.get("home")
+                draw_odd = values.get("draw")
+                away_odd = values.get("away")
+                if home_odd or draw_odd or away_odd:
+                    return {
+                        "bookmaker": str(bookmaker.get("name") or ""),
+                        "home_odd": home_odd,
+                        "draw_odd": draw_odd,
+                        "away_odd": away_odd,
+                    }
+        return None
+    except Exception:
+        logger.exception("[match_center] unexpected odds payload shape")
+        return None

@@ -284,6 +284,17 @@ type MatchCenterResponse = {
   }
   h2h?: MatchCenterH2hItem[]
   lineups?: Record<string, MatchCenterLineup> | null
+  predictions?: {
+    home_pct?: number | null
+    draw_pct?: number | null
+    away_pct?: number | null
+  } | null
+  odds?: {
+    bookmaker?: string
+    home_odd?: string | null
+    draw_odd?: string | null
+    away_odd?: string | null
+  } | null
 }
 
 type TableResponse = {
@@ -6057,6 +6068,57 @@ function App() {
                         <div className="match-center-dim match-center-empty">Появятся примерно за час до матча</div>
                       )}
                     </div>
+
+                    {matchCenterData.predictions &&
+                    (matchCenterData.predictions.home_pct != null ||
+                      matchCenterData.predictions.draw_pct != null ||
+                      matchCenterData.predictions.away_pct != null) ? (
+                      <div className="card match-center-card">
+                        <div className="match-center-card-title">По данным статистики</div>
+                        <div className="match-center-prob-bar">
+                          <span
+                            className="match-center-prob-home"
+                            style={{ width: `${matchCenterData.predictions.home_pct ?? 0}%` }}
+                          />
+                          <span
+                            className="match-center-prob-draw"
+                            style={{ width: `${matchCenterData.predictions.draw_pct ?? 0}%` }}
+                          />
+                          <span
+                            className="match-center-prob-away"
+                            style={{ width: `${matchCenterData.predictions.away_pct ?? 0}%` }}
+                          />
+                        </div>
+                        <div className="match-center-prob-legend">
+                          <span>П1 {matchCenterData.predictions.home_pct ?? '—'}%</span>
+                          <span>Х {matchCenterData.predictions.draw_pct ?? '—'}%</span>
+                          <span>П2 {matchCenterData.predictions.away_pct ?? '—'}%</span>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {matchCenterData.odds &&
+                    (matchCenterData.odds.home_odd || matchCenterData.odds.draw_odd || matchCenterData.odds.away_odd) ? (
+                      <div className="card match-center-card">
+                        <div className="match-center-card-title">
+                          Коэффициенты{matchCenterData.odds.bookmaker ? ` · ${matchCenterData.odds.bookmaker}` : ''}
+                        </div>
+                        <div className="match-center-odds-row">
+                          <div className="match-center-odds-cell">
+                            <span className="match-center-dim">П1</span>
+                            <b>{matchCenterData.odds.home_odd || '—'}</b>
+                          </div>
+                          <div className="match-center-odds-cell">
+                            <span className="match-center-dim">Х</span>
+                            <b>{matchCenterData.odds.draw_odd || '—'}</b>
+                          </div>
+                          <div className="match-center-odds-cell">
+                            <span className="match-center-dim">П2</span>
+                            <b>{matchCenterData.odds.away_odd || '—'}</b>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
                   </>
                 )}
               </div>

@@ -4740,7 +4740,14 @@ async def match_center_current(request: web.Request) -> web.Response:
             away_score = match.away_score
             api_fixture_id = match.api_fixture_id
 
-        from app.match_center import fetch_h2h, fetch_lineups, fetch_standings, fetch_team_id_map
+        from app.match_center import (
+            fetch_h2h,
+            fetch_lineups,
+            fetch_odds,
+            fetch_predictions,
+            fetch_standings,
+            fetch_team_id_map,
+        )
 
         league_id = int(os.getenv("FOOTBALL_RPL_LEAGUE_ID", "235"))
         season = int(os.getenv("FOOTBALL_RPL_SEASON", "2026"))
@@ -4773,8 +4780,14 @@ async def match_center_current(request: web.Request) -> web.Response:
             ]
 
         lineups_out: dict[str, Any] | None = None
+        predictions_out: dict[str, Any] | None = None
+        odds_out: dict[str, Any] | None = None
         if api_fixture_id:
-            raw_lineups = await fetch_lineups(int(api_fixture_id))
+            raw_lineups, predictions_out, odds_out = await asyncio.gather(
+                fetch_lineups(int(api_fixture_id)),
+                fetch_predictions(int(api_fixture_id)),
+                fetch_odds(int(api_fixture_id)),
+            )
             if raw_lineups:
                 lineups_out = {display_team_name(name): info for name, info in raw_lineups.items()}
 
@@ -4795,6 +4808,8 @@ async def match_center_current(request: web.Request) -> web.Response:
                 },
                 "h2h": h2h,
                 "lineups": lineups_out,
+                "predictions": predictions_out,
+                "odds": odds_out,
             }
         )
     except Exception as e:

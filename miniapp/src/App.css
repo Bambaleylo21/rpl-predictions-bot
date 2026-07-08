@@ -4276,6 +4276,52 @@ select:focus-visible {
   padding: 2px 0;
 }
 
+.match-center-prob-bar {
+  display: flex;
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.match-center-prob-home {
+  background: var(--accent);
+}
+
+.match-center-prob-draw {
+  background: rgba(230, 230, 230, 0.3);
+}
+
+.match-center-prob-away {
+  background: #6b7280;
+}
+
+.match-center-prob-legend {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.match-center-odds-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.match-center-odds-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  background: rgba(230, 230, 230, 0.06);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-control);
+  padding: 8px 4px;
+  font-size: 14px;
+}
+
 @media (min-width: 700px) {
   .app-shell {
     max-width: 760px;
