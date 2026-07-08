@@ -2076,6 +2076,104 @@ body {
   color: var(--text-muted);
 }
 
+.admin-status-block {
+  border: 1px solid var(--line-1);
+  border-radius: var(--radius-card);
+  background: var(--surface-2);
+  padding: 12px 14px;
+}
+
+.admin-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.admin-status-row b {
+  color: var(--text-main);
+  font-size: 14px;
+}
+
+.admin-status-divider {
+  height: 1px;
+  background: var(--line-3);
+  margin: 8px 0;
+}
+
+.admin-stage-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+}
+
+.admin-stage-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.admin-stage-info b {
+  font-size: 14px;
+}
+
+.admin-stage-info small {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.status-pill-open {
+  background: rgba(31, 138, 76, 0.22);
+  color: var(--success-line) !important;
+  border: 1px solid var(--success-line);
+}
+
+.status-pill-closed {
+  background: rgba(230, 230, 230, 0.1);
+  color: var(--text-dim) !important;
+  border: 1px solid var(--line-2);
+}
+
+.status-pill-muted {
+  background: transparent;
+  color: var(--text-dim) !important;
+  border: 1px solid var(--line-3);
+  opacity: 0.7;
+}
+
+.admin-danger-toggle {
+  margin-top: 14px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 700;
+  padding: 8px 0;
+  cursor: pointer;
+}
+
+.admin-danger-zone {
+  border: 1px solid #6a3d5f;
+  border-radius: var(--radius-card);
+  background: #1a0f1e;
+  padding: 12px 14px;
+}
+
 .card-title {
   font-weight: 700;
   font-size: 18px;

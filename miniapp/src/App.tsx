@@ -983,6 +983,7 @@ function App() {
   const [adminRplConfirmInit, setAdminRplConfirmInit] = useState<boolean>(false)
   const [adminRplEnrollBusy, setAdminRplEnrollBusy] = useState<boolean>(false)
   const [adminRplInitBusy, setAdminRplInitBusy] = useState<boolean>(false)
+  const [adminRplShowInit, setAdminRplShowInit] = useState<boolean>(false)
   const [adminDuels, setAdminDuels] = useState<AdminDuelsCurrentResponse | null>(null)
   const [adminDuelsFilter, setAdminDuelsFilter] = useState<'active' | 'finished'>('active')
   const [adminDuelCancelBusyId, setAdminDuelCancelBusyId] = useState<number | null>(null)
@@ -1573,7 +1574,7 @@ function App() {
   }
 
   const joinSelectedTournament = async () => {
-    const joinTournamentCode = 'WC2026'
+    const joinTournamentCode = selectedTournamentCode || 'WC2026'
     const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
     const initData = getInitData()
     const headers = {
@@ -3202,55 +3203,56 @@ function App() {
     const stages = adminRplSeason?.stages || []
     const counts = adminRplSeason?.counts
     const enrollOpen = !!adminRplSeason?.enrollment_open
+    const showInitForm = adminRplShowInit || !season
+
     return (
       <div className="admin-inline-panel">
         {season ? (
-          <>
-            <div className="admin-participants-summary">
-              <div>
-                <span>Сезон</span>
-                <b>{season.name}</b>
-              </div>
-              <div>
-                <span>Набор</span>
-                <b>{enrollOpen ? 'Открыт' : 'Закрыт'}</b>
-              </div>
-              <div>
-                <span>Участников</span>
-                <b>{counts?.total_members ?? 0}</b>
-              </div>
+          <div className="admin-status-block">
+            <div className="admin-status-row">
+              <span>Сезон</span>
+              <b>{season.name}</b>
             </div>
-            <div className="compact-list-card admin-inline-list">
-              {stages.map((s) => (
-                <div className="compact-match" key={`stage-${s.id}`}>
-                  <div className="admin-participant-main">
-                    <div className="admin-participant-name">
-                      <span className="team-name team-left">
-                        {s.name}
-                        {s.is_active ? ' (активен)' : ''}
-                      </span>
-                      <span className="group-small">
-                        Туры {s.round_min}–{s.round_max}
-                      </span>
-                    </div>
-                  </div>
+            <div className="admin-status-row">
+              <span>Набор участников</span>
+              <b className={`status-pill ${enrollOpen ? 'status-pill-open' : 'status-pill-closed'}`}>
+                {enrollOpen ? 'Открыт' : 'Закрыт'}
+              </b>
+            </div>
+            <div className="admin-status-row">
+              <span>Вступило участников</span>
+              <b>{counts?.total_members ?? 0}</b>
+            </div>
+
+            <div className="admin-status-divider" />
+
+            {stages.map((s) => (
+              <div className="admin-stage-row" key={`stage-${s.id}`}>
+                <span className={`status-pill ${s.is_active ? 'status-pill-open' : 'status-pill-muted'}`}>
+                  {s.is_active ? 'Сейчас' : 'Позже'}
+                </span>
+                <div className="admin-stage-info">
+                  <b>{s.name}</b>
+                  <small>Туры {s.round_min}–{s.round_max}</small>
                 </div>
-              ))}
+              </div>
+            ))}
+
+            <div className="admin-status-divider" />
+
+            <div className="admin-status-row">
+              <span>Высшая лига</span>
+              <b>{counts?.HIGH ?? 0}</b>
             </div>
-            <div className="admin-participants-summary">
-              <div>
-                <span>Высшая лига</span>
-                <b>{counts?.HIGH ?? 0}</b>
-              </div>
-              <div>
-                <span>Низшая лига</span>
-                <b>{counts?.LOW ?? 0}</b>
-              </div>
-              <div>
-                <span>Не распределены</span>
-                <b>{counts?.unassigned ?? 0}</b>
-              </div>
+            <div className="admin-status-row">
+              <span>Низшая лига</span>
+              <b>{counts?.LOW ?? 0}</b>
             </div>
+            <div className="admin-status-row">
+              <span>Не распределены</span>
+              <b>{counts?.unassigned ?? 0}</b>
+            </div>
+
             <button
               type="button"
               className="admin-reset-btn admin-reset-btn-wide"
@@ -3259,69 +3261,81 @@ function App() {
             >
               {adminRplEnrollBusy ? '…' : enrollOpen ? 'Закрыть набор' : 'Открыть набор'}
             </button>
-          </>
+          </div>
         ) : (
           <div className="card-text admin-empty-text">Сезон РПЛ ещё не создан.</div>
         )}
 
-        <div className="card-title" style={{ marginTop: 16 }}>
-          {season ? 'Пересоздать сезон' : 'Создать сезон'}
-        </div>
-        <div className="segment-hint">
-          {season
-            ? 'Внимание: пересоздание сотрёт текущие лиги, этапы и распределение участников по ним.'
-            : 'Задай при необходимости диапазоны туров — по умолчанию 1–17 (осень) и 18–30 (весна).'}
-        </div>
-        <input
-          className="admin-text-input"
-          placeholder="Название сезона, напр. РПЛ 2026/27"
-          value={adminRplSeasonNameInput}
-          onChange={(e) => setAdminRplSeasonNameInput(e.target.value)}
-        />
-        <div className="admin-range-row">
-          <span>Осенний этап, туры</span>
-          <input
-            className="admin-number-input"
-            value={adminRplStage1Min}
-            onChange={(e) => setAdminRplStage1Min(e.target.value)}
-          />
-          <span>–</span>
-          <input
-            className="admin-number-input"
-            value={adminRplStage1Max}
-            onChange={(e) => setAdminRplStage1Max(e.target.value)}
-          />
-        </div>
-        <div className="admin-range-row">
-          <span>Весенний этап, туры</span>
-          <input
-            className="admin-number-input"
-            value={adminRplStage2Min}
-            onChange={(e) => setAdminRplStage2Min(e.target.value)}
-          />
-          <span>–</span>
-          <input
-            className="admin-number-input"
-            value={adminRplStage2Max}
-            onChange={(e) => setAdminRplStage2Max(e.target.value)}
-          />
-        </div>
-        <label className="admin-confirm-row">
-          <input
-            type="checkbox"
-            checked={adminRplConfirmInit}
-            onChange={(e) => setAdminRplConfirmInit(e.target.checked)}
-          />
-          <span>Понимаю, что это сотрёт текущие лиги/этапы</span>
-        </label>
-        <button
-          type="button"
-          className="admin-reset-btn admin-reset-btn-wide"
-          onClick={submitRplSeasonInit}
-          disabled={adminRplInitBusy || !adminRplConfirmInit}
-        >
-          {adminRplInitBusy ? '…' : season ? 'Пересоздать сезон' : 'Создать сезон'}
-        </button>
+        {season ? (
+          <button
+            type="button"
+            className="admin-danger-toggle"
+            onClick={() => setAdminRplShowInit((v) => !v)}
+          >
+            {adminRplShowInit ? '▾ Скрыть пересоздание сезона' : '▸ Пересоздать сезон'}
+          </button>
+        ) : null}
+
+        {showInitForm ? (
+          <div className="admin-danger-zone">
+            <div className="card-title">{season ? '⚠️ Пересоздать сезон' : 'Создать сезон'}</div>
+            <div className="segment-hint">
+              {season
+                ? 'Это сотрёт текущие лиги, этапы и распределение участников по ним. Отменить нельзя.'
+                : 'Задай при необходимости диапазоны туров — по умолчанию 1–17 (осень) и 18–30 (весна).'}
+            </div>
+            <input
+              className="admin-text-input"
+              placeholder="Название сезона, напр. РПЛ 2026/27"
+              value={adminRplSeasonNameInput}
+              onChange={(e) => setAdminRplSeasonNameInput(e.target.value)}
+            />
+            <div className="admin-range-row">
+              <span>Осенний этап, туры</span>
+              <input
+                className="admin-number-input"
+                value={adminRplStage1Min}
+                onChange={(e) => setAdminRplStage1Min(e.target.value)}
+              />
+              <span>–</span>
+              <input
+                className="admin-number-input"
+                value={adminRplStage1Max}
+                onChange={(e) => setAdminRplStage1Max(e.target.value)}
+              />
+            </div>
+            <div className="admin-range-row">
+              <span>Весенний этап, туры</span>
+              <input
+                className="admin-number-input"
+                value={adminRplStage2Min}
+                onChange={(e) => setAdminRplStage2Min(e.target.value)}
+              />
+              <span>–</span>
+              <input
+                className="admin-number-input"
+                value={adminRplStage2Max}
+                onChange={(e) => setAdminRplStage2Max(e.target.value)}
+              />
+            </div>
+            <label className="admin-confirm-row">
+              <input
+                type="checkbox"
+                checked={adminRplConfirmInit}
+                onChange={(e) => setAdminRplConfirmInit(e.target.checked)}
+              />
+              <span>Понимаю, что это сотрёт текущие лиги/этапы</span>
+            </label>
+            <button
+              type="button"
+              className="admin-reset-btn admin-reset-btn-wide"
+              onClick={submitRplSeasonInit}
+              disabled={adminRplInitBusy || !adminRplConfirmInit}
+            >
+              {adminRplInitBusy ? '…' : season ? 'Пересоздать сезон' : 'Создать сезон'}
+            </button>
+          </div>
+        ) : null}
       </div>
     )
   }
@@ -3568,7 +3582,7 @@ function App() {
   const medalBronze =
     legacyTrophies.filter((h) => h.place === 3).length +
     tournamentHistory.filter((h) => h.place === 3).length
-  const rplComingSoonEnabled = true
+  const rplComingSoonEnabled = false
   const showRplComingSoon = rplComingSoonEnabled && screen !== 'admin' && selectedTournamentCode === 'RPL'
   const showJoinOnboarding =
     !showRplComingSoon && screen !== 'admin' && !profileTargetUserId && Boolean(profileData && profileData.joined === false)
@@ -3661,19 +3675,30 @@ function App() {
             <div className="card join-onboarding-card">
               <div className="card-title">Привет, дорогой друг</div>
               <div className="card-text">
-                Это турнир прогнозов Чемпионата мира по футболу. Тут всё как ты любишь: чтение открытых книг, туры на 0 очков и эмоциональные качели.
-                <br />
-                Поменялось лишь одно - место. Теперь мини-приложение в Telegram сделает твою (а особенно Ромину) жизнь проще и удобнее.
-                <br />
-                <br />
-                Тебя ждут быстрые автоматические расчёты матчей, подробная статистика, ачивки и битвы 1x1. Вступай в турнир и знакомься со всеми разделами. Удачи!
+                {selectedTournamentCode === 'RPL' ? (
+                  <>
+                    Это турнир прогнозов Российской Премьер-Лиги. Осенний этап (1–17 тур) и весенний (18–30 тур), Высшая и Низшая лиги с переходами между ними.
+                    <br />
+                    <br />
+                    Результаты матчей подтягиваются автоматически. Вступай в турнир и знакомься со всеми разделами. Удачи!
+                  </>
+                ) : (
+                  <>
+                    Это турнир прогнозов Чемпионата мира по футболу. Тут всё как ты любишь: чтение открытых книг, туры на 0 очков и эмоциональные качели.
+                    <br />
+                    Поменялось лишь одно - место. Теперь мини-приложение в Telegram сделает твою (а особенно Ромину) жизнь проще и удобнее.
+                    <br />
+                    <br />
+                    Тебя ждут быстрые автоматические расчёты матчей, подробная статистика, ачивки и битвы 1x1. Вступай в турнир и знакомься со всеми разделами. Удачи!
+                  </>
+                )}
               </div>
               <button
                 className="save-btn join-onboarding-btn is-dirty"
                 onClick={joinSelectedTournament}
                 disabled={joinBusy}
               >
-                {joinBusy ? 'Вступаю…' : 'Вступить в турнир WC'}
+                {joinBusy ? 'Вступаю…' : `Вступить в турнир ${selectedTournamentCode === 'RPL' ? 'РПЛ' : 'WC'}`}
               </button>
             </div>
           </section>
