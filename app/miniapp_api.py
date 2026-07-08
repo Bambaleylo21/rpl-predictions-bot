@@ -28,7 +28,7 @@ from app.duel_notify import (
     send_duel_finished_pushes,
     send_new_duel_challenge_push,
 )
-from app.display import display_round_name
+from app.display import display_round_name, display_team_name
 from app.duels import (
     cancel_duel,
     create_duel,
@@ -927,8 +927,8 @@ async def admin_results_current(request: web.Request) -> web.Response:
                         "match_id": int(m.id),
                         "round_number": int(m.round_number or 0),
                         "round_name": display_round_name(tournament.code, int(m.round_number or 0)),
-                        "home_team": str(m.home_team),
-                        "away_team": str(m.away_team),
+                        "home_team": display_team_name(m.home_team),
+                        "away_team": display_team_name(m.away_team),
                         "group_label": m.group_label,
                         "kickoff": m.kickoff_time.strftime("%d.%m %H:%M"),
                         "is_placeholder": int(m.is_placeholder or 0) == 1,
@@ -1226,8 +1226,8 @@ async def admin_duels_current(request: web.Request) -> web.Response:
                 "duel_id": int(duel.id),
                 "status": str(duel.status),
                 "match_id": int(match.id),
-                "home_team": str(match.home_team),
-                "away_team": str(match.away_team),
+                "home_team": display_team_name(match.home_team),
+                "away_team": display_team_name(match.away_team),
                 "group_label": match.group_label,
                 "kickoff": match.kickoff_time.strftime("%d.%m %H:%M"),
                 "result": (
@@ -1539,8 +1539,8 @@ async def admin_playoff_slots_current(request: web.Request) -> web.Response:
                     "round_number": int(m.round_number or 0),
                     "round_name": display_round_name(tournament.code, int(m.round_number or 0)),
                     "kickoff": m.kickoff_time.strftime("%d.%m.%Y %H:%M"),
-                    "home_team": str(m.home_team or "").strip(),
-                    "away_team": str(m.away_team or "").strip(),
+                    "home_team": display_team_name(str(m.home_team or "").strip()),
+                    "away_team": display_team_name(str(m.away_team or "").strip()),
                     "is_placeholder": int(m.is_placeholder or 0) == 1,
                     "is_filled": not _is_blank_team_name(m.home_team) and not _is_blank_team_name(m.away_team),
                 }
@@ -2268,8 +2268,8 @@ async def _build_profile_achievements(
         {
             "match_id": int(mid),
             "round_number": int(round_number or 0),
-            "home_team": str(home_team or ""),
-            "away_team": str(away_team or ""),
+            "home_team": display_team_name(str(home_team or "")),
+            "away_team": display_team_name(str(away_team or "")),
             "home_score": int(home_score or 0),
             "away_score": int(away_score or 0),
             "kickoff_time": kickoff_time,
@@ -3351,7 +3351,7 @@ async def profile(request: web.Request) -> web.Response:
                         "round": int(round_number or 0),
                         "emoji": emoji,
                         "points": points_value,
-                        "label": f"{home_team} — {away_team}",
+                        "label": f"{display_team_name(home_team)} — {display_team_name(away_team)}",
                     }
                 )
 
@@ -4090,8 +4090,8 @@ async def predictions_current(request: web.Request) -> web.Response:
                 items.append(
                     {
                         "match_id": int(m.id),
-                        "home_team": m.home_team,
-                        "away_team": m.away_team,
+                        "home_team": display_team_name(m.home_team),
+                        "away_team": display_team_name(m.away_team),
                         "group_label": m.group_label,
                         "kickoff": m.kickoff_time.strftime("%d.%m %H:%M"),
                         "status": "closed" if is_closed else "open",
@@ -4493,8 +4493,8 @@ async def predict_current(request: web.Request) -> web.Response:
                 items.append(
                     {
                         "match_id": int(m.id),
-                        "home_team": m.home_team,
-                        "away_team": m.away_team,
+                        "home_team": display_team_name(m.home_team),
+                        "away_team": display_team_name(m.away_team),
                         "is_placeholder": is_placeholder,
                         "locked": is_locked,
                         "group_label": m.group_label,
@@ -4661,8 +4661,8 @@ async def match_predictions_current(request: web.Request) -> web.Response:
                     "tournament_code": tournament.code,
                     "tournament": tournament.name,
                     "match_id": int(match.id),
-                    "home_team": match.home_team,
-                    "away_team": match.away_team,
+                    "home_team": display_team_name(match.home_team),
+                    "away_team": display_team_name(match.away_team),
                     "group_label": match.group_label,
                     "kickoff": match.kickoff_time.strftime("%d.%m %H:%M"),
                     "status": "closed" if match_closed else "live",

@@ -15,7 +15,7 @@ TEAM_NAME_MAP: dict[str, str] = {
     "Makhachkala D": "Динамо Мхч",
     "Krasnodar": "Краснодар",
     "CSKA": "ЦСКА",
-    "Moscow D": "Динамо Москва",
+    "Moscow D": "Динамо Мск",
     "Lokomotiv M": "Локомотив",
     "Spartak M": "Спартак",
 
@@ -25,7 +25,7 @@ TEAM_NAME_MAP: dict[str, str] = {
     "Baltika": "Балтика",
     "CSKA Moscow": "ЦСКА",
     "Dinamo Makhachkala": "Динамо Мхч",
-    "Dynamo": "Динамо Москва",
+    "Dynamo": "Динамо Мск",
     "FC Krasnodar": "Краснодар",
     "FC Orenburg": "Оренбург",
     "FC Rostov": "Ростов",
