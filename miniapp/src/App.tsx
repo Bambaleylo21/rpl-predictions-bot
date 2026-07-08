@@ -37,20 +37,6 @@ const haptic = {
   },
 }
 
-const shareViaTelegram = (text: string) => {
-  const shareUrl = `https://t.me/share/url?url=&text=${encodeURIComponent(text)}`
-  try {
-    const opened = (WebApp as any).openTelegramLink?.(shareUrl)
-    if (opened === undefined && typeof window !== 'undefined') {
-      window.open(shareUrl, '_blank')
-    }
-  } catch {
-    if (typeof window !== 'undefined') {
-      window.open(shareUrl, '_blank')
-    }
-  }
-}
-
 type MeResponse = {
   ok: boolean
   error?: string
@@ -3325,20 +3311,6 @@ function App() {
             <span className="legend-item"><span className="legend-dot legend-dot-promotion" />переход в Высшую ({promoteCount})</span>
           )}
         </div>
-
-        {isMyLeague && tableData?.user_place ? (
-          <button
-            type="button"
-            className="league-share-btn"
-            onClick={() =>
-              shareViaTelegram(
-                `🏆 Моё место в ${isHigh ? 'Высшей' : 'Низшей'} лиге РПЛ: ${tableData.user_place} из ${participants}!`
-              )
-            }
-          >
-            Поделиться местом
-          </button>
-        ) : null}
       </div>
     )
   }
@@ -5334,21 +5306,6 @@ function App() {
                                 disabled={duelBusyId === d.duel_id}
                               >
                                 {duelBusyId === d.duel_id ? 'Отменяю...' : 'Отменить вызов'}
-                              </button>
-                            </div>
-                          ) : null}
-                          {duelsFilter === 'finished' ? (
-                            <div className="duel-card-actions">
-                              <button
-                                type="button"
-                                className="duel-share-btn"
-                                onClick={() =>
-                                  shareViaTelegram(
-                                    `⚔️ Дуэль 1x1 завершена!\n${d.challenger_name} (${d.challenger_pred}) vs ${d.opponent_name} (${d.opponent_pred || '—'})\nМатч: ${teamWithFlag(d.home_team)} ${d.result || ''} ${teamWithFlag(d.away_team)}`
-                                  )
-                                }
-                              >
-                                Поделиться
                               </button>
                             </div>
                           ) : null}

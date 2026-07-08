@@ -3046,40 +3046,6 @@ body {
   cursor: wait;
 }
 
-.duel-share-btn {
-  border: 1px solid rgba(185, 154, 85, 0.46);
-  border-radius: 14px;
-  background: rgba(185, 154, 85, 0.1);
-  color: var(--text-main);
-  min-height: 40px;
-  padding: 8px 14px;
-  font-size: 12px;
-  font-weight: 900;
-  cursor: pointer;
-}
-
-.duel-share-btn:active {
-  transform: translateY(1px) scale(0.99);
-}
-
-.league-share-btn {
-  display: block;
-  width: 100%;
-  margin-top: 10px;
-  border: 1px solid rgba(185, 154, 85, 0.38);
-  border-radius: var(--radius-control);
-  background: rgba(185, 154, 85, 0.08);
-  color: var(--accent);
-  min-height: 38px;
-  font-size: 12px;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.league-share-btn:active {
-  transform: translateY(1px) scale(0.99);
-}
-
 .duel-challenge-submit-btn {
   min-width: 128px;
   padding: 8px 12px;
