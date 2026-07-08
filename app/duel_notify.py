@@ -225,7 +225,12 @@ async def send_duel_accepted_push(bot: Bot, session, *, duel_id: int) -> None:
             bot,
             session,
             chat_id=int(duel.opponent_tg_user_id),
-            text="✅ Вызов принят\nОткрой 1х1 в Mini App и поставь свой прогноз.",
+            text=(
+                "✅ Вызов принят\n"
+                f"Соперник: {ctx['challenger_name']}\n"
+                f"Матч: {match.home_team} — {match.away_team}\n"
+                "Открой 1х1 в Mini App и поставь свой прогноз."
+            ),
             reply_markup=_open_duels_keyboard("Открыть 1х1", duel_id=int(duel.id)),
         )
 
@@ -286,12 +291,12 @@ async def send_duel_expired_pushes(bot: Bot, session, *, events: list[dict[str, 
         challenger_text = (
             "⌛ Вызов 1х1 истёк\n"
             f"Матч: {match.home_team} — {match.away_team}\n"
-            "Соперник не принял вызов в течение 3 часов."
+            f"{ctx['opponent_name']} не успел принять вызов в течение 3 часов."
         )
         opponent_text = (
             "⌛ Вызов 1х1 истёк\n"
             f"Матч: {match.home_team} — {match.away_team}\n"
-            "Время на принятие вызова закончилось."
+            f"Вызов от {ctx['challenger_name']} больше неактуален."
         )
 
         if await should_send_notification(session, int(duel.challenger_tg_user_id), "duels"):

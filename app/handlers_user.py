@@ -17,7 +17,7 @@ from app.display import display_round_name, display_team_name, display_tournamen
 from app.duel_notify import send_duel_declined_push
 from app.duels import respond_duel
 from app.league_table import build_active_stage_league_table, get_user_stage_scope
-from app.models import League, LeagueMovement, Match, Point, Prediction, Setting, Stage, Tournament, User, UserTournament
+from app.models import Duel, League, LeagueMovement, Match, Point, Prediction, Setting, Stage, Tournament, User, UserTournament
 from app.season_setup import is_enrollment_open
 from app.stats import build_stats_text
 from app.my_predictions import build_my_round_text
@@ -3365,6 +3365,32 @@ def register_user_handlers(dp: Dispatcher):
             return
 
         text = "Вызов отмечен. Открой 1х1 в Mini App и поставь свой прогноз, чтобы принять дуэль."
+        try:
+            async with SessionLocal() as session:
+                row = (
+                    await session.execute(
+                        select(Duel, Match)
+                        .join(Match, Match.id == Duel.match_id)
+                        .where(Duel.id == int(duel_id))
+                    )
+                ).first()
+                if row is not None:
+                    duel, match = row
+                    challenger_name = (
+                        await session.execute(
+                            select(UserTournament.display_name).where(
+                                UserTournament.tournament_id == int(duel.tournament_id),
+                                UserTournament.tg_user_id == int(duel.challenger_tg_user_id),
+                            )
+                        )
+                    ).scalar_one_or_none()
+                    text = (
+                        f"Вызов от {challenger_name or f'ID {int(duel.challenger_tg_user_id)}'} отмечен.\n"
+                        f"Матч: {match.home_team} — {match.away_team}\n"
+                        "Открой 1х1 в Mini App и поставь свой прогноз, чтобы принять дуэль."
+                    )
+        except Exception:
+            pass
         kb = None
         if MINIAPP_WEB_URL:
             url = MINIAPP_WEB_URL
