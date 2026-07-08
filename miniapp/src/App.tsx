@@ -2950,15 +2950,11 @@ function App() {
       <div className="card table-card league-table-card" key={`league-${league.league_code}`}>
         <div className="league-table-header">
           <div className="league-table-title">
-            <span className={`league-badge ${isHigh ? 'league-badge-high' : 'league-badge-low'}`}>
-              {isHigh ? 'Высшая лига' : 'Низшая лига'}
-            </span>
-            {isMyLeague ? <span className="league-mine-tag">твоя лига</span> : null}
+            {isHigh ? 'Высшая лига' : 'Низшая лига'}
           </div>
-          <div className="league-table-count">{participants} уч.</div>
         </div>
 
-        <div className="table-grid table-grid-head">
+        <div className="table-grid table-grid-rpl table-grid-head">
           <div className="col-place">#</div>
           <div className="col-name">Имя</div>
           <div className="col-num">Очк</div>
@@ -2966,26 +2962,19 @@ function App() {
           <div className="col-num">📏</div>
           <div className="col-num">✅</div>
           <div className="col-num">⛔</div>
-          <div className="col-num">⭐</div>
         </div>
 
         {rows.length > 0 ? (
           rows.map((r) => {
             const zone = zoneFor(r.place)
-            const bonusPoints = Math.max(0, Number(r.bonus_points ?? 0))
             return (
               <div
-                className={`table-grid table-grid-row ${tableData?.user_place === r.place && isMyLeague ? 'is-user' : ''} ${
+                className={`table-grid table-grid-rpl table-grid-row ${tableData?.user_place === r.place && isMyLeague ? 'is-user' : ''} ${
                   zone ? `zone-${zone}` : ''
                 }`}
                 key={`${league.league_code}-${r.place}-${r.name}`}
               >
-                <div className="col-place">
-                  {r.place}
-                  {zone === 'champion' ? <span className="zone-icon" title="Чемпион">🏆</span> : null}
-                  {zone === 'promotion' ? <span className="zone-icon" title="Переход в Высшую лигу">⬆️</span> : null}
-                  {zone === 'relegation' ? <span className="zone-icon" title="Вылет в Низшую лигу">⬇️</span> : null}
-                </div>
+                <div className="col-place">{r.place}</div>
                 <div className="col-name col-name-text">
                   {r.tg_user_id ? (
                     <button
@@ -3006,7 +2995,6 @@ function App() {
                 <div className="col-num">{r.diff}</div>
                 <div className="col-num">{r.outcome}</div>
                 <div className="col-num">{r.missed_matches ?? 0}</div>
-                <div className="col-num">{bonusPoints}</div>
               </div>
             )
           })
@@ -3017,11 +3005,11 @@ function App() {
         <div className="league-table-legend">
           {isHigh ? (
             <>
-              <span className="legend-item"><span className="legend-dot legend-dot-champion" />🏆 чемпион</span>
-              <span className="legend-item"><span className="legend-dot legend-dot-relegation" />⬇️ вылет в Низшую ({relegateCount})</span>
+              <span className="legend-item"><span className="legend-dot legend-dot-champion" />чемпион</span>
+              <span className="legend-item"><span className="legend-dot legend-dot-relegation" />вылет в Низшую ({relegateCount})</span>
             </>
           ) : (
-            <span className="legend-item"><span className="legend-dot legend-dot-promotion" />⬆️ переход в Высшую ({promoteCount})</span>
+            <span className="legend-item"><span className="legend-dot legend-dot-promotion" />переход в Высшую ({promoteCount})</span>
           )}
         </div>
       </div>
@@ -5182,19 +5170,23 @@ function App() {
                     ✅ Исход: 1 очко
                     <br />
                     ⛔ Пропущенные матчи: 0 очков
-                    <br />
-                    ⭐ Доп. прогнозы / бонусы: +5 за каждый угаданный доп. прогноз
-                    <br />
-                    <br />
-                    Коэффициенты плей-офф
-                    <br />
-                    В плей-офф очки за матч умножаются на коэффициент стадии.
-                    <br />
-                    1/16, 1/8: x1
-                    <br />
-                    1/4, 1/2: x2
-                    <br />
-                    Финал, 3-е место: x3
+                    {selectedTournamentCode === 'RPL' ? null : (
+                      <>
+                        <br />
+                        ⭐ Доп. прогнозы / бонусы: +5 за каждый угаданный доп. прогноз
+                        <br />
+                        <br />
+                        Коэффициенты плей-офф
+                        <br />
+                        В плей-офф очки за матч умножаются на коэффициент стадии.
+                        <br />
+                        1/16, 1/8: x1
+                        <br />
+                        1/4, 1/2: x2
+                        <br />
+                        Финал, 3-е место: x3
+                      </>
+                    )}
                   </div>
                 </div>
               </section>
