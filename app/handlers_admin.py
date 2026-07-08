@@ -346,7 +346,7 @@ async def _build_admin_match_result_live_update(match_id: int) -> tuple[str, boo
             .where(
                 Match.tournament_id == match.tournament_id,
                 Match.round_number == match.round_number,
-                Match.source == "manual",
+                Match.source.in_(("manual", "apisport")),
                 (Match.home_score.is_(None) | Match.away_score.is_(None)),
             )
         )
@@ -407,7 +407,7 @@ async def _maybe_send_round_closed_summary(bot, tournament_id: int, round_number
             ).where(
                 Match.tournament_id == tournament_id,
                 Match.round_number == round_number,
-                Match.source == "manual",
+                Match.source.in_(("manual", "apisport")),
             )
         )
         total, done = counts_q.one()
@@ -442,7 +442,7 @@ async def _maybe_send_round_closed_summary(bot, tournament_id: int, round_number
             .where(
                 Match.tournament_id == tournament_id,
                 Match.round_number == round_number,
-                Match.source == "manual",
+                Match.source.in_(("manual", "apisport")),
             )
             .group_by(Prediction.tg_user_id)
             .order_by(
@@ -524,7 +524,7 @@ async def _maybe_send_round_closed_summary(bot, tournament_id: int, round_number
             .where(
                 Match.tournament_id == tournament_id,
                 Match.round_number == round_number,
-                Match.source == "manual",
+                Match.source.in_(("manual", "apisport")),
             )
             .group_by(Match.id, Match.home_team, Match.away_team)
             .order_by(Match.id.asc())
@@ -561,7 +561,7 @@ async def _maybe_send_round_closed_summary(bot, tournament_id: int, round_number
             .join(Match, Match.id == Point.match_id)
             .where(
                 Match.tournament_id == tournament_id,
-                Match.source == "manual",
+                Match.source.in_(("manual", "apisport")),
             )
             .order_by(Point.tg_user_id.asc(), Match.kickoff_time.asc(), Match.id.asc())
         )
@@ -655,7 +655,7 @@ async def _maybe_send_round_closed_summary(bot, tournament_id: int, round_number
                 .where(
                     Match.tournament_id == tournament_id,
                     Match.round_number == round_number,
-                    Match.source == "manual",
+                    Match.source.in_(("manual", "apisport")),
                 )
             )
             round_total_preds, round_hit_preds = round_pred_stats_q.one()
@@ -679,7 +679,7 @@ async def _maybe_send_round_closed_summary(bot, tournament_id: int, round_number
                 )
                 .where(
                     Match.tournament_id == tournament_id,
-                    Match.source == "manual",
+                    Match.source.in_(("manual", "apisport")),
                     Match.home_score.isnot(None),
                     Match.away_score.isnot(None),
                 )
@@ -2253,7 +2253,7 @@ async def _admin_set_result_open_tournament_picker(message: types.Message) -> No
             select(Match.round_number)
             .where(
                 Match.tournament_id == tournament.id,
-                Match.source == "manual",
+                Match.source.in_(("manual", "apisport")),
             )
             .group_by(Match.round_number)
             .order_by(Match.round_number.asc())
@@ -2294,7 +2294,7 @@ async def admin_set_result_pick_tournament(callback: types.CallbackQuery, state:
             select(Match.round_number)
             .where(
                 Match.tournament_id == tournament_id,
-                Match.source == "manual",
+                Match.source.in_(("manual", "apisport")),
             )
             .group_by(Match.round_number)
             .order_by(Match.round_number.asc())
@@ -2343,7 +2343,7 @@ async def admin_set_result_pick_round(callback: types.CallbackQuery, state: FSMC
             select(Match)
             .where(
                 Match.tournament_id == tournament_id,
-                Match.source == "manual",
+                Match.source.in_(("manual", "apisport")),
                 Match.round_number == round_number,
             )
             .order_by(Match.kickoff_time.asc(), Match.id.asc())
@@ -2889,7 +2889,7 @@ async def admin_test_reminder(message: types.Message):
         kickoff_q = await session.execute(
             select(func.min(Match.kickoff_time)).where(
                 Match.tournament_id == int(tournament.id),
-                Match.source == "manual",
+                Match.source.in_(("manual", "apisport")),
                 Match.is_placeholder == 0,
                 Match.kickoff_time > now,
             )
@@ -2902,7 +2902,7 @@ async def admin_test_reminder(message: types.Message):
         matches_q = await session.execute(
             select(Match).where(
                 Match.tournament_id == int(tournament.id),
-                Match.source == "manual",
+                Match.source.in_(("manual", "apisport")),
                 Match.is_placeholder == 0,
                 Match.kickoff_time == first_kickoff,
             ).order_by(Match.id.asc())
@@ -3161,7 +3161,7 @@ async def admin_audience(message: types.Message):
             )
             .where(
                 Match.tournament_id == rpl.id,
-                Match.source == "manual",
+                Match.source.in_(("manual", "apisport")),
                 Match.round_number >= rpl.round_min,
                 Match.round_number <= rpl.round_max,
             )
@@ -3180,7 +3180,7 @@ async def admin_audience(message: types.Message):
             .join(Match, Match.id == Prediction.match_id)
             .where(
                 Match.tournament_id == rpl.id,
-                Match.source == "manual",
+                Match.source.in_(("manual", "apisport")),
                 Match.round_number >= rpl.round_min,
                 Match.round_number <= rpl.round_max,
             )
@@ -3270,7 +3270,7 @@ async def admin_audience_list(message: types.Message):
             )
             .where(
                 Match.tournament_id == rpl.id,
-                Match.source == "manual",
+                Match.source.in_(("manual", "apisport")),
                 Match.round_number >= rpl.round_min,
                 Match.round_number <= rpl.round_max,
             )
@@ -3289,7 +3289,7 @@ async def admin_audience_list(message: types.Message):
             .join(Match, Match.id == Prediction.match_id)
             .where(
                 Match.tournament_id == rpl.id,
-                Match.source == "manual",
+                Match.source.in_(("manual", "apisport")),
                 Match.round_number >= rpl.round_min,
                 Match.round_number <= rpl.round_max,
             )
@@ -3351,7 +3351,7 @@ async def _build_admin_status_text() -> str:
                 .join(Match, Match.id == Prediction.match_id)
                 .where(
                     Match.tournament_id == t.id,
-                    Match.source == "manual",
+                    Match.source.in_(("manual", "apisport")),
                     Match.round_number >= t.round_min,
                     Match.round_number <= t.round_max,
                 )
@@ -3365,7 +3365,7 @@ async def _build_admin_status_text() -> str:
                 )
                 .where(
                     Match.tournament_id == t.id,
-                    Match.source == "manual",
+                    Match.source.in_(("manual", "apisport")),
                     Match.round_number >= t.round_min,
                     Match.round_number <= t.round_max,
                 )
@@ -3385,7 +3385,7 @@ async def _build_admin_status_text() -> str:
             open_q = await session.execute(
                 select(func.count(Match.id)).where(
                     Match.tournament_id == t.id,
-                    Match.source == "manual",
+                    Match.source.in_(("manual", "apisport")),
                     Match.round_number == current_round,
                     Match.kickoff_time > now,
                 )
@@ -3395,7 +3395,7 @@ async def _build_admin_status_text() -> str:
             no_result_q = await session.execute(
                 select(func.count(Match.id)).where(
                     Match.tournament_id == t.id,
-                    Match.source == "manual",
+                    Match.source.in_(("manual", "apisport")),
                     Match.round_number >= t.round_min,
                     Match.round_number <= t.round_max,
                     Match.home_score.is_(None),
@@ -3428,7 +3428,7 @@ async def _build_admin_progress_text(tournament_id: int, round_number: int) -> s
             select(func.count(Match.id)).where(
                 Match.tournament_id == tournament_id,
                 Match.round_number == round_number,
-                Match.source == "manual",
+                Match.source.in_(("manual", "apisport")),
             )
         )
         total = int(total_q.scalar_one() or 0)
@@ -3439,7 +3439,7 @@ async def _build_admin_progress_text(tournament_id: int, round_number: int) -> s
             select(func.count(Match.id)).where(
                 Match.tournament_id == tournament_id,
                 Match.round_number == round_number,
-                Match.source == "manual",
+                Match.source.in_(("manual", "apisport")),
                 Match.home_score.isnot(None),
                 Match.away_score.isnot(None),
             )
@@ -3450,7 +3450,7 @@ async def _build_admin_progress_text(tournament_id: int, round_number: int) -> s
             select(func.count(Match.id)).where(
                 Match.tournament_id == tournament_id,
                 Match.round_number == round_number,
-                Match.source == "manual",
+                Match.source.in_(("manual", "apisport")),
                 Match.kickoff_time > now,
             )
         )
@@ -3477,7 +3477,7 @@ async def _build_admin_progress_text(tournament_id: int, round_number: int) -> s
             select(Match.id).where(
                 Match.tournament_id == tournament_id,
                 Match.round_number == round_number,
-                Match.source == "manual",
+                Match.source.in_(("manual", "apisport")),
             )
         )
         match_ids = [int(x[0]) for x in matches_q.all()]
@@ -3533,7 +3533,7 @@ async def _build_admin_missing_text(tournament_id: int, round_number: int) -> st
             select(Match.id).where(
                 Match.tournament_id == tournament_id,
                 Match.round_number == round_number,
-                Match.source == "manual",
+                Match.source.in_(("manual", "apisport")),
             )
         )
         match_ids = [int(x[0]) for x in matches_q.all()]
@@ -3640,13 +3640,39 @@ async def admin_rpl_sync(message: types.Message):
         await message.answer(f"❌ Синхронизация упала с ошибкой:\n{e!r}")
         return
 
+    async with SessionLocal() as session:
+        rpl_q = await session.execute(select(Tournament).where(Tournament.code == "RPL"))
+        rpl = rpl_q.scalar_one_or_none()
+        total_apisport = 0
+        total_all = 0
+        if rpl is not None:
+            total_apisport = int(
+                (
+                    await session.execute(
+                        select(func.count(Match.id)).where(
+                            Match.tournament_id == rpl.id, Match.source == "apisport"
+                        )
+                    )
+                ).scalar_one()
+                or 0
+            )
+            total_all = int(
+                (
+                    await session.execute(
+                        select(func.count(Match.id)).where(Match.tournament_id == rpl.id)
+                    )
+                ).scalar_one()
+                or 0
+            )
+
     await message.answer(
         "✅ Синхронизация завершена.\n"
         f"Получено от API: {stats.get('fetched', 0)}\n"
         f"Создано новых матчей: {stats.get('created', 0)}\n"
         f"Обновлено расписание: {stats.get('updated_schedule', 0)}\n"
         f"Применено результатов: {stats.get('results_applied', 0)}\n"
-        f"Пропущено (нет номера тура): {stats.get('skipped_no_round', 0)}"
+        f"Пропущено (нет номера тура): {stats.get('skipped_no_round', 0)}\n\n"
+        f"📊 Всего матчей РПЛ в базе сейчас: {total_all} (из них авто-синхронизированных: {total_apisport})"
     )
 
 
@@ -3746,7 +3772,7 @@ async def admin_pick_tournament_for_progress(callback: types.CallbackQuery):
             select(Match.round_number)
             .where(
                 Match.tournament_id == tournament_id,
-                Match.source == "manual",
+                Match.source.in_(("manual", "apisport")),
                 Match.round_number >= t.round_min,
                 Match.round_number <= t.round_max,
             )
@@ -3786,7 +3812,7 @@ async def admin_pick_tournament_for_missing(callback: types.CallbackQuery):
             select(Match.round_number)
             .where(
                 Match.tournament_id == tournament_id,
-                Match.source == "manual",
+                Match.source.in_(("manual", "apisport")),
                 Match.round_number >= t.round_min,
                 Match.round_number <= t.round_max,
             )
