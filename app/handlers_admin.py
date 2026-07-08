@@ -1992,6 +1992,7 @@ async def admin_duel_digest(message: types.Message):
 def register_admin_handlers(dp: Dispatcher) -> None:
     dp.message.register(admin_panel, Command("admin_panel"))
     dp.message.register(admin_status, Command("admin_status"))
+    dp.message.register(admin_rpl_sync, Command("admin_rpl_sync"))
     dp.message.register(admin_round_progress, Command("admin_round_progress"))
     dp.message.register(admin_missing, Command("admin_missing"))
     dp.callback_query.register(admin_panel_click, F.data.startswith("admin_panel:"))
@@ -3610,6 +3611,43 @@ async def admin_status(message: types.Message):
         await message.answer("⛔️ У вас нет прав на эту команду.")
         return
     await message.answer(await _build_admin_status_text(), reply_markup=_admin_panel_keyboard())
+
+
+async def admin_rpl_sync(message: types.Message):
+    """/admin_rpl_sync — запустить синхронизацию РПЛ с API-Football вручную и показать результат."""
+    if not _is_admin(message):
+        await message.answer("⛔️ У вас нет прав на эту команду.")
+        return
+
+    import os
+
+    api_key = os.getenv("FOOTBALL_API_KEY", "").strip()
+    league_id = os.getenv("FOOTBALL_RPL_LEAGUE_ID", "235")
+    season = os.getenv("FOOTBALL_RPL_SEASON", "2026")
+    key_hint = f"установлен (длина {len(api_key)})" if api_key else "❌ НЕ УСТАНОВЛЕН"
+
+    await message.answer(
+        "🔄 Запускаю синхронизацию РПЛ с API-Football...\n"
+        f"FOOTBALL_API_KEY: {key_hint}\n"
+        f"league_id={league_id} season={season}"
+    )
+
+    from app.rpl_sync import sync_rpl_once
+
+    try:
+        stats = await sync_rpl_once(message.bot, SessionLocal)
+    except Exception as e:
+        await message.answer(f"❌ Синхронизация упала с ошибкой:\n{e!r}")
+        return
+
+    await message.answer(
+        "✅ Синхронизация завершена.\n"
+        f"Получено от API: {stats.get('fetched', 0)}\n"
+        f"Создано новых матчей: {stats.get('created', 0)}\n"
+        f"Обновлено расписание: {stats.get('updated_schedule', 0)}\n"
+        f"Применено результатов: {stats.get('results_applied', 0)}\n"
+        f"Пропущено (нет номера тура): {stats.get('skipped_no_round', 0)}"
+    )
 
 
 async def admin_round_progress(message: types.Message):
