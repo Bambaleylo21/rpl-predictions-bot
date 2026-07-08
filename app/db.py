@@ -128,11 +128,6 @@ async def _apply_postgres_schema_fixes(conn) -> None:
         "CREATE TABLE IF NOT EXISTS duel_elo (id SERIAL PRIMARY KEY, tournament_id INTEGER NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE, tg_user_id BIGINT NOT NULL, rating INTEGER NOT NULL DEFAULT 1000, duels_total INTEGER NOT NULL DEFAULT 0, wins INTEGER NOT NULL DEFAULT 0, losses INTEGER NOT NULL DEFAULT 0, draws INTEGER NOT NULL DEFAULT 0, created_at TIMESTAMP NOT NULL DEFAULT NOW(), updated_at TIMESTAMP NOT NULL DEFAULT NOW(), CONSTRAINT uq_duel_elo_tournament_user UNIQUE (tournament_id, tg_user_id))",
         "CREATE INDEX IF NOT EXISTS ix_duel_elo_tournament_id ON duel_elo (tournament_id)",
         "CREATE INDEX IF NOT EXISTS ix_duel_elo_tg_user_id ON duel_elo (tg_user_id)",
-
-        # manual-only режим: удаляем API-матчи
-        "DELETE FROM points WHERE match_id IN (SELECT id FROM matches WHERE source <> 'manual' OR api_fixture_id IS NOT NULL)",
-        "DELETE FROM predictions WHERE match_id IN (SELECT id FROM matches WHERE source <> 'manual' OR api_fixture_id IS NOT NULL)",
-        "DELETE FROM matches WHERE source <> 'manual' OR api_fixture_id IS NOT NULL",
     ]
 
     for sql in statements:
@@ -207,10 +202,6 @@ async def _apply_sqlite_schema_fixes(conn) -> None:
         # predictions.updated_at
         "ALTER TABLE predictions ADD COLUMN updated_at TIMESTAMP",
         "UPDATE predictions SET updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)",
-        # manual-only режим: удаляем API-матчи
-        "DELETE FROM points WHERE match_id IN (SELECT id FROM matches WHERE source <> 'manual' OR api_fixture_id IS NOT NULL)",
-        "DELETE FROM predictions WHERE match_id IN (SELECT id FROM matches WHERE source <> 'manual' OR api_fixture_id IS NOT NULL)",
-        "DELETE FROM matches WHERE source <> 'manual' OR api_fixture_id IS NOT NULL",
     ]
 
     for sql in statements:

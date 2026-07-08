@@ -19,6 +19,11 @@ try:
 except Exception:
     run_miniapp_api_forever = None
 
+try:
+    from app.rpl_sync import run_rpl_sync_loop
+except Exception:
+    run_rpl_sync_loop = None
+
 
 logging.basicConfig(level=logging.INFO)
 
@@ -100,6 +105,10 @@ async def main():
     # 5) Фоновый цикл напоминаний за 30 минут до матчей
     if run_match_reminders_loop is not None:
         asyncio.create_task(run_match_reminders_loop(bot, SessionLocal))
+
+    # 5.05) Фоновый цикл автоподтягивания расписания/результатов РПЛ из API-Football
+    if run_rpl_sync_loop is not None:
+        asyncio.create_task(run_rpl_sync_loop(bot, SessionLocal))
 
     # 5.1) Опциональный mini-app API (включается явно через env MINIAPP_API_ENABLED=1)
     if os.getenv("MINIAPP_API_ENABLED", "0").strip() == "1" and run_miniapp_api_forever is not None:

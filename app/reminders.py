@@ -173,7 +173,7 @@ async def _process_reminders_once(bot, session_factory) -> int:
         matches_q = await session.execute(
             select(Match)
             .where(
-                Match.source == "manual",
+                Match.source.in_(("manual", "apisport")),
                 Match.kickoff_time >= window_start,
                 Match.kickoff_time < window_end,
             )
