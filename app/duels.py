@@ -5,6 +5,7 @@ from typing import Any
 
 from sqlalchemy import or_, select
 
+from app.display import display_team_name
 from app.models import Duel, DuelElo, Match, Tournament, UserTournament
 from app.scoring import calculate_points
 
@@ -328,8 +329,8 @@ async def list_duel_match_options(session, tournament_id: int, tg_user_id: int, 
         rows.append(
             {
                 "match_id": int(m.id),
-                "home_team": str(m.home_team),
-                "away_team": str(m.away_team),
+                "home_team": display_team_name(m.home_team),
+                "away_team": display_team_name(m.away_team),
                 "group_label": m.group_label,
                 "kickoff": m.kickoff_time.strftime("%d.%m %H:%M"),
                 "blocked_for_user": bool(blocked),
@@ -708,8 +709,8 @@ async def get_duel_hub(session, *, tournament_id: int, tg_user_id: int) -> dict[
             "duel_id": int(duel.id),
             "status": str(duel.status),
             "match_id": int(match.id),
-            "home_team": str(match.home_team),
-            "away_team": str(match.away_team),
+            "home_team": display_team_name(match.home_team),
+            "away_team": display_team_name(match.away_team),
             "group_label": match.group_label,
             "kickoff": match.kickoff_time.strftime("%d.%m %H:%M"),
             "result": (
