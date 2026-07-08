@@ -4687,6 +4687,124 @@ async def match_predictions_current(request: web.Request) -> web.Response:
         )
 
 
+async def match_center_current(request: web.Request) -> web.Response:
+    """Агрегированные данные "матч-центра" одного матча: позиции команд в официальной
+    таблице РПЛ, последние личные встречи, стартовые составы (если уже опубликованы).
+
+    Все внешние запросы к API-Football идут по требованию (только когда участник
+    открыл конкретный матч) и кэшируются внутри app/match_center.py — в фоне ничего
+    дополнительно не тянется, отдельная синхронизация rpl_sync.py не затрагивается.
+    """
+    try:
+        auth_result = _extract_verified_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = user.get("id") if isinstance(user, dict) else None
+        if not tg_user_id:
+            return web.json_response({"ok": False, "error": "user_not_found_in_init_data"}, status=400)
+
+        match_id_raw = (request.query.get("match_id") or "").strip()
+        match_id = int(match_id_raw) if match_id_raw.isdigit() else 0
+        if match_id <= 0:
+            return web.json_response({"ok": False, "error": "invalid_match_id"}, status=400)
+
+        async with SessionLocal() as session:
+            tournament = await _resolve_tournament(session, int(tg_user_id), requested_code=request.query.get("t"))
+            in_tournament = (
+                await session.execute(
+                    select(UserTournament.id).where(
+                        UserTournament.tg_user_id == int(tg_user_id),
+                        UserTournament.tournament_id == int(tournament.id),
+                    )
+                )
+            ).first() is not None
+            if not in_tournament:
+                return web.json_response({"ok": False, "error": "user_not_joined_tournament"}, status=403)
+
+            match = (
+                await session.execute(
+                    select(Match).where(
+                        Match.id == int(match_id),
+                        Match.tournament_id == int(tournament.id),
+                    )
+                )
+            ).scalar_one_or_none()
+            if match is None:
+                return web.json_response({"ok": False, "error": "match_not_found"}, status=404)
+
+            home_raw = str(match.home_team or "")
+            away_raw = str(match.away_team or "")
+            kickoff_str = match.kickoff_time.strftime("%d.%m %H:%M")
+            home_score = match.home_score
+            away_score = match.away_score
+            api_fixture_id = match.api_fixture_id
+
+        from app.match_center import fetch_h2h, fetch_lineups, fetch_standings, fetch_team_id_map
+
+        league_id = int(os.getenv("FOOTBALL_RPL_LEAGUE_ID", "235"))
+        season = int(os.getenv("FOOTBALL_RPL_SEASON", "2026"))
+
+        standings, team_ids = await asyncio.gather(
+            fetch_standings(league_id, season),
+            fetch_team_id_map(league_id, season),
+        )
+
+        def _find_standing(name: str) -> dict[str, Any] | None:
+            for row in standings:
+                if row.get("team_name") == name:
+                    return {"rank": row.get("rank"), "points": row.get("points"), "played": row.get("played")}
+            return None
+
+        h2h: list[dict[str, Any]] = []
+        home_team_id = team_ids.get(home_raw)
+        away_team_id = team_ids.get(away_raw)
+        if home_team_id and away_team_id:
+            raw_h2h = await fetch_h2h(int(home_team_id), int(away_team_id), last=5)
+            h2h = [
+                {
+                    "date": item.get("date"),
+                    "home_team": display_team_name(str(item.get("home_team") or "")),
+                    "away_team": display_team_name(str(item.get("away_team") or "")),
+                    "home_score": item.get("home_score"),
+                    "away_score": item.get("away_score"),
+                }
+                for item in raw_h2h
+            ]
+
+        lineups_out: dict[str, Any] | None = None
+        if api_fixture_id:
+            raw_lineups = await fetch_lineups(int(api_fixture_id))
+            if raw_lineups:
+                lineups_out = {display_team_name(name): info for name, info in raw_lineups.items()}
+
+        return web.json_response(
+            {
+                "ok": True,
+                "trusted": True,
+                "tournament_code": tournament.code,
+                "match_id": int(match_id),
+                "home_team": display_team_name(home_raw),
+                "away_team": display_team_name(away_raw),
+                "kickoff": kickoff_str,
+                "home_score": home_score,
+                "away_score": away_score,
+                "standings": {
+                    "home": _find_standing(home_raw),
+                    "away": _find_standing(away_raw),
+                },
+                "h2h": h2h,
+                "lineups": lineups_out,
+            }
+        )
+    except Exception as e:
+        logger.exception("miniapp match_center_current error")
+        return web.json_response(
+            {"ok": False, "error": "match_center_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
 async def predict_set(request: web.Request) -> web.Response:
     try:
         auth_result = _extract_verified_user(request)
@@ -5871,6 +5989,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/miniapp/matches/stages", match_stages_current)
     app.router.add_get("/api/miniapp/predict/current", predict_current)
     app.router.add_get("/api/miniapp/match/predictions", match_predictions_current)
+    app.router.add_get("/api/miniapp/match/center", match_center_current)
     app.router.add_post("/api/miniapp/predict/set", predict_set)
     app.router.add_get("/api/miniapp/longterm/current", longterm_current)
     app.router.add_post("/api/miniapp/longterm/set", longterm_set)

@@ -248,6 +248,44 @@ type MatchPredictionsResponse = {
   }>
 }
 
+type MatchCenterStanding = {
+  rank?: number | null
+  points?: number | null
+  played?: number | null
+}
+
+type MatchCenterH2hItem = {
+  date?: string | null
+  home_team?: string
+  away_team?: string
+  home_score?: number | null
+  away_score?: number | null
+}
+
+type MatchCenterLineup = {
+  formation?: string | null
+  starters?: string[]
+}
+
+type MatchCenterResponse = {
+  ok: boolean
+  error?: string
+  reason?: string
+  trusted?: boolean
+  match_id?: number
+  home_team?: string
+  away_team?: string
+  kickoff?: string
+  home_score?: number | null
+  away_score?: number | null
+  standings?: {
+    home?: MatchCenterStanding | null
+    away?: MatchCenterStanding | null
+  }
+  h2h?: MatchCenterH2hItem[]
+  lineups?: Record<string, MatchCenterLineup> | null
+}
+
 type TableResponse = {
   ok: boolean
   error?: string
@@ -750,6 +788,49 @@ const SkeletonBlock = ({ rows = 3 }: { rows?: number }) => (
   </div>
 )
 
+// Логотипы команд РПЛ: файлы кладём в miniapp/public/team-logos/<slug>.png
+// (256x256, прозрачный фон). Ключ — то самое кириллическое название, которое
+// приходит от backend (после display_team_name). Если файла нет или он не
+// загрузился, компонент TeamCrest сам откатывается на кружок с инициалами —
+// так что можно постепенно добавлять логотипы по одному, ничего не ломая.
+const TEAM_LOGO_SLUGS: Record<string, string> = {
+  'Ахмат': 'akhmat',
+  'Акрон': 'akron',
+  'Балтика': 'baltika',
+  'ЦСКА': 'cska',
+  'Динамо Мхч': 'dinamo-mkhachkala',
+  'Динамо Мск': 'dinamo-msk',
+  'Краснодар': 'krasnodar',
+  'Оренбург': 'orenburg',
+  'Ростов': 'rostov',
+  'Факел': 'fakel',
+  'Кр. Советов': 'krylia-sovetov',
+  'Локомотив': 'lokomotiv',
+  'Родина': 'rodina',
+  'Рубин': 'rubin',
+  'Спартак': 'spartak',
+  'Зенит': 'zenit',
+}
+
+const TeamCrest = ({ name, alt }: { name: string; alt?: boolean }) => {
+  const slug = TEAM_LOGO_SLUGS[name.trim()]
+  const [failed, setFailed] = useState(false)
+  const className = `match-center-crest ${alt ? 'match-center-crest-alt' : ''}`
+  if (slug && !failed) {
+    return (
+      <div className={className}>
+        <img
+          src={`/team-logos/${slug}.png`}
+          alt=""
+          className="match-center-crest-img"
+          onError={() => setFailed(true)}
+        />
+      </div>
+    )
+  }
+  return <div className={className}>{name.slice(0, 3).toUpperCase()}</div>
+}
+
 const crowdText = (item: {
   crowd_count?: number
   crowd_home_pct?: number
@@ -993,6 +1074,9 @@ function App() {
   const [predictNotice, setPredictNotice] = useState<string | null>(null)
   const [matchPredictionsSheet, setMatchPredictionsSheet] = useState<MatchPredictionsResponse | null>(null)
   const [matchPredictionsLoadingId, setMatchPredictionsLoadingId] = useState<number | null>(null)
+  const [matchCenterId, setMatchCenterId] = useState<number | null>(null)
+  const [matchCenterData, setMatchCenterData] = useState<MatchCenterResponse | null>(null)
+  const [matchCenterError, setMatchCenterError] = useState<string | null>(null)
   const [matchPredictionsError, setMatchPredictionsError] = useState<string | null>(null)
   const [tableData, setTableData] = useState<TableResponse | null>(null)
   const [tableError, setTableError] = useState<string | null>(null)
@@ -1171,6 +1255,34 @@ function App() {
     }, 75000)
     return () => clearInterval(intervalId)
   }, [screen])
+
+  // Матч-центр: подгружаем данные при открытии и подключаем нативную кнопку "Назад" Telegram,
+  // чтобы закрытие экрана ощущалось как обычная навигация внутри Telegram, а не веб-попап.
+  useEffect(() => {
+    if (matchCenterId == null) {
+      try {
+        ;(WebApp as any).BackButton?.hide()
+      } catch {
+        // no-op
+      }
+      return
+    }
+    loadMatchCenter(matchCenterId)
+    try {
+      ;(WebApp as any).BackButton?.show()
+      const handler = () => closeMatchCenter()
+      ;(WebApp as any).BackButton?.onClick?.(handler)
+      return () => {
+        try {
+          ;(WebApp as any).BackButton?.offClick?.(handler)
+        } catch {
+          // no-op
+        }
+      }
+    } catch {
+      return
+    }
+  }, [matchCenterId])
 
   useEffect(() => {
     if (joinNameTouched) return
@@ -1877,6 +1989,37 @@ function App() {
       setMatchPredictionsError('Не удалось загрузить прогнозы матча. Попробуй ещё раз.')
     } finally {
       setMatchPredictionsLoadingId(null)
+    }
+  }
+
+  const openMatchCenter = (matchId: number) => {
+    haptic.select()
+    setMatchCenterId(matchId)
+  }
+
+  const closeMatchCenter = () => {
+    setMatchCenterId(null)
+  }
+
+  const loadMatchCenter = async (matchId: number) => {
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    if (!initData) return
+    const tParam = encodeURIComponent(selectedTournamentCode || 'RPL')
+    setMatchCenterError(null)
+    setMatchCenterData(null)
+    try {
+      const res = await fetch(
+        `${apiBase}/api/miniapp/match/center?t=${tParam}&match_id=${encodeURIComponent(String(matchId))}`,
+        { headers: { 'X-Telegram-Init-Data': initData } }
+      )
+      const data = (await res.json()) as MatchCenterResponse
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      setMatchCenterData(data)
+    } catch (err) {
+      setMatchCenterError(String(err))
     }
   }
 
@@ -4387,15 +4530,25 @@ function App() {
                                       : hasSaved
                                         ? 'is-saved'
                                         : 'is-empty'
+                                  const canOpenMatchCenter = selectedTournamentCode === 'RPL'
                                   return (
                                     <>
-                                      <div className="match-card-top">
+                                      <div
+                                        className={`match-card-top ${canOpenMatchCenter ? 'match-card-top-tappable' : ''}`}
+                                        onClick={canOpenMatchCenter ? () => openMatchCenter(m.match_id) : undefined}
+                                        role={canOpenMatchCenter ? 'button' : undefined}
+                                      >
                                         {showDateBadge ? <span className="day-title">{dateKey}</span> : <span />}
                                         {m.group_label ? <span className="group-small">[{m.group_label}]</span> : <span className="group-small">—</span>}
                                         <span className="kickoff-small">{(m.kickoff || '').split(' ')[1] || ''} МСК</span>
                                       </div>
                                       <div className="compact-main compact-main-predict">
-                                        <span className="team-name team-left">{teamWithFlag(m.home_team)}</span>
+                                        <span
+                                          className={`team-name team-left ${canOpenMatchCenter ? 'team-name-tappable' : ''}`}
+                                          onClick={canOpenMatchCenter ? () => openMatchCenter(m.match_id) : undefined}
+                                        >
+                                          {teamWithFlag(m.home_team)}
+                                        </span>
                                         {isLocked ? (
                                           <span className="score-inline-static">{savedInput || '-:-'}</span>
                                         ) : (
@@ -4412,7 +4565,12 @@ function App() {
                                             inputMode="numeric"
                                           />
                                         )}
-                                        <span className="team-name team-right">{teamWithFlag(m.away_team)}</span>
+                                        <span
+                                          className={`team-name team-right ${canOpenMatchCenter ? 'team-name-tappable' : ''}`}
+                                          onClick={canOpenMatchCenter ? () => openMatchCenter(m.match_id) : undefined}
+                                        >
+                                          {teamWithFlag(m.away_team)}
+                                        </span>
                                         <button
                                           className={`save-btn compact-save-btn prediction-save-btn ${
                                             isLocked ? 'is-locked' : saveVisualState
@@ -5779,6 +5937,128 @@ function App() {
                     {r}
                   </button>
                 ))}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {matchCenterId != null ? (
+          <div className="match-center-overlay">
+            <div className="match-center-screen">
+              <div className="match-center-header">
+                <button type="button" className="match-center-back" onClick={closeMatchCenter} aria-label="Назад">
+                  <span aria-hidden="true">‹</span>
+                </button>
+                <span className="match-center-header-title">Матч-центр</span>
+                <span />
+              </div>
+
+              <div className="match-center-body">
+                {matchCenterError ? (
+                  <div className="card">
+                    <div className="card-text">Не удалось загрузить матч-центр. Попробуй обновить.</div>
+                  </div>
+                ) : !matchCenterData ? (
+                  <SkeletonBlock rows={5} />
+                ) : (
+                  <>
+                    <div className="match-center-hero">
+                      <div className="match-center-team">
+                        <TeamCrest name={matchCenterData.home_team || ''} />
+                        <span className="match-center-team-name">{matchCenterData.home_team}</span>
+                      </div>
+                      <div className="match-center-mid">
+                        <span className="match-center-kickoff">{matchCenterData.kickoff} МСК</span>
+                        <span className="match-center-score">
+                          {matchCenterData.home_score != null && matchCenterData.away_score != null
+                            ? `${matchCenterData.home_score} : ${matchCenterData.away_score}`
+                            : '— : —'}
+                        </span>
+                      </div>
+                      <div className="match-center-team">
+                        <TeamCrest name={matchCenterData.away_team || ''} alt />
+                        <span className="match-center-team-name">{matchCenterData.away_team}</span>
+                      </div>
+                    </div>
+
+                    {(() => {
+                      const myPrediction = predictItems.find((i) => i.match_id === matchCenterId)?.prediction
+                      return myPrediction ? (
+                        <div className="card match-center-card">
+                          <div className="match-center-row">
+                            <span className="match-center-label">Мой прогноз</span>
+                            <b>{myPrediction}</b>
+                          </div>
+                        </div>
+                      ) : null
+                    })()}
+
+                    <div className="card match-center-card">
+                      <div className="match-center-card-title">Позиции в РПЛ</div>
+                      {matchCenterData.standings?.home || matchCenterData.standings?.away ? (
+                        <>
+                          <div className="match-center-row">
+                            <span>{matchCenterData.home_team}</span>
+                            <span className="match-center-dim">
+                              {matchCenterData.standings?.home
+                                ? `${matchCenterData.standings.home.rank} место · ${matchCenterData.standings.home.points} очк.`
+                                : '—'}
+                            </span>
+                          </div>
+                          <div className="match-center-row">
+                            <span>{matchCenterData.away_team}</span>
+                            <span className="match-center-dim">
+                              {matchCenterData.standings?.away
+                                ? `${matchCenterData.standings.away.rank} место · ${matchCenterData.standings.away.points} очк.`
+                                : '—'}
+                            </span>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="match-center-dim match-center-empty">Пока нет данных</div>
+                      )}
+                    </div>
+
+                    <div className="card match-center-card">
+                      <div className="match-center-card-title">Личные встречи</div>
+                      {matchCenterData.h2h && matchCenterData.h2h.length > 0 ? (
+                        matchCenterData.h2h.map((item, idx) => (
+                          <div className="match-center-row" key={`h2h-${idx}`}>
+                            <span className="match-center-dim">{item.date}</span>
+                            <span>
+                              {item.home_team} {item.home_score ?? '-'}:{item.away_score ?? '-'} {item.away_team}
+                            </span>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="match-center-dim match-center-empty">Нет данных о личных встречах</div>
+                      )}
+                    </div>
+
+                    <div className="card match-center-card">
+                      <div className="match-center-card-title">Составы</div>
+                      {matchCenterData.lineups ? (
+                        <div className="match-center-lineups">
+                          {Object.entries(matchCenterData.lineups).map(([teamName, info]) => (
+                            <div className="match-center-lineup-col" key={teamName}>
+                              <div className="match-center-lineup-team">
+                                {teamName}
+                                {info.formation ? ` · ${info.formation}` : ''}
+                              </div>
+                              {(info.starters || []).map((name, i) => (
+                                <div className="match-center-lineup-player" key={i}>
+                                  {name}
+                                </div>
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="match-center-dim match-center-empty">Появятся примерно за час до матча</div>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </div>
