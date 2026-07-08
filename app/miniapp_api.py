@@ -4762,6 +4762,35 @@ async def match_center_current(request: web.Request) -> web.Response:
                     return {"rank": row.get("rank"), "points": row.get("points"), "played": row.get("played")}
             return None
 
+        async def _team_accuracy(team_raw: str) -> dict[str, Any] | None:
+            """Личный % угадывания участника по конкретной команде РПЛ: доля матчей
+            этой команды (уже рассчитанных, на которые участник ставил прогноз), где
+            он получил очки за исход (category != "none" в таблице points)."""
+            async with SessionLocal() as acc_session:
+                rows = (
+                    await acc_session.execute(
+                        select(Point.category).join(Match, Match.id == Point.match_id).where(
+                            Point.tg_user_id == int(tg_user_id),
+                            Match.tournament_id == int(tournament.id),
+                            or_(Match.home_team == team_raw, Match.away_team == team_raw),
+                        )
+                    )
+                ).scalars().all()
+            total = len(rows)
+            if total == 0:
+                return None
+            correct = sum(1 for cat in rows if cat != "none")
+            return {
+                "percent": round(correct / total * 100),
+                "correct": correct,
+                "total": total,
+            }
+
+        accuracy_home, accuracy_away = await asyncio.gather(
+            _team_accuracy(home_raw),
+            _team_accuracy(away_raw),
+        )
+
         h2h: list[dict[str, Any]] = []
         home_team_id = team_ids.get(home_raw)
         away_team_id = team_ids.get(away_raw)
@@ -4806,6 +4835,10 @@ async def match_center_current(request: web.Request) -> web.Response:
                 "h2h": h2h,
                 "lineups": lineups_out,
                 "odds": odds_out,
+                "accuracy": {
+                    "home": accuracy_home,
+                    "away": accuracy_away,
+                },
             }
         )
     except Exception as e:

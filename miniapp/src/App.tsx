@@ -253,6 +253,12 @@ type MatchCenterLineup = {
   starters?: string[]
 }
 
+type MatchCenterAccuracy = {
+  percent: number
+  correct: number
+  total: number
+} | null
+
 type MatchCenterResponse = {
   ok: boolean
   error?: string
@@ -276,6 +282,10 @@ type MatchCenterResponse = {
     draw_odd?: string | null
     away_odd?: string | null
   } | null
+  accuracy?: {
+    home?: MatchCenterAccuracy
+    away?: MatchCenterAccuracy
+  }
 }
 
 type TableResponse = {
@@ -5995,6 +6005,32 @@ function App() {
                     })()}
 
                     <div className="card match-center-card">
+                      <div className="match-center-card-title">Процент угадывания</div>
+                      {matchCenterData.accuracy?.home || matchCenterData.accuracy?.away ? (
+                        <>
+                          <div className="match-center-row">
+                            <span>{matchCenterData.home_team}</span>
+                            <span className="match-center-dim">
+                              {matchCenterData.accuracy?.home
+                                ? `${matchCenterData.accuracy.home.percent}% (${matchCenterData.accuracy.home.correct} из ${matchCenterData.accuracy.home.total})`
+                                : '—'}
+                            </span>
+                          </div>
+                          <div className="match-center-row">
+                            <span>{matchCenterData.away_team}</span>
+                            <span className="match-center-dim">
+                              {matchCenterData.accuracy?.away
+                                ? `${matchCenterData.accuracy.away.percent}% (${matchCenterData.accuracy.away.correct} из ${matchCenterData.accuracy.away.total})`
+                                : '—'}
+                            </span>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="match-center-dim match-center-empty">Пока нет рассчитанных матчей с твоим прогнозом</div>
+                      )}
+                    </div>
+
+                    <div className="card match-center-card">
                       <div className="match-center-card-title">Позиции в РПЛ</div>
                       {matchCenterData.standings?.home || matchCenterData.standings?.away ? (
                         <>
@@ -6059,12 +6095,13 @@ function App() {
                       )}
                     </div>
 
-                    {matchCenterData.odds &&
-                    (matchCenterData.odds.home_odd || matchCenterData.odds.draw_odd || matchCenterData.odds.away_odd) ? (
-                      <div className="card match-center-card">
-                        <div className="match-center-card-title">
-                          Котировки букмекеров{matchCenterData.odds.bookmaker ? ` · ${matchCenterData.odds.bookmaker}` : ''}
-                        </div>
+                    <div className="card match-center-card">
+                      <div className="match-center-card-title">
+                        Котировки букмекеров
+                        {matchCenterData.odds?.bookmaker ? ` · ${matchCenterData.odds.bookmaker}` : ''}
+                      </div>
+                      {matchCenterData.odds &&
+                      (matchCenterData.odds.home_odd || matchCenterData.odds.draw_odd || matchCenterData.odds.away_odd) ? (
                         <div className="match-center-odds-row">
                           <div className="match-center-odds-cell">
                             <span className="match-center-dim">П1</span>
@@ -6079,8 +6116,10 @@ function App() {
                             <b>{matchCenterData.odds.away_odd || '—'}</b>
                           </div>
                         </div>
-                      </div>
-                    ) : null}
+                      ) : (
+                        <div className="match-center-dim match-center-empty">Букмекеры пока не выставили котировки</div>
+                      )}
+                    </div>
 
                     <div className="card match-center-card">
                       <div className="match-center-card-title">Прогнозы соперников</div>
