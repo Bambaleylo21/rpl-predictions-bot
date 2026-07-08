@@ -28,6 +28,8 @@ class LeagueTableMeta:
     league_code: str
     league_name: str
     participants: int
+    promote_count: int = 2
+    relegate_count: int = 2
 
 
 @dataclass
@@ -218,6 +220,8 @@ async def build_active_stage_league_table(
                 league_code=str(selected_league.code),
                 league_name=str(selected_league.name),
                 participants=0,
+                promote_count=int(getattr(stage, "promote_count", 2) or 2),
+                relegate_count=int(getattr(stage, "relegate_count", 2) or 2),
             )
             return [], meta
 
@@ -357,5 +361,7 @@ async def build_active_stage_league_table(
             league_code=str(selected_league.code),
             league_name=str(selected_league.name),
             participants=len(rows),
+            promote_count=int(getattr(stage, "promote_count", 2) or 2),
+            relegate_count=int(getattr(stage, "relegate_count", 2) or 2),
         )
         return rows, meta

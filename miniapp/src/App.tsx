@@ -218,6 +218,29 @@ type TableResponse = {
   league_name?: string
   participants?: number
   user_place?: number | null
+  promote_count?: number
+  relegate_count?: number
+  my_league_code?: string | null
+  leagues?: Array<{
+    league_code: string
+    league_name: string
+    participants: number
+    user_place: number | null
+    rows: Array<{
+      tg_user_id?: number
+      place: number
+      name: string
+      total: number
+      bonus_points?: number
+      exact: number
+      diff: number
+      outcome: number
+      pred_total: number
+      hits: number
+      hit_rate: number
+      missed_matches?: number
+    }>
+  }>
   rows?: Array<{
     tg_user_id?: number
     place: number
@@ -2905,6 +2928,106 @@ function App() {
     return [...(tableData?.rows_longterm || [])]
   }, [tableData])
 
+  const renderLeagueTableCard = (league: NonNullable<TableResponse['leagues']>[number]) => {
+    const isHigh = league.league_code === 'HIGH'
+    const promoteCount = tableData?.promote_count ?? 2
+    const relegateCount = tableData?.relegate_count ?? 2
+    const participants = league.participants
+    const rows = league.rows
+    const isMyLeague = tableData?.my_league_code === league.league_code
+
+    const zoneFor = (place: number): 'champion' | 'promotion' | 'relegation' | null => {
+      if (isHigh) {
+        if (place === 1) return 'champion'
+        if (participants > 0 && place > participants - relegateCount) return 'relegation'
+        return null
+      }
+      if (place <= promoteCount) return 'promotion'
+      return null
+    }
+
+    return (
+      <div className="card table-card league-table-card" key={`league-${league.league_code}`}>
+        <div className="league-table-header">
+          <div className="league-table-title">
+            <span className={`league-badge ${isHigh ? 'league-badge-high' : 'league-badge-low'}`}>
+              {isHigh ? 'Высшая лига' : 'Низшая лига'}
+            </span>
+            {isMyLeague ? <span className="league-mine-tag">твоя лига</span> : null}
+          </div>
+          <div className="league-table-count">{participants} уч.</div>
+        </div>
+
+        <div className="table-grid table-grid-head">
+          <div className="col-place">#</div>
+          <div className="col-name">Имя</div>
+          <div className="col-num">Очк</div>
+          <div className="col-num">🎯</div>
+          <div className="col-num">📏</div>
+          <div className="col-num">✅</div>
+          <div className="col-num">⛔</div>
+          <div className="col-num">⭐</div>
+        </div>
+
+        {rows.length > 0 ? (
+          rows.map((r) => {
+            const zone = zoneFor(r.place)
+            const bonusPoints = Math.max(0, Number(r.bonus_points ?? 0))
+            return (
+              <div
+                className={`table-grid table-grid-row ${tableData?.user_place === r.place && isMyLeague ? 'is-user' : ''} ${
+                  zone ? `zone-${zone}` : ''
+                }`}
+                key={`${league.league_code}-${r.place}-${r.name}`}
+              >
+                <div className="col-place">
+                  {r.place}
+                  {zone === 'champion' ? <span className="zone-icon" title="Чемпион">🏆</span> : null}
+                  {zone === 'promotion' ? <span className="zone-icon" title="Переход в Высшую лигу">⬆️</span> : null}
+                  {zone === 'relegation' ? <span className="zone-icon" title="Вылет в Низшую лигу">⬇️</span> : null}
+                </div>
+                <div className="col-name col-name-text">
+                  {r.tg_user_id ? (
+                    <button
+                      className="table-name-btn"
+                      onClick={() => {
+                        setProfileTargetUserId(r.tg_user_id || null)
+                        setScreen('profile')
+                      }}
+                    >
+                      {r.name}
+                    </button>
+                  ) : (
+                    r.name
+                  )}
+                </div>
+                <div className="col-num">{r.total}</div>
+                <div className="col-num">{r.exact}</div>
+                <div className="col-num">{r.diff}</div>
+                <div className="col-num">{r.outcome}</div>
+                <div className="col-num">{r.missed_matches ?? 0}</div>
+                <div className="col-num">{bonusPoints}</div>
+              </div>
+            )
+          })
+        ) : (
+          <div className="card-text table-empty-note">Пока нет участников в этой лиге.</div>
+        )}
+
+        <div className="league-table-legend">
+          {isHigh ? (
+            <>
+              <span className="legend-item"><span className="legend-dot legend-dot-champion" />🏆 чемпион</span>
+              <span className="legend-item"><span className="legend-dot legend-dot-relegation" />⬇️ вылет в Низшую ({relegateCount})</span>
+            </>
+          ) : (
+            <span className="legend-item"><span className="legend-dot legend-dot-promotion" />⬆️ переход в Высшую ({promoteCount})</span>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   const adminResultsWithSections = useMemo(() => {
     return adminResults.map((item, index) => {
       const sectionTitle = item.round_name || (item.round_number ? `Тур ${item.round_number}` : 'Матчи')
@@ -4938,6 +5061,8 @@ function App() {
                 <div className="card">
                   <div className="card-text">Загружаю таблицу...</div>
                 </div>
+              ) : tableData?.leagues && tableData.leagues.length > 0 ? (
+                <>{tableData.leagues.map((lg) => renderLeagueTableCard(lg))}</>
               ) : tableData?.table_mode === 'longterm' ? (
                 <div className="card table-card">
                   <div className="table-grid-longterm table-grid-head">

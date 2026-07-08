@@ -5254,7 +5254,33 @@ async def table_current(request: web.Request) -> web.Response:
             await session.commit()
 
         if (tournament.code or "").strip().upper() == DEFAULT_TOURNAMENT_CODE:
-            rows, meta = await build_active_stage_league_table(int(tg_user_id))
+            def _serialize_table_rows(rows: list[dict]) -> list[dict[str, Any]]:
+                return [
+                    {
+                        "tg_user_id": int(r.get("tg_user_id", 0)),
+                        "place": int(r.get("place", 0)),
+                        "name": str(r.get("name", "")),
+                        "total": int(r.get("total", 0)),
+                        "exact": int(r.get("exact", 0)),
+                        "diff": int(r.get("diff", 0)),
+                        "outcome": int(r.get("outcome", 0)),
+                        "pred_total": int(r.get("pred_total", 0)),
+                        "hits": int(r.get("hits", 0)),
+                        "hit_rate": float(r.get("hit_rate", 0.0)),
+                        "missed_matches": int(r.get("missed_matches", 0)),
+                    }
+                    for r in rows
+                ]
+
+            def _find_user_place(rows: list[dict]) -> int | None:
+                for r in rows:
+                    if int(r.get("tg_user_id", 0)) == int(tg_user_id):
+                        return int(r.get("place", 0))
+                return None
+
+            high_rows, high_meta = await build_active_stage_league_table(int(tg_user_id), requested_league_code="HIGH")
+            low_rows, low_meta = await build_active_stage_league_table(int(tg_user_id), requested_league_code="LOW")
+            meta = high_meta or low_meta
             if meta is None:
                 return web.json_response(
                     {
@@ -5267,11 +5293,31 @@ async def table_current(request: web.Request) -> web.Response:
                     }
                 )
 
-            user_place = None
-            for r in rows:
-                if int(r.get("tg_user_id", 0)) == int(tg_user_id):
-                    user_place = int(r.get("place", 0))
-                    break
+            high_user_place = _find_user_place(high_rows)
+            low_user_place = _find_user_place(low_rows)
+            my_league_code = "HIGH" if high_user_place is not None else ("LOW" if low_user_place is not None else None)
+
+            leagues_payload: list[dict[str, Any]] = []
+            if high_meta is not None:
+                leagues_payload.append(
+                    {
+                        "league_code": "HIGH",
+                        "league_name": high_meta.league_name,
+                        "participants": int(high_meta.participants),
+                        "user_place": high_user_place,
+                        "rows": _serialize_table_rows(high_rows),
+                    }
+                )
+            if low_meta is not None:
+                leagues_payload.append(
+                    {
+                        "league_code": "LOW",
+                        "league_name": low_meta.league_name,
+                        "participants": int(low_meta.participants),
+                        "user_place": low_user_place,
+                        "rows": _serialize_table_rows(low_rows),
+                    }
+                )
 
             return web.json_response(
                 {
@@ -5284,25 +5330,15 @@ async def table_current(request: web.Request) -> web.Response:
                     "stage_name": meta.stage_name,
                     "stage_round_min": int(meta.stage_round_min),
                     "stage_round_max": int(meta.stage_round_max),
+                    "promote_count": int(meta.promote_count),
+                    "relegate_count": int(meta.relegate_count),
+                    "my_league_code": my_league_code,
+                    "leagues": leagues_payload,
+                    # Ниже — поля для обратной совместимости со старым (одна таблица) форматом.
                     "league_name": meta.league_name,
                     "participants": int(meta.participants),
-                    "user_place": user_place,
-                    "rows": [
-                        {
-                            "tg_user_id": int(r.get("tg_user_id", 0)),
-                            "place": int(r.get("place", 0)),
-                            "name": str(r.get("name", "")),
-                            "total": int(r.get("total", 0)),
-                            "exact": int(r.get("exact", 0)),
-                            "diff": int(r.get("diff", 0)),
-                            "outcome": int(r.get("outcome", 0)),
-                            "pred_total": int(r.get("pred_total", 0)),
-                            "hits": int(r.get("hits", 0)),
-                            "hit_rate": float(r.get("hit_rate", 0.0)),
-                            "missed_matches": int(r.get("missed_matches", 0)),
-                        }
-                        for r in rows
-                    ],
+                    "user_place": high_user_place if my_league_code == "HIGH" else low_user_place,
+                    "rows": [],
                 }
             )
 
