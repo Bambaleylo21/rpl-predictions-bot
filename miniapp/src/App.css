@@ -268,7 +268,7 @@ body {
 }
 
 .table-grid-head {
-  padding: 6px 2px 8px;
+  padding: 6px 8px 8px 2px;
   border-bottom: 1px solid var(--line-3);
   color: var(--text-dim);
   font-size: 11px;
@@ -277,7 +277,7 @@ body {
 }
 
 .table-grid-row {
-  padding: 7px 2px;
+  padding: 7px 8px 7px 2px;
   border-bottom: 1px solid var(--line-3);
   font-size: 13px;
 }
@@ -310,6 +310,12 @@ body {
   font-size: 14px;
   font-weight: 700;
   color: var(--text-main);
+}
+
+.table-grid-row.zone-champion,
+.table-grid-row.zone-promotion,
+.table-grid-row.zone-relegation {
+  border-radius: 8px;
 }
 
 .table-grid-row.zone-champion {
