@@ -1180,6 +1180,48 @@ body {
   text-align: left;
 }
 
+/* Логотипы вместо названий команд в разделе "Матчи" (только РПЛ) — фиксированный
+   размер одинаковый для активных и завершённых матчей, картинки любых пропорций
+   вписываются в один и тот же квадрат. Матч-центр использует свои классы
+   (.match-center-crest-*) и этим не затрагивается. */
+.team-logo-cell {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.team-logo-cell.team-left {
+  justify-content: flex-end;
+}
+
+.team-logo-cell.team-right {
+  justify-content: flex-start;
+}
+
+.match-list-logo-wrap {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.match-list-logo-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.match-list-logo-fallback {
+  border-radius: 50%;
+  background: rgba(230, 230, 230, 0.08);
+  border: 1px solid var(--line-2);
+  color: var(--text-main);
+  font-size: 10px;
+  font-weight: 700;
+}
+
 .score-inline-input {
   width: 58px;
   border: 1px solid var(--line-2);

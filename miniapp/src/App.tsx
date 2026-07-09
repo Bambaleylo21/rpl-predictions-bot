@@ -909,6 +909,27 @@ const TeamCrest = ({ name, alt }: { name: string; alt?: boolean }) => {
   return <div className={`match-center-crest ${alt ? 'match-center-crest-alt' : ''}`}>{name.slice(0, 3).toUpperCase()}</div>
 }
 
+// Логотип команды для списка "Матчи" (РПЛ) — отдельный от TeamCrest компонент с
+// собственными CSS-классами и фиксированным размером, чтобы правки тут никак не
+// затрагивали Матч-центр. Только для РПЛ: используется, когда canOpenMatchCenter === true.
+const MatchListCrest = ({ name }: { name: string }) => {
+  const slug = TEAM_LOGO_SLUGS[name.trim()]
+  const [failed, setFailed] = useState(false)
+  if (slug && !failed) {
+    return (
+      <span className="match-list-logo-wrap">
+        <img
+          src={`/team-logos/${slug}.png`}
+          alt={name}
+          className="match-list-logo-img"
+          onError={() => setFailed(true)}
+        />
+      </span>
+    )
+  }
+  return <span className="match-list-logo-wrap match-list-logo-fallback">{name.trim().slice(0, 3).toUpperCase()}</span>
+}
+
 const crowdText = (item: {
   crowd_count?: number
   crowd_home_pct?: number
@@ -4793,9 +4814,21 @@ function App() {
                                           <span className="kickoff-small">{(m.kickoff || '').split(' ')[1] || ''} МСК</span>
                                         </div>
                                         <div className="compact-main compact-main-result">
-                                          <span className="team-name team-left">{teamWithFlag(m.home_team)}</span>
+                                          {selectedTournamentCode === 'RPL' ? (
+                                            <span className="team-logo-cell team-left">
+                                              <MatchListCrest name={m.home_team} />
+                                            </span>
+                                          ) : (
+                                            <span className="team-name team-left">{teamWithFlag(m.home_team)}</span>
+                                          )}
                                           <span className="score-inline-pill">—</span>
-                                          <span className="team-name team-right">{teamWithFlag(m.away_team)}</span>
+                                          {selectedTournamentCode === 'RPL' ? (
+                                            <span className="team-logo-cell team-right">
+                                              <MatchListCrest name={m.away_team} />
+                                            </span>
+                                          ) : (
+                                            <span className="team-name team-right">{teamWithFlag(m.away_team)}</span>
+                                          )}
                                         </div>
                                         <div className="match-card-bottom">
                                           <span>Пара определится позже</span>
@@ -4839,10 +4872,14 @@ function App() {
                                       </div>
                                       <div className="compact-main compact-main-predict">
                                         <span
-                                          className={`team-name team-left ${canOpenMatchCenter ? 'team-name-tappable' : ''}`}
+                                          className={
+                                            canOpenMatchCenter
+                                              ? 'team-logo-cell team-left team-name-tappable'
+                                              : 'team-name team-left'
+                                          }
                                           onClick={canOpenMatchCenter ? () => openMatchCenter(m.match_id) : undefined}
                                         >
-                                          {teamWithFlag(m.home_team)}
+                                          {canOpenMatchCenter ? <MatchListCrest name={m.home_team} /> : teamWithFlag(m.home_team)}
                                         </span>
                                         {isLocked ? (
                                           <span className="score-inline-static">{savedInput || '-:-'}</span>
@@ -4861,10 +4898,14 @@ function App() {
                                           />
                                         )}
                                         <span
-                                          className={`team-name team-right ${canOpenMatchCenter ? 'team-name-tappable' : ''}`}
+                                          className={
+                                            canOpenMatchCenter
+                                              ? 'team-logo-cell team-right team-name-tappable'
+                                              : 'team-name team-right'
+                                          }
                                           onClick={canOpenMatchCenter ? () => openMatchCenter(m.match_id) : undefined}
                                         >
-                                          {teamWithFlag(m.away_team)}
+                                          {canOpenMatchCenter ? <MatchListCrest name={m.away_team} /> : teamWithFlag(m.away_team)}
                                         </span>
                                         <button
                                           className={`save-btn compact-save-btn prediction-save-btn ${
@@ -4943,9 +4984,21 @@ function App() {
                                 role={canOpenMatchCenter ? 'button' : undefined}
                               >
                                 <div className="closed-match-main">
-                                  <span className="team-name closed-team-name team-left">{teamWithFlag(m.home_team)}</span>
+                                  {canOpenMatchCenter ? (
+                                    <span className="team-logo-cell team-left">
+                                      <MatchListCrest name={m.home_team} />
+                                    </span>
+                                  ) : (
+                                    <span className="team-name closed-team-name team-left">{teamWithFlag(m.home_team)}</span>
+                                  )}
                                   <span className="closed-result-score">{m.result || '—'}</span>
-                                  <span className="team-name closed-team-name team-right">{teamWithFlag(m.away_team)}</span>
+                                  {canOpenMatchCenter ? (
+                                    <span className="team-logo-cell team-right">
+                                      <MatchListCrest name={m.away_team} />
+                                    </span>
+                                  ) : (
+                                    <span className="team-name closed-team-name team-right">{teamWithFlag(m.away_team)}</span>
+                                  )}
                                   <div className="closed-action-stack">
                                     <span className="closed-points-badge">
                                       {m.prediction
