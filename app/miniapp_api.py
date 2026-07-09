@@ -5648,6 +5648,7 @@ async def admin_rpl_season_status(request: web.Request) -> web.Response:
         if auth_result[0] is None:
             return auth_result[1]
         _payload, _user = auth_result
+        admin_tg_user_id = _user.get("id") if isinstance(_user, dict) else None
 
         from app.season_setup import get_active_season, get_active_stage, is_enrollment_open
 
@@ -5718,6 +5719,61 @@ async def admin_rpl_season_status(request: web.Request) -> web.Response:
                         assigned_total += c
                     counts["unassigned"] = max(0, counts["total_members"] - assigned_total)
 
+            # Превью для кнопки "Завершить этап" в мини-аппе: сколько матчей ещё без
+            # результата (пока > 0 — завершить нельзя) и кто сейчас на грани перехода,
+            # чтобы админ видел последствия ДО нажатия, а не после.
+            stage_finish_preview = None
+            if active_stage is not None and rpl is not None and not bool(int(active_stage.is_completed or 0)):
+                pending_q = await session.execute(
+                    select(func.count(Match.id)).where(
+                        Match.tournament_id == rpl.id,
+                        Match.season_id == season.id,
+                        Match.round_number >= int(active_stage.round_min),
+                        Match.round_number <= int(active_stage.round_max),
+                        (Match.home_score.is_(None) | Match.away_score.is_(None)),
+                    )
+                )
+                pending_matches = int(pending_q.scalar_one() or 0)
+                promote_count = int(getattr(active_stage, "promote_count", 2) or 2)
+                relegate_count = int(getattr(active_stage, "relegate_count", 2) or 2)
+
+                candidates_up: list[str] = []
+                candidates_down: list[str] = []
+                if pending_matches == 0 and admin_tg_user_id:
+                    high_rows, _high_meta = await build_active_stage_league_table(
+                        int(admin_tg_user_id), requested_league_code="HIGH"
+                    )
+                    low_rows, _low_meta = await build_active_stage_league_table(
+                        int(admin_tg_user_id), requested_league_code="LOW"
+                    )
+                    candidates_up = [str(r.get("name") or r.get("tg_user_id")) for r in low_rows[:promote_count]]
+                    move_down_n = min(relegate_count, len(high_rows))
+                    candidates_down = (
+                        [str(r.get("name") or r.get("tg_user_id")) for r in high_rows[-move_down_n:]]
+                        if move_down_n > 0
+                        else []
+                    )
+
+                next_stage_q = await session.execute(
+                    select(Stage.name).where(
+                        Stage.season_id == season.id, Stage.stage_order == int(active_stage.stage_order) + 1
+                    )
+                )
+                next_stage_row = next_stage_q.first()
+                will_start_new_season = next_stage_row is None
+
+                stage_finish_preview = {
+                    "stage_id": int(active_stage.id),
+                    "stage_name": str(active_stage.name),
+                    "pending_matches": pending_matches,
+                    "promote_count": promote_count,
+                    "relegate_count": relegate_count,
+                    "candidates_up": candidates_up,
+                    "candidates_down": candidates_down,
+                    "next_stage_name": str(next_stage_row[0]) if next_stage_row else None,
+                    "will_start_new_season": will_start_new_season,
+                }
+
             await session.commit()
 
         return web.json_response(
@@ -5740,12 +5796,68 @@ async def admin_rpl_season_status(request: web.Request) -> web.Response:
                 "leagues": [{"id": int(l.id), "code": str(l.code), "name": str(l.name)} for l in leagues],
                 "enrollment_open": bool(enrollment_open),
                 "counts": counts,
+                "stage_finish_preview": stage_finish_preview,
             }
         )
     except Exception as e:
         logger.exception("miniapp admin_rpl_season_status error")
         return web.json_response(
             {"ok": False, "error": "admin_rpl_season_status_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
+async def admin_rpl_stage_finish(request: web.Request) -> web.Response:
+    """Завершить активный этап РПЛ из мини-аппа — то же самое, что бот-команда
+    /admin_stage_finish, но с JSON-ответом вместо текстового сообщения в Telegram.
+    Требует явного подтверждения (confirm=true), так как действие необратимо."""
+    try:
+        auth_result = _extract_verified_admin_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        admin_tg_user_id = user.get("id") if isinstance(user, dict) else None
+        if not admin_tg_user_id:
+            return web.json_response({"ok": False, "error": "user_not_found_in_init_data"}, status=400)
+
+        body = await request.json()
+        if not bool(body.get("confirm")):
+            return web.json_response(
+                {"ok": False, "error": "confirmation_required", "reason": "Нужно подтверждение (confirm=true)."},
+                status=400,
+            )
+
+        from app.handlers_admin import finish_active_stage
+
+        result = await finish_active_stage(int(admin_tg_user_id))
+        if not result.ok:
+            return web.json_response(
+                {
+                    "ok": False,
+                    "error": result.error,
+                    "reason": result.reason,
+                    "pending_matches": result.pending_matches,
+                },
+                status=400,
+            )
+
+        return web.json_response(
+            {
+                "ok": True,
+                "trusted": True,
+                "is_admin": True,
+                "moved_up": result.moved_up,
+                "moved_down": result.moved_down,
+                "closed_stage_name": result.closed_stage_name,
+                "next_stage_name": result.next_stage_name,
+                "new_season": result.new_season,
+                "new_season_name": result.new_season_name,
+            }
+        )
+    except Exception as e:
+        logger.exception("miniapp admin_rpl_stage_finish error")
+        return web.json_response(
+            {"ok": False, "error": "admin_rpl_stage_finish_failed", "reason": str(e), "signature_checked": True},
             status=500,
         )
 
@@ -6127,6 +6239,7 @@ def build_app() -> web.Application:
     app.router.add_post("/api/miniapp/admin/longterm/set", admin_longterm_set)
     app.router.add_post("/api/miniapp/admin/longterm/reset", admin_longterm_reset)
     app.router.add_get("/api/miniapp/admin/rpl/season", admin_rpl_season_status)
+    app.router.add_post("/api/miniapp/admin/rpl/stage/finish", admin_rpl_stage_finish)
     app.router.add_post("/api/miniapp/admin/rpl/season/init", admin_rpl_season_init)
     app.router.add_post("/api/miniapp/admin/rpl/season/name", admin_rpl_season_name)
     app.router.add_post("/api/miniapp/admin/rpl/enroll", admin_rpl_enroll_set)

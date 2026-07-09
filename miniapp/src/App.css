@@ -2236,6 +2236,19 @@ body {
   margin: 8px 0;
 }
 
+.admin-warning-row span {
+  color: #efb2b2;
+  font-weight: 700;
+}
+
+.admin-warning-row b {
+  color: #efb2b2;
+}
+
+.admin-status-block + .admin-status-block {
+  margin-top: 10px;
+}
+
 .admin-stage-row {
   display: flex;
   align-items: center;

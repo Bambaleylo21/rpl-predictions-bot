@@ -664,6 +664,18 @@ type RplSeasonCounts = {
   LOW: number
 }
 
+type RplStageFinishPreview = {
+  stage_id: number
+  stage_name: string
+  pending_matches: number
+  promote_count: number
+  relegate_count: number
+  candidates_up: string[]
+  candidates_down: string[]
+  next_stage_name: string | null
+  will_start_new_season: boolean
+}
+
 type AdminRplSeasonResponse = {
   ok: boolean
   error?: string
@@ -672,6 +684,7 @@ type AdminRplSeasonResponse = {
   stages: RplStageInfo[]
   leagues: RplLeagueInfo[]
   enrollment_open: boolean
+  stage_finish_preview?: RplStageFinishPreview | null
   counts: RplSeasonCounts
 }
 
@@ -1284,6 +1297,10 @@ function App() {
   const [adminRplEnrollBusy, setAdminRplEnrollBusy] = useState<boolean>(false)
   const [adminRplInitBusy, setAdminRplInitBusy] = useState<boolean>(false)
   const [adminRplShowInit, setAdminRplShowInit] = useState<boolean>(false)
+  const [adminStageFinishShow, setAdminStageFinishShow] = useState<boolean>(false)
+  const [adminStageFinishConfirm, setAdminStageFinishConfirm] = useState<boolean>(false)
+  const [adminStageFinishBusy, setAdminStageFinishBusy] = useState<boolean>(false)
+  const [adminStageFinishResult, setAdminStageFinishResult] = useState<string | null>(null)
   const [adminDuels, setAdminDuels] = useState<AdminDuelsCurrentResponse | null>(null)
   const [adminDuelsFilter, setAdminDuelsFilter] = useState<'active' | 'finished'>('active')
   const [adminDuelCancelBusyId, setAdminDuelCancelBusyId] = useState<number | null>(null)
@@ -2577,6 +2594,49 @@ function App() {
     }
   }
 
+  const submitStageFinish = async () => {
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    if (!adminStageFinishConfirm) {
+      setAdminStageFinishResult('Отметь подтверждение перед завершением этапа.')
+      return
+    }
+    setAdminStageFinishBusy(true)
+    setAdminStageFinishResult(null)
+    try {
+      const res = await fetch(`${apiBase}/api/miniapp/admin/rpl/stage/finish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': initData },
+        body: JSON.stringify({ confirm: true }),
+      })
+      const data = (await res.json()) as {
+        ok?: boolean
+        error?: string
+        reason?: string
+        moved_up?: string[]
+        moved_down?: string[]
+        new_season?: boolean
+        new_season_name?: string | null
+      }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      const upText = data.moved_up && data.moved_up.length ? data.moved_up.join(', ') : '—'
+      const downText = data.moved_down && data.moved_down.length ? data.moved_down.join(', ') : '—'
+      const seasonLine = data.new_season ? ` Открыт новый сезон: ${data.new_season_name}.` : ''
+      setAdminStageFinishResult(`Этап завершён. Повышены: ${upText}. Понижены: ${downText}.${seasonLine}`)
+      setAdminStageFinishConfirm(false)
+      setAdminStageFinishShow(false)
+      haptic.success()
+      await loadAdminRplSeason(apiBase, initData)
+    } catch (err) {
+      haptic.error()
+      setAdminStageFinishResult(`Не удалось завершить этап: ${String(err)}`)
+    } finally {
+      setAdminStageFinishBusy(false)
+    }
+  }
+
   const assignRplParticipant = async (tgUserId: number, leagueCode: 'HIGH' | 'LOW') => {
     const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
     const initData = getInitData()
@@ -3766,6 +3826,7 @@ function App() {
     const counts = adminRplSeason?.counts
     const enrollOpen = !!adminRplSeason?.enrollment_open
     const showInitForm = adminRplShowInit || !season
+    const stageFinishPreview = adminRplSeason?.stage_finish_preview || null
 
     return (
       <div className="admin-inline-panel">
@@ -3827,6 +3888,86 @@ function App() {
         ) : (
           <div className="card-text admin-empty-text">Сезон РПЛ ещё не создан.</div>
         )}
+
+        {season && stageFinishPreview ? (
+          <div className="admin-status-block">
+            <div className="card-title">Завершить этап: {stageFinishPreview.stage_name}</div>
+            <div className="segment-hint">
+              Проверит, что во всех матчах этапа уже есть результат, повысит {stageFinishPreview.promote_count} лучших
+              из Низшей лиги и понизит {stageFinishPreview.relegate_count} худших из Высшей, остальных перенесёт без
+              изменений{' '}
+              {stageFinishPreview.will_start_new_season
+                ? '— а затем откроет новый сезон с двумя свежими этапами'
+                : `и откроет следующий этап «${stageFinishPreview.next_stage_name}»`}
+              .
+            </div>
+
+            {stageFinishPreview.pending_matches > 0 ? (
+              <div className="admin-status-row admin-warning-row">
+                <span>⚠️ Не хватает результатов матчей</span>
+                <b>{stageFinishPreview.pending_matches}</b>
+              </div>
+            ) : (
+              <>
+                <div className="admin-status-row">
+                  <span>↑ Повышение ({stageFinishPreview.promote_count})</span>
+                  <b>{stageFinishPreview.candidates_up.join(', ') || '—'}</b>
+                </div>
+                <div className="admin-status-row">
+                  <span>↓ Понижение ({stageFinishPreview.relegate_count})</span>
+                  <b>{stageFinishPreview.candidates_down.join(', ') || '—'}</b>
+                </div>
+              </>
+            )}
+
+            <button
+              type="button"
+              className="admin-danger-toggle"
+              onClick={() => setAdminStageFinishShow((v) => !v)}
+            >
+              {adminStageFinishShow ? '▾ Скрыть завершение этапа' : '▸ Завершить этап'}
+            </button>
+
+            {adminStageFinishShow ? (
+              <div className="admin-danger-zone">
+                <div className="card-title">⚠️ Завершить «{stageFinishPreview.stage_name}»</div>
+                <div className="segment-hint">
+                  Действие необратимо: этап закроется, участники перейдут между лигами
+                  {stageFinishPreview.will_start_new_season ? ', будет создан новый сезон' : ''}. Отменить нельзя.
+                </div>
+                {stageFinishPreview.pending_matches > 0 ? (
+                  <div className="card-text admin-empty-text">
+                    Сначала внеси результаты всех матчей этапа ({stageFinishPreview.pending_matches} без счёта в
+                    разделе «Матчи») — до этого кнопка недоступна.
+                  </div>
+                ) : (
+                  <>
+                    <label className="admin-confirm-row">
+                      <input
+                        type="checkbox"
+                        checked={adminStageFinishConfirm}
+                        onChange={(e) => setAdminStageFinishConfirm(e.target.checked)}
+                      />
+                      <span>Понимаю, что это необратимо</span>
+                    </label>
+                    <button
+                      type="button"
+                      className="admin-reset-btn admin-reset-btn-wide"
+                      onClick={submitStageFinish}
+                      disabled={adminStageFinishBusy || !adminStageFinishConfirm}
+                    >
+                      {adminStageFinishBusy ? '…' : 'Завершить этап'}
+                    </button>
+                  </>
+                )}
+              </div>
+            ) : null}
+
+            {adminStageFinishResult ? (
+              <div className="card-text admin-status-line">{adminStageFinishResult}</div>
+            ) : null}
+          </div>
+        ) : null}
 
         {season ? (
           <button

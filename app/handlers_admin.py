@@ -5,6 +5,7 @@ import os
 import random
 import re
 from collections import Counter, defaultdict
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from aiogram import Dispatcher, F, types
 from aiogram.filters import Command
@@ -1304,39 +1305,51 @@ def _derive_next_season_name(current_name: str) -> str:
     return re.sub(r"(\d{4})\s*/\s*(\d{2,4})", f"{next_y1}/{tail}", current_name, count=1)
 
 
-async def admin_stage_finish(message: types.Message):
-    """
-    /admin_stage_finish
-    Закрывает активный этап, делает 2↑/2↓, открывает следующий этап
-    (или создаёт новый сезон и открывает его этап 1).
-    """
-    if not _is_admin(message):
-        await message.answer("⛔️ У вас нет прав на эту команду.")
-        return
+@dataclass
+class StageFinishResult:
+    ok: bool
+    error: str | None = None
+    reason: str | None = None
+    pending_matches: int = 0
+    moved_up: list[str] = field(default_factory=list)
+    moved_down: list[str] = field(default_factory=list)
+    closed_stage_name: str | None = None
+    next_stage_name: str | None = None
+    new_season: bool = False
+    new_season_name: str | None = None
 
+
+async def finish_active_stage(admin_tg_user_id: int) -> StageFinishResult:
+    """
+    Закрывает активный этап РПЛ, делает 2↑/2↓, открывает следующий этап
+    (или создаёт новый сезон и открывает его этап 1).
+
+    Общая логика для бот-команды /admin_stage_finish и админ-эндпоинта в мини-аппе —
+    сама ничего никуда не отвечает, только считает и возвращает результат.
+    """
     # Рейтинг по активному этапу и лигам считаем тем же движком, что и таблицу пользователя.
-    high_rows, high_meta = await build_active_stage_league_table(message.from_user.id, requested_league_code="HIGH")
-    low_rows, low_meta = await build_active_stage_league_table(message.from_user.id, requested_league_code="LOW")
+    high_rows, high_meta = await build_active_stage_league_table(admin_tg_user_id, requested_league_code="HIGH")
+    low_rows, low_meta = await build_active_stage_league_table(admin_tg_user_id, requested_league_code="LOW")
 
     async with SessionLocal() as session:
         season = await get_active_season(session)
         if season is None:
-            await message.answer("Активный сезон не найден. Сначала /admin_season_init")
-            return
+            return StageFinishResult(
+                ok=False, error="no_active_season", reason="Активный сезон не найден. Сначала /admin_season_init"
+            )
         stage = await get_active_stage(session, season.id)
         if stage is None:
-            await message.answer("Активный этап не найден. Сначала /admin_season_init")
-            return
+            return StageFinishResult(
+                ok=False, error="no_active_stage", reason="Активный этап не найден. Сначала /admin_season_init"
+            )
         if int(stage.is_completed or 0) == 1:
-            await message.answer("Этот этап уже завершён.")
-            return
+            return StageFinishResult(ok=False, error="stage_already_completed", reason="Этот этап уже завершён.")
 
         # Не закрываем этап, пока есть матчи без итогов в его окне.
         rpl_q = await session.execute(select(Tournament).where(Tournament.code == "RPL"))
         rpl = rpl_q.scalar_one_or_none()
         if rpl is None:
-            await message.answer("Турнир RPL не найден.")
-            return
+            return StageFinishResult(ok=False, error="tournament_not_found", reason="Турнир RPL не найден.")
         pending_q = await session.execute(
             select(func.count(Match.id)).where(
                 Match.tournament_id == rpl.id,
@@ -1348,11 +1361,12 @@ async def admin_stage_finish(message: types.Message):
         )
         pending = int(pending_q.scalar_one() or 0)
         if pending > 0:
-            await message.answer(
-                "Нельзя завершить этап: есть матчи без результатов.\n"
-                f"Незаполненных матчей в окне этапа: {pending}"
+            return StageFinishResult(
+                ok=False,
+                error="pending_matches",
+                reason=f"Нельзя завершить этап: есть матчи без результатов. Незаполненных матчей в окне этапа: {pending}",
+                pending_matches=pending,
             )
-            return
 
         leagues_q = await session.execute(
             select(League).where(League.season_id == season.id, League.is_active == 1)
@@ -1362,8 +1376,7 @@ async def admin_stage_finish(message: types.Message):
         high_league = by_code.get("HIGH")
         low_league = by_code.get("LOW")
         if high_league is None or low_league is None:
-            await message.answer("Не найдены лиги HIGH/LOW в активном сезоне.")
-            return
+            return StageFinishResult(ok=False, error="leagues_not_found", reason="Не найдены лиги HIGH/LOW в активном сезоне.")
 
         move_up_count = min(int(stage.promote_count or 2), len(low_rows))
         move_down_count = min(int(stage.relegate_count or 2), len(high_rows))
@@ -1379,8 +1392,7 @@ async def admin_stage_finish(message: types.Message):
         )
         curr_rows = curr_rows_q.scalars().all()
         if not curr_rows:
-            await message.answer("В активном этапе нет участников.")
-            return
+            return StageFinishResult(ok=False, error="no_participants", reason="В активном этапе нет участников.")
 
         next_stage_q = await session.execute(
             select(Stage)
@@ -1390,8 +1402,10 @@ async def admin_stage_finish(message: types.Message):
         next_stage = next_stage_q.scalars().first()
 
         target_season = season
+        is_new_season = False
         if next_stage is None:
             # Этап 2 закрыт -> запускаем новый сезон с этапами 1/2.
+            is_new_season = True
             season.is_active = 0
             new_name = _derive_next_season_name(str(season.name))
             target_season = Season(name=new_name, is_active=1)
@@ -1499,14 +1513,46 @@ async def admin_stage_finish(message: types.Message):
                     )
                 )
 
+        closed_stage_name = str(stage.name)
+        next_stage_name = str(next_stage.name)
+        new_season_name = str(target_season.name) if is_new_season else None
+
         await session.commit()
 
-    up_text = ", ".join(moved_up_names) if moved_up_names else "—"
-    down_text = ", ".join(moved_down_names) if moved_down_names else "—"
+    return StageFinishResult(
+        ok=True,
+        moved_up=moved_up_names,
+        moved_down=moved_down_names,
+        closed_stage_name=closed_stage_name,
+        next_stage_name=next_stage_name,
+        new_season=is_new_season,
+        new_season_name=new_season_name,
+    )
+
+
+async def admin_stage_finish(message: types.Message):
+    """
+    /admin_stage_finish
+    Закрывает активный этап, делает 2↑/2↓, открывает следующий этап
+    (или создаёт новый сезон и открывает его этап 1).
+    """
+    if not _is_admin(message):
+        await message.answer("⛔️ У вас нет прав на эту команду.")
+        return
+
+    result = await finish_active_stage(message.from_user.id)
+    if not result.ok:
+        await message.answer(result.reason or "Не удалось завершить этап.")
+        return
+
+    up_text = ", ".join(result.moved_up) if result.moved_up else "—"
+    down_text = ", ".join(result.moved_down) if result.moved_down else "—"
+    new_season_line = f"\n\n🆕 Открыт новый сезон: {result.new_season_name}" if result.new_season else ""
     await message.answer(
         "✅ Этап завершён.\n"
         f"Повышены: {up_text}\n"
-        f"Понижены: {down_text}\n\n"
+        f"Понижены: {down_text}"
+        f"{new_season_line}\n\n"
         "Текущий статус проверь через /admin_season_status"
     )
 
