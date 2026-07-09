@@ -86,6 +86,20 @@
   -webkit-backdrop-filter: blur(10px);
 }
 
+/* На Матчах и в Профиле — без чёткой рамки (там она задваивалась с другими
+   уже цветными элементами внутри, например с рамкой "Тур X из 17"). Вместо
+   края — тот же красно-синий переход, но растворённый мягким пятном внутри
+   заливки карточки, без видимой линии. Специфичность выше, чем у .theme-rpl
+   .card выше, поэтому здесь побеждает именно этот вариант. */
+.theme-rpl .screen-predict .card,
+.theme-rpl .screen-profile .card {
+  border: 1px solid transparent;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(227, 6, 19, 0.14), transparent 55%),
+    radial-gradient(circle at 100% 100%, rgba(0, 92, 169, 0.14), transparent 55%),
+    rgba(18, 18, 24, 0.78);
+}
+
 /* Раунд 2: компоненты с зашитыми (не переменными) золотыми hex-стопами
    градиента — переменная замена их не подхватывает, поэтому переопределяем
    явно, только для РПЛ. */
@@ -414,6 +428,14 @@ body {
 .table-grid-row.zone-relegation {
   background: rgba(214, 69, 69, 0.14);
   box-shadow: inset 3px 0 0 0 #d64545;
+}
+
+/* Зона вылета в РПЛ-теме — намеренно не красная (сливалась бы с общим
+   красно-синим акцентом турнира и переставала читаться как отдельный
+   сигнал). Оранжевый держит смысл "тревожной зоны", но не спорит с брендом. */
+.theme-rpl .table-grid-row.zone-relegation {
+  background: rgba(255, 107, 53, 0.14);
+  box-shadow: inset 3px 0 0 0 #ff6b35;
 }
 
 .league-table-legend {
@@ -2750,6 +2772,19 @@ body {
   line-height: 1;
 }
 
+/* Плитки KPI жили в старом плоском стиле, пока карточки вокруг стали
+   стеклянными — теперь такое же лёгкое цветное пятно и блюр, без рамки,
+   в тон остальным карточкам на Профиле. */
+.theme-rpl .profile-kpi {
+  border: 1px solid transparent;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(227, 6, 19, 0.14), transparent 55%),
+    radial-gradient(circle at 100% 100%, rgba(0, 92, 169, 0.14), transparent 55%),
+    rgba(18, 18, 24, 0.78);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
 .profile-hits-line {
   margin-top: var(--vr-md);
   font-size: 14px;
@@ -4046,6 +4081,13 @@ body {
   background: rgba(var(--accent-rgb), 0.2);
   color: #ffffff;
   box-shadow: var(--gold-glow);
+}
+
+/* --gold-glow — это сразу два наслаивающихся контура (внутреннее кольцо +
+   внешнее свечение) поверх и так уже цветной рамки/фона — на маленькой
+   кнопке это читается слишком многослойно. Для РПЛ оставляем один слой. */
+.theme-rpl .tab-btn.is-active {
+  box-shadow: none;
 }
 
 .tab-icon {
