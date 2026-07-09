@@ -915,9 +915,13 @@ const TeamCrest = ({ name, alt }: { name: string; alt?: boolean }) => {
 const MatchListCrest = ({ name }: { name: string }) => {
   const slug = TEAM_LOGO_SLUGS[name.trim()]
   const [failed, setFailed] = useState(false)
+  // Мягкое цветное свечение под гербом — цвет конкретного клуба (та же карта
+  // TEAM_COLORS, что и в Матч-центре), а не общий акцент турнира: связывает
+  // клубную айдентику с новым "стеклянным" стилем карточек.
+  const glowStyle = { background: `radial-gradient(circle, ${hexToRgba(teamColor(name), 0.34)}, transparent 72%)` }
   if (slug && !failed) {
     return (
-      <span className="match-list-logo-wrap">
+      <span className="match-list-logo-wrap" style={glowStyle}>
         <img
           src={`/team-logos/${slug}.png`}
           alt={name}
@@ -927,7 +931,11 @@ const MatchListCrest = ({ name }: { name: string }) => {
       </span>
     )
   }
-  return <span className="match-list-logo-wrap match-list-logo-fallback">{name.trim().slice(0, 3).toUpperCase()}</span>
+  return (
+    <span className="match-list-logo-wrap match-list-logo-fallback" style={glowStyle}>
+      {name.trim().slice(0, 3).toUpperCase()}
+    </span>
+  )
 }
 
 const crowdText = (item: {
@@ -5009,7 +5017,9 @@ function App() {
                                             : isSaving
                                             ? '...'
                                             : saveVisualState === 'is-saved'
-                                              ? 'Сохранено'
+                                              ? canOpenMatchCenter
+                                                ? '✓ Сохранено'
+                                                : 'Сохранено'
                                               : 'Сохранить'}
                                         </button>
                                       </div>
