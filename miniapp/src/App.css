@@ -89,10 +89,16 @@
 /* Раунд 2: компоненты с зашитыми (не переменными) золотыми hex-стопами
    градиента — переменная замена их не подхватывает, поэтому переопределяем
    явно, только для РПЛ. */
+/* Как в исходном примере: без заливки-плашки, только цветной текст и тонкая
+   двухцветная линия-подчёркивание снизу (border-image, та же техника, что
+   у ленты под шапкой). */
 .theme-rpl .match-toggle-btn.is-active {
-  background: rgba(227, 6, 19, 0.14);
+  background: transparent;
   color: #ff9a9d;
-  box-shadow: inset 0 -2px 0 0 #e30613;
+  box-shadow: none;
+  border-radius: 0;
+  border-bottom: 2px solid transparent;
+  border-image: linear-gradient(90deg, #e30613, #005ca9) 1;
 }
 
 .theme-rpl .admin-recalc-btn {
@@ -839,6 +845,16 @@ body {
   box-shadow: 0 0 18px rgba(var(--accent-rgb), 0.08);
 }
 
+/* Внутри карточки матча, у которой уже есть своя красно-синяя окантовка,
+   отдельная рамка/подложка у даты была ещё одним вложенным контуром.
+   Оставляем просто число, без бейджа. */
+.theme-rpl .day-title {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  padding: 4px 0;
+}
+
 .day-group-inset {
   border: 1px solid var(--line-1);
   background: var(--surface-1);
@@ -1563,26 +1579,32 @@ body {
   transform: scale(0.98);
 }
 
+/* Внутри карточки матча своя рамка у кнопки была ещё одним вложенным
+   контуром поверх уже двухцветной окантовки карточки. Оставляем только
+   цвет (заливку/оттенок), border-color гасим до прозрачного — иначе
+   базовое правило (border-color: var(--accent)) всё равно даст красный. */
 .theme-rpl .prediction-save-btn.is-dirty,
 .theme-rpl .save-all-predictions-btn.is-dirty {
   background: linear-gradient(180deg, #ff5a5f 0%, #e30613 55%, #a30410 100%);
+  border-color: transparent;
   color: #ffffff;
 }
 
 .theme-rpl .prediction-save-btn.is-saving {
   background: linear-gradient(180deg, #f0575c 0%, #a30410 100%);
+  border-color: transparent;
   color: #ffffff;
 }
 
 .theme-rpl .prediction-save-btn.is-empty {
   background: rgba(227, 6, 19, 0.1);
-  border-color: rgba(227, 6, 19, 0.38);
-  box-shadow: inset 0 0 14px rgba(227, 6, 19, 0.06);
+  border-color: transparent;
+  box-shadow: none;
 }
 
 .theme-rpl .prediction-save-btn.is-locked {
   background: rgba(227, 6, 19, 0.12);
-  border-color: rgba(227, 6, 19, 0.38);
+  border-color: transparent;
 }
 
 @keyframes save-success-pulse-rpl {
@@ -4390,6 +4412,13 @@ select:focus-visible {
   border-color: var(--accent);
   background: rgba(var(--accent-rgb), 0.22);
   color: var(--accent);
+}
+
+/* Число тура в выбранном квадратике — белым, а не акцентным цветом:
+   рамка/фон уже достаточно ясно показывают выбор, а красный текст на
+   красноватом фоне читается хуже белого. */
+.theme-rpl .round-picker-chip.is-active {
+  color: #ffffff;
 }
 
 .round-picker-chip:active {
