@@ -281,17 +281,18 @@ async def fetch_injuries(fixture_id: int) -> list[dict[str, Any]]:
     return out
 
 
-async def fetch_fixture_events(fixture_id: int) -> list[dict[str, Any]]:
+async def fetch_fixture_events(fixture_id: int, ttl_seconds: int = 10 * 60) -> list[dict[str, Any]]:
     """Хронология событий матча: голы, карточки, замены.
 
-    Кэш короткий (10 минут) — во время матча появляются новые события;
-    после финального свистка данные уже не меняются, но короткий TTL не мешает.
+    Кэш по умолчанию 10 минут; вызывающий код передаёт короткий TTL
+    (например, 90 секунд), пока матч идёт вживую, чтобы события подтягивались
+    почти в реальном времени, не тратя лишние запросы на уже завершённые матчи.
     """
     data = await _api_get(
         "/fixtures/events",
         {"fixture": str(fixture_id)},
         cache_key=f"events:{fixture_id}",
-        ttl_seconds=10 * 60,
+        ttl_seconds=ttl_seconds,
     )
     if not data:
         return []
@@ -315,16 +316,17 @@ async def fetch_fixture_events(fixture_id: int) -> list[dict[str, Any]]:
     return out
 
 
-async def fetch_fixture_statistics(fixture_id: int) -> dict[str, dict[str, Any]] | None:
+async def fetch_fixture_statistics(fixture_id: int, ttl_seconds: int = 10 * 60) -> dict[str, dict[str, Any]] | None:
     """Статистика матча (владение мячом, удары, угловые и т.д.) по обеим командам.
 
-    Кэш короткий (10 минут), как и составы/события.
+    Кэш по умолчанию 10 минут; для матчей, идущих вживую, вызывающий код
+    передаёт короткий TTL (например, 90 секунд), см. fetch_fixture_events.
     """
     data = await _api_get(
         "/fixtures/statistics",
         {"fixture": str(fixture_id)},
         cache_key=f"stats:{fixture_id}",
-        ttl_seconds=10 * 60,
+        ttl_seconds=ttl_seconds,
     )
     if not data:
         return None

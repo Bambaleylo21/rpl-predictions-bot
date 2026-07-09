@@ -4735,10 +4735,24 @@ async def match_center_current(request: web.Request) -> web.Response:
 
             home_raw = str(match.home_team or "")
             away_raw = str(match.away_team or "")
+            kickoff_dt = match.kickoff_time
             kickoff_str = match.kickoff_time.strftime("%d.%m %H:%M")
             home_score = match.home_score
             away_score = match.away_score
             api_fixture_id = match.api_fixture_id
+
+        # Матч считаем "живым" по времени кикоффа (МСК, naive — так же хранится kickoff_time):
+        # уже начался, но ещё не вышел за разумное окно длительности матча, и финальный счёт
+        # ещё не проставлен нашей синхронизацией. Для таких матчей события/статистика
+        # обновляются намного чаще, чтобы человек видел актуальную картину по ходу игры.
+        LIVE_WINDOW_MINUTES = 130
+        LIVE_TTL_SECONDS = int(os.getenv("FOOTBALL_LIVE_TTL_SEC", "90"))
+        now_msk_naive = datetime.utcnow() + timedelta(hours=3)
+        is_live_match = (
+            (home_score is None or away_score is None)
+            and kickoff_dt <= now_msk_naive <= kickoff_dt + timedelta(minutes=LIVE_WINDOW_MINUTES)
+        )
+        live_ttl = LIVE_TTL_SECONDS if is_live_match else 10 * 60
 
         from app.match_center import (
             fetch_fixture_events,
@@ -4820,8 +4834,8 @@ async def match_center_current(request: web.Request) -> web.Response:
                 fetch_lineups(int(api_fixture_id)),
                 fetch_odds(int(api_fixture_id)),
                 fetch_injuries(int(api_fixture_id)),
-                fetch_fixture_events(int(api_fixture_id)),
-                fetch_fixture_statistics(int(api_fixture_id)),
+                fetch_fixture_events(int(api_fixture_id), ttl_seconds=live_ttl),
+                fetch_fixture_statistics(int(api_fixture_id), ttl_seconds=live_ttl),
             )
             if raw_lineups:
                 lineups_out = {display_team_name(name): info for name, info in raw_lineups.items()}
