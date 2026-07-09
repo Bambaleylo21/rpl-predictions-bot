@@ -86,20 +86,6 @@
   -webkit-backdrop-filter: blur(10px);
 }
 
-/* На Матчах и в Профиле — без чёткой рамки (там она задваивалась с другими
-   уже цветными элементами внутри, например с рамкой "Тур X из 17"). Вместо
-   края — тот же красно-синий переход, но растворённый мягким пятном внутри
-   заливки карточки, без видимой линии. Специфичность выше, чем у .theme-rpl
-   .card выше, поэтому здесь побеждает именно этот вариант. */
-.theme-rpl .screen-predict .card,
-.theme-rpl .screen-profile .card {
-  border: 1px solid transparent;
-  background:
-    radial-gradient(circle at 12% 0%, rgba(227, 6, 19, 0.14), transparent 55%),
-    radial-gradient(circle at 100% 100%, rgba(0, 92, 169, 0.14), transparent 55%),
-    rgba(18, 18, 24, 0.78);
-}
-
 /* Раунд 2: компоненты с зашитыми (не переменными) золотыми hex-стопами
    градиента — переменная замена их не подхватывает, поэтому переопределяем
    явно, только для РПЛ. */
@@ -2778,9 +2764,8 @@ body {
 .theme-rpl .profile-kpi {
   border: 1px solid transparent;
   background:
-    radial-gradient(circle at 12% 0%, rgba(227, 6, 19, 0.14), transparent 55%),
-    radial-gradient(circle at 100% 100%, rgba(0, 92, 169, 0.14), transparent 55%),
-    rgba(18, 18, 24, 0.78);
+    linear-gradient(rgba(18, 18, 24, 0.78), rgba(18, 18, 24, 0.78)) padding-box,
+    linear-gradient(135deg, rgba(227, 6, 19, 0.5), rgba(0, 92, 169, 0.38)) border-box;
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
 }
@@ -4321,8 +4306,11 @@ select:focus-visible {
   transform: translateY(1px);
 }
 
+/* Отдельную синюю рамку у пилюли убрал: внешняя карточка round-nav-card
+   уже несёт двухцветную (красно-синюю) окантовку, вторая рамка внутри
+   поверх неё и была тем самым "задвоением". Оставляем только мягкий
+   синий тон фона пилюли, без своего края. */
 .theme-rpl .round-nav-label {
-  border-color: rgba(0, 92, 169, 0.55);
   background: rgba(0, 92, 169, 0.1);
 }
 
