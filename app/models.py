@@ -88,6 +88,15 @@ class Match(Base):
     )
     round_number: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
 
+    # К какому сезону (app.models.Season) относится матч — нужно, потому что номер тура
+    # у РПЛ каждый новый сезон начинается заново с 1, а турнир (tournament_id) один и тот же
+    # навсегда. Без этого поля матчи разных сезонов с одинаковым номером тура было бы не
+    # отличить друг от друга при подсчёте таблицы. Для ЧМ-2026 (нет понятия Season/Stage)
+    # остаётся NULL — там уникальность даёт сама пара (tournament_id, round_number).
+    season_id: Mapped[int | None] = mapped_column(
+        ForeignKey("seasons.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
     home_team: Mapped[str] = mapped_column(String(64), nullable=False)
     away_team: Mapped[str] = mapped_column(String(64), nullable=False)
     group_label: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)

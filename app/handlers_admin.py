@@ -1340,6 +1340,7 @@ async def admin_stage_finish(message: types.Message):
         pending_q = await session.execute(
             select(func.count(Match.id)).where(
                 Match.tournament_id == rpl.id,
+                Match.season_id == season.id,
                 Match.round_number >= int(stage.round_min),
                 Match.round_number <= int(stage.round_max),
                 (Match.home_score.is_(None) | Match.away_score.is_(None)),
@@ -2143,8 +2144,14 @@ async def admin_add_match(message: types.Message):
             )
             return
 
+        match_season_id: int | None = None
+        if tournament_code == "RPL":
+            active_season = await get_active_season(session)
+            match_season_id = int(active_season.id) if active_season is not None else None
+
         m = Match(
             tournament_id=int(tournament.id),
+            season_id=match_season_id,
             round_number=int(round_number),
             home_team=home,
             away_team=away,

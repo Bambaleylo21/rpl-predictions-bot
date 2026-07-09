@@ -11,6 +11,7 @@ from app.duel_notify import send_duel_finished_pushes
 from app.duels import finalize_duels_for_match
 from app.football_api import fetch_league_fixtures
 from app.models import Match, Tournament
+from app.season_setup import get_active_season
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,12 @@ async def sync_rpl_once(bot, session_factory=SessionLocal) -> dict:
             logger.warning("[rpl_sync] RPL tournament not found in DB, skipping sync")
             return stats
 
+        # Активный сезон РПЛ на момент синка — проставляем его новым матчам, чтобы
+        # номер тура (который каждый сезон стартует заново с 1) не путался с матчами
+        # прошлых сезонов при подсчёте таблицы (см. Match.season_id в app/models.py).
+        active_season = await get_active_season(session)
+        active_season_id = int(active_season.id) if active_season is not None else None
+
         for fx in fixtures:
             if fx.round_number is None:
                 stats["skipped_no_round"] += 1
@@ -69,6 +76,7 @@ async def sync_rpl_once(bot, session_factory=SessionLocal) -> dict:
             if match is None:
                 match = Match(
                     tournament_id=tournament.id,
+                    season_id=active_season_id,
                     round_number=fx.round_number,
                     home_team=fx.home_team,
                     away_team=fx.away_team,

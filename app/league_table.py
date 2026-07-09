@@ -238,6 +238,7 @@ async def build_active_stage_league_table(
             .where(
                 Prediction.tg_user_id.in_(user_ids),
                 Match.tournament_id == rpl.id,
+                Match.season_id == season.id,
                 Match.round_number >= stage.round_min,
                 Match.round_number <= stage.round_max,
             )
@@ -252,6 +253,7 @@ async def build_active_stage_league_table(
         started_matches_q = await session.execute(
             select(func.count(Match.id)).where(
                 Match.tournament_id == rpl.id,
+                Match.season_id == season.id,
                 Match.round_number >= stage.round_min,
                 Match.round_number <= stage.round_max,
                 Match.kickoff_time <= now,
@@ -266,6 +268,7 @@ async def build_active_stage_league_table(
             .where(
                 Prediction.tg_user_id.in_(user_ids),
                 Match.tournament_id == rpl.id,
+                Match.season_id == season.id,
                 Match.round_number >= stage.round_min,
                 Match.round_number <= stage.round_max,
                 Match.kickoff_time <= now,
@@ -288,6 +291,7 @@ async def build_active_stage_league_table(
             .where(
                 Point.tg_user_id.in_(user_ids),
                 Match.tournament_id == rpl.id,
+                Match.season_id == season.id,
                 Match.round_number >= stage.round_min,
                 Match.round_number <= stage.round_max,
             )

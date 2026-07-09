@@ -82,6 +82,13 @@ async def _apply_postgres_schema_fixes(conn) -> None:
         "UPDATE matches SET tournament_id = (SELECT id FROM tournaments WHERE code = 'RPL' LIMIT 1) WHERE tournament_id IS NULL",
         "CREATE INDEX IF NOT EXISTS ix_matches_tournament_id ON matches (tournament_id)",
 
+        # season_id: привязка матча к конкретному сезону РПЛ (см. app/models.py Match.season_id) —
+        # нужно, потому что номер тура каждый сезон начинается заново с 1, а турнир один навсегда.
+        "ALTER TABLE matches ADD COLUMN IF NOT EXISTS season_id INTEGER REFERENCES seasons(id) ON DELETE SET NULL",
+        "CREATE INDEX IF NOT EXISTS ix_matches_season_id ON matches (season_id)",
+        "UPDATE matches SET season_id = (SELECT id FROM seasons WHERE is_active = 1 ORDER BY id DESC LIMIT 1) "
+        "WHERE season_id IS NULL AND tournament_id = (SELECT id FROM tournaments WHERE code = 'RPL' LIMIT 1)",
+
         # внешний id матча из API (для API-Sport.ru используем match id)
         "ALTER TABLE matches ADD COLUMN IF NOT EXISTS api_fixture_id BIGINT",
         "CREATE INDEX IF NOT EXISTS ix_matches_api_fixture_id ON matches (api_fixture_id)",
@@ -187,6 +194,12 @@ async def _apply_sqlite_schema_fixes(conn) -> None:
         "CREATE INDEX IF NOT EXISTS ix_matches_tournament_id ON matches (tournament_id)",
         "CREATE INDEX IF NOT EXISTS ix_matches_group_label ON matches (group_label)",
         "CREATE INDEX IF NOT EXISTS ix_matches_is_placeholder ON matches (is_placeholder)",
+
+        # season_id: привязка матча к конкретному сезону РПЛ (см. app/models.py Match.season_id).
+        "ALTER TABLE matches ADD COLUMN season_id INTEGER",
+        "CREATE INDEX IF NOT EXISTS ix_matches_season_id ON matches (season_id)",
+        "UPDATE matches SET season_id = (SELECT id FROM seasons WHERE is_active = 1 ORDER BY id DESC LIMIT 1) "
+        "WHERE season_id IS NULL AND tournament_id = (SELECT id FROM tournaments WHERE code = 'RPL' LIMIT 1)",
 
         # duels
         "CREATE TABLE IF NOT EXISTS duels (id INTEGER PRIMARY KEY AUTOINCREMENT, tournament_id INTEGER NOT NULL, match_id INTEGER NOT NULL, challenger_tg_user_id BIGINT NOT NULL, opponent_tg_user_id BIGINT NOT NULL, pair_low_tg_user_id BIGINT NOT NULL, pair_high_tg_user_id BIGINT NOT NULL, challenger_pred_home INTEGER NOT NULL, challenger_pred_away INTEGER NOT NULL, opponent_pred_home INTEGER, opponent_pred_away INTEGER, status VARCHAR(16) NOT NULL DEFAULT 'pending', winner_tg_user_id BIGINT, outcome VARCHAR(16), risk_multiplier_bp INTEGER NOT NULL DEFAULT 100, elo_delta_challenger INTEGER NOT NULL DEFAULT 0, elo_delta_opponent INTEGER NOT NULL DEFAULT 0, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, responded_at TIMESTAMP NULL, resolved_at TIMESTAMP NULL)",
