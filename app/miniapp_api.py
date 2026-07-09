@@ -4741,7 +4741,10 @@ async def match_center_current(request: web.Request) -> web.Response:
             api_fixture_id = match.api_fixture_id
 
         from app.match_center import (
+            fetch_fixture_events,
+            fetch_fixture_statistics,
             fetch_h2h,
+            fetch_injuries,
             fetch_lineups,
             fetch_odds,
             fetch_standings,
@@ -4809,13 +4812,62 @@ async def match_center_current(request: web.Request) -> web.Response:
 
         lineups_out: dict[str, Any] | None = None
         odds_out: dict[str, Any] | None = None
+        raw_injuries: list[dict[str, Any]] = []
+        raw_events: list[dict[str, Any]] = []
+        raw_stats: dict[str, dict[str, Any]] | None = None
         if api_fixture_id:
-            raw_lineups, odds_out = await asyncio.gather(
+            raw_lineups, odds_out, raw_injuries, raw_events, raw_stats = await asyncio.gather(
                 fetch_lineups(int(api_fixture_id)),
                 fetch_odds(int(api_fixture_id)),
+                fetch_injuries(int(api_fixture_id)),
+                fetch_fixture_events(int(api_fixture_id)),
+                fetch_fixture_statistics(int(api_fixture_id)),
             )
             if raw_lineups:
                 lineups_out = {display_team_name(name): info for name, info in raw_lineups.items()}
+
+        injuries_out = [
+            {
+                "player_name": item.get("player_name"),
+                "team_name": display_team_name(str(item.get("team_name") or "")),
+                "type": item.get("type"),
+                "reason": item.get("reason"),
+            }
+            for item in raw_injuries
+        ]
+
+        events_out = [
+            {
+                "minute": item.get("minute"),
+                "extra": item.get("extra"),
+                "team_name": display_team_name(str(item.get("team_name") or "")),
+                "player_name": item.get("player_name"),
+                "assist_name": item.get("assist_name"),
+                "type": item.get("type"),
+                "detail": item.get("detail"),
+            }
+            for item in raw_events
+        ]
+
+        def _curate_stats(stats_map: dict[str, Any] | None) -> dict[str, Any] | None:
+            if not stats_map:
+                return None
+            return {
+                "possession": stats_map.get("Ball Possession"),
+                "shots_total": stats_map.get("Total Shots"),
+                "shots_on_target": stats_map.get("Shots on Goal"),
+                "corners": stats_map.get("Corner Kicks"),
+                "fouls": stats_map.get("Fouls"),
+                "yellow_cards": stats_map.get("Yellow Cards"),
+                "red_cards": stats_map.get("Red Cards"),
+            }
+
+        statistics_out = None
+        if raw_stats:
+            home_stats = _curate_stats(raw_stats.get(home_raw))
+            away_stats = _curate_stats(raw_stats.get(away_raw))
+            if home_stats or away_stats:
+                statistics_out = {"home": home_stats, "away": away_stats}
 
         return web.json_response(
             {
@@ -4839,6 +4891,9 @@ async def match_center_current(request: web.Request) -> web.Response:
                     "home": accuracy_home,
                     "away": accuracy_away,
                 },
+                "injuries": injuries_out,
+                "events": events_out,
+                "statistics": statistics_out,
             }
         )
     except Exception as e:

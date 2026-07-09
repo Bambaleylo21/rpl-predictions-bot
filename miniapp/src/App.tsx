@@ -259,6 +259,33 @@ type MatchCenterAccuracy = {
   total: number
 } | null
 
+type MatchCenterInjury = {
+  player_name?: string
+  team_name?: string
+  type?: string | null
+  reason?: string | null
+}
+
+type MatchCenterEvent = {
+  minute?: number | null
+  extra?: number | null
+  team_name?: string
+  player_name?: string
+  assist_name?: string | null
+  type?: string | null
+  detail?: string | null
+}
+
+type MatchCenterTeamStats = {
+  possession?: string | number | null
+  shots_total?: number | null
+  shots_on_target?: number | null
+  corners?: number | null
+  fouls?: number | null
+  yellow_cards?: number | null
+  red_cards?: number | null
+} | null
+
 type MatchCenterResponse = {
   ok: boolean
   error?: string
@@ -286,6 +313,12 @@ type MatchCenterResponse = {
     home?: MatchCenterAccuracy
     away?: MatchCenterAccuracy
   }
+  injuries?: MatchCenterInjury[]
+  events?: MatchCenterEvent[]
+  statistics?: {
+    home?: MatchCenterTeamStats
+    away?: MatchCenterTeamStats
+  } | null
 }
 
 type TableResponse = {
@@ -865,6 +898,40 @@ const positionChangeLabel = (row: {
   if (delta < 0) return { label: `↓${Math.abs(delta)}`, tone: 'down' }
   const placeAfter = Number(row.place_after || 0)
   return placeAfter > 0 ? { label: `•${placeAfter}`, tone: 'same' } : null
+}
+
+const matchEventLabel = (e: { type?: string | null; detail?: string | null }): string => {
+  const type = (e.type || '').toLowerCase()
+  const detail = (e.detail || '').toLowerCase()
+  if (type === 'goal') {
+    if (detail.includes('own')) return '⚽ Автогол'
+    if (detail.includes('missed')) return '❌ Незабитый пенальти'
+    if (detail.includes('penalty')) return '⚽ Гол (с пенальти)'
+    return '⚽ Гол'
+  }
+  if (type === 'card') {
+    if (detail.includes('second yellow')) return '🟨🟥 Вторая жёлтая'
+    if (detail.includes('red')) return '🟥 Красная карточка'
+    return '🟨 Жёлтая карточка'
+  }
+  if (type === 'subst') return '🔄 Замена'
+  if (type === 'var') return '📺 VAR'
+  return e.detail || e.type || 'Событие'
+}
+
+const matchStatRow = (
+  label: string,
+  home: string | number | null | undefined,
+  away: string | number | null | undefined
+) => {
+  if ((home === null || home === undefined) && (away === null || away === undefined)) return null
+  return (
+    <div className="match-center-stats-row" key={label}>
+      <span className="match-center-stats-value">{home ?? '—'}</span>
+      <span className="match-center-stats-label">{label}</span>
+      <span className="match-center-stats-value">{away ?? '—'}</span>
+    </div>
+  )
 }
 
 const intOrZero = (value: unknown): number => {
@@ -4664,33 +4731,45 @@ function App() {
                     <div className="card compact-list-card">
                       {closedPredictionGroups.map(([day, items]) => (
                         <div className="day-group day-group-inset" key={day}>
-                          {items.map((m) => (
-                            <div className="compact-match closed-match" key={m.match_id}>
-                              <div className="closed-match-main">
-                                <span className="team-name closed-team-name team-left">{teamWithFlag(m.home_team)}</span>
-                                <span className="closed-result-score">{m.result || '—'}</span>
-                                <span className="team-name closed-team-name team-right">{teamWithFlag(m.away_team)}</span>
-                                <div className="closed-action-stack">
-                                  <span className="closed-points-badge">
-                                    {m.prediction
-                                      ? `${m.emoji} ${Number(m.points ?? 0) > 0 ? '+' : ''}${m.points ?? 0}`
-                                      : '❌ 0'}
-                                  </span>
-                                  <button
-                                    type="button"
-                                    className="match-predictions-link"
-                                    onClick={() => openMatchPredictions(m.match_id)}
-                                    disabled={matchPredictionsLoadingId === m.match_id}
-                                  >
-                                    {matchPredictionsLoadingId === m.match_id ? '...' : 'Прогнозы ›'}
-                                  </button>
-                                </div>
-                                <div className="closed-own-prediction">
-                                  мой прогноз: <b>{m.prediction || '—'}</b>
+                          {items.map((m) => {
+                            const canOpenMatchCenter = selectedTournamentCode === 'RPL'
+                            return (
+                              <div
+                                className={`compact-match closed-match ${canOpenMatchCenter ? 'match-card-top-tappable' : ''}`}
+                                key={m.match_id}
+                                onClick={canOpenMatchCenter ? () => openMatchCenter(m.match_id) : undefined}
+                                role={canOpenMatchCenter ? 'button' : undefined}
+                              >
+                                <div className="closed-match-main">
+                                  <span className="team-name closed-team-name team-left">{teamWithFlag(m.home_team)}</span>
+                                  <span className="closed-result-score">{m.result || '—'}</span>
+                                  <span className="team-name closed-team-name team-right">{teamWithFlag(m.away_team)}</span>
+                                  <div className="closed-action-stack">
+                                    <span className="closed-points-badge">
+                                      {m.prediction
+                                        ? `${m.emoji} ${Number(m.points ?? 0) > 0 ? '+' : ''}${m.points ?? 0}`
+                                        : '❌ 0'}
+                                    </span>
+                                    {canOpenMatchCenter ? (
+                                      <span className="match-center-chevron closed-chevron">›</span>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        className="match-predictions-link"
+                                        onClick={() => openMatchPredictions(m.match_id)}
+                                        disabled={matchPredictionsLoadingId === m.match_id}
+                                      >
+                                        {matchPredictionsLoadingId === m.match_id ? '...' : 'Прогнозы ›'}
+                                      </button>
+                                    )}
+                                  </div>
+                                  <div className="closed-own-prediction">
+                                    мой прогноз: <b>{m.prediction || '—'}</b>
+                                  </div>
                                 </div>
                               </div>
-                            </div>
-                          ))}
+                            )
+                          })}
                         </div>
                       ))}
                     </div>
@@ -6092,6 +6171,106 @@ function App() {
                         </div>
                       ) : (
                         <div className="match-center-dim match-center-empty">Появятся примерно за час до матча</div>
+                      )}
+                    </div>
+
+                    <div className="card match-center-card">
+                      <div className="match-center-card-title">Травмы и дисквалификации</div>
+                      {matchCenterData.injuries && matchCenterData.injuries.length > 0 ? (
+                        <div className="match-center-lineups">
+                          {[matchCenterData.home_team, matchCenterData.away_team].map((teamName) => {
+                            const items = (matchCenterData.injuries || []).filter((i) => i.team_name === teamName)
+                            if (!teamName || items.length === 0) return null
+                            return (
+                              <div className="match-center-lineup-col" key={teamName}>
+                                <div className="match-center-lineup-team">{teamName}</div>
+                                {items.map((item, idx) => (
+                                  <div className="match-center-injury-row" key={idx}>
+                                    <span>{item.player_name}</span>
+                                    <span className="match-center-dim">{item.reason || item.type || '—'}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      ) : (
+                        <div className="match-center-dim match-center-empty">Нет данных о травмах и дисквалификациях</div>
+                      )}
+                    </div>
+
+                    <div className="card match-center-card">
+                      <div className="match-center-card-title">События матча</div>
+                      {matchCenterData.events && matchCenterData.events.length > 0 ? (
+                        <div className="match-center-events">
+                          {[...matchCenterData.events]
+                            .sort((a, b) => (a.minute || 0) - (b.minute || 0))
+                            .map((item, idx) => (
+                              <div className="match-center-event-row" key={idx}>
+                                <span className="match-center-event-minute">
+                                  {item.minute ?? ''}
+                                  {item.extra ? `+${item.extra}` : ''}'
+                                </span>
+                                <span className="match-center-event-text">
+                                  {matchEventLabel(item)} — {item.player_name}
+                                  {item.assist_name ? ` (ассист: ${item.assist_name})` : ''}
+                                  <span className="match-center-dim"> · {item.team_name}</span>
+                                </span>
+                              </div>
+                            ))}
+                        </div>
+                      ) : (
+                        <div className="match-center-dim match-center-empty">Матч ещё не начался или событий пока нет</div>
+                      )}
+                    </div>
+
+                    <div className="card match-center-card">
+                      <div className="match-center-card-title">Статистика матча</div>
+                      {matchCenterData.statistics && (matchCenterData.statistics.home || matchCenterData.statistics.away) ? (
+                        <>
+                          <div className="match-center-stats-row match-center-stats-header">
+                            <span className="match-center-stats-value">{matchCenterData.home_team}</span>
+                            <span className="match-center-stats-label"> </span>
+                            <span className="match-center-stats-value">{matchCenterData.away_team}</span>
+                          </div>
+                          {matchStatRow(
+                            'Владение мячом',
+                            matchCenterData.statistics.home?.possession,
+                            matchCenterData.statistics.away?.possession
+                          )}
+                          {matchStatRow(
+                            'Удары всего',
+                            matchCenterData.statistics.home?.shots_total,
+                            matchCenterData.statistics.away?.shots_total
+                          )}
+                          {matchStatRow(
+                            'Удары в створ',
+                            matchCenterData.statistics.home?.shots_on_target,
+                            matchCenterData.statistics.away?.shots_on_target
+                          )}
+                          {matchStatRow(
+                            'Угловые',
+                            matchCenterData.statistics.home?.corners,
+                            matchCenterData.statistics.away?.corners
+                          )}
+                          {matchStatRow(
+                            'Фолы',
+                            matchCenterData.statistics.home?.fouls,
+                            matchCenterData.statistics.away?.fouls
+                          )}
+                          {matchStatRow(
+                            'Жёлтые карточки',
+                            matchCenterData.statistics.home?.yellow_cards,
+                            matchCenterData.statistics.away?.yellow_cards
+                          )}
+                          {matchStatRow(
+                            'Красные карточки',
+                            matchCenterData.statistics.home?.red_cards,
+                            matchCenterData.statistics.away?.red_cards
+                          )}
+                        </>
+                      ) : (
+                        <div className="match-center-dim match-center-empty">Появится после начала матча</div>
                       )}
                     </div>
 

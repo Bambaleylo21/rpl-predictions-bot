@@ -247,3 +247,99 @@ async def fetch_odds(fixture_id: int) -> dict[str, Any] | None:
     except Exception:
         logger.exception("[match_center] unexpected odds payload shape")
         return None
+
+
+async def fetch_injuries(fixture_id: int) -> list[dict[str, Any]]:
+    """Травмы и дисквалификации игроков, которые пропускают конкретный матч.
+
+    Кэш на 6 часов: список обычно уточняется в течение недели перед туром,
+    но не меняется резко от минуты к минуте.
+    """
+    data = await _api_get(
+        "/injuries",
+        {"fixture": str(fixture_id)},
+        cache_key=f"injuries:{fixture_id}",
+        ttl_seconds=6 * 3600,
+    )
+    if not data:
+        return []
+    out: list[dict[str, Any]] = []
+    for item in data.get("response", []) or []:
+        player = item.get("player") or {}
+        team = item.get("team") or {}
+        name = str(player.get("name") or "").strip()
+        if not name:
+            continue
+        out.append(
+            {
+                "player_name": name,
+                "team_name": str(team.get("name") or ""),
+                "type": player.get("type"),
+                "reason": player.get("reason"),
+            }
+        )
+    return out
+
+
+async def fetch_fixture_events(fixture_id: int) -> list[dict[str, Any]]:
+    """Хронология событий матча: голы, карточки, замены.
+
+    Кэш короткий (10 минут) — во время матча появляются новые события;
+    после финального свистка данные уже не меняются, но короткий TTL не мешает.
+    """
+    data = await _api_get(
+        "/fixtures/events",
+        {"fixture": str(fixture_id)},
+        cache_key=f"events:{fixture_id}",
+        ttl_seconds=10 * 60,
+    )
+    if not data:
+        return []
+    out: list[dict[str, Any]] = []
+    for item in data.get("response", []) or []:
+        time_info = item.get("time") or {}
+        team = item.get("team") or {}
+        player = item.get("player") or {}
+        assist = item.get("assist") or {}
+        out.append(
+            {
+                "minute": time_info.get("elapsed"),
+                "extra": time_info.get("extra"),
+                "team_name": str(team.get("name") or ""),
+                "player_name": str(player.get("name") or ""),
+                "assist_name": str(assist.get("name") or "").strip() or None,
+                "type": item.get("type"),
+                "detail": item.get("detail"),
+            }
+        )
+    return out
+
+
+async def fetch_fixture_statistics(fixture_id: int) -> dict[str, dict[str, Any]] | None:
+    """Статистика матча (владение мячом, удары, угловые и т.д.) по обеим командам.
+
+    Кэш короткий (10 минут), как и составы/события.
+    """
+    data = await _api_get(
+        "/fixtures/statistics",
+        {"fixture": str(fixture_id)},
+        cache_key=f"stats:{fixture_id}",
+        ttl_seconds=10 * 60,
+    )
+    if not data:
+        return None
+    response = data.get("response") or []
+    if not response:
+        return None
+    out: dict[str, dict[str, Any]] = {}
+    for side in response:
+        team = side.get("team") or {}
+        name = str(team.get("name") or "")
+        stats_map: dict[str, Any] = {}
+        for stat in side.get("statistics") or []:
+            stype = stat.get("type")
+            if stype:
+                stats_map[str(stype)] = stat.get("value")
+        if name:
+            out[name] = stats_map
+    return out or None
