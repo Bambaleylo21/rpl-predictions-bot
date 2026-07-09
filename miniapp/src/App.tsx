@@ -847,6 +847,37 @@ const TEAM_LOGO_SLUGS: Record<string, string> = {
   'Зенит': 'zenit',
 }
 
+const TEAM_COLORS: Record<string, string> = {
+  'Ахмат': '#159957',
+  'Акрон': '#e07b1f',
+  'Балтика': '#2a5fc9',
+  'ЦСКА': '#d81e2c',
+  'Динамо Мхч': '#f2b134',
+  'Динамо Мск': '#1450a3',
+  'Краснодар': '#3fae49',
+  'Оренбург': '#2456a6',
+  'Ростов': '#f7c948',
+  'Факел': '#1e56a0',
+  'Кр. Советов': '#1f8a70',
+  'Локомотив': '#3c8f3c',
+  'Родина': '#1f3f6b',
+  'Рубин': '#1c8a4b',
+  'Спартак': '#c8102e',
+  'Зенит': '#1e6fd9',
+}
+
+const teamColor = (name: string): string => TEAM_COLORS[name.trim()] || '#b99a55'
+
+const hexToRgba = (hex: string, alpha: number): string => {
+  const clean = hex.replace('#', '')
+  const full = clean.length === 3 ? clean.split('').map((c) => c + c).join('') : clean
+  const num = parseInt(full, 16)
+  const r = (num >> 16) & 255
+  const g = (num >> 8) & 255
+  const b = num & 255
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
 const TeamCrest = ({ name, alt }: { name: string; alt?: boolean }) => {
   const slug = TEAM_LOGO_SLUGS[name.trim()]
   const [failed, setFailed] = useState(false)
@@ -919,17 +950,47 @@ const matchEventLabel = (e: { type?: string | null; detail?: string | null }): s
   return e.detail || e.type || 'Событие'
 }
 
+const parseStatNumber = (value: string | number | null | undefined): number | null => {
+  if (value === null || value === undefined) return null
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null
+  const cleaned = value.toString().replace('%', '').trim()
+  const n = Number(cleaned)
+  return Number.isFinite(n) ? n : null
+}
+
 const matchStatRow = (
   label: string,
   home: string | number | null | undefined,
-  away: string | number | null | undefined
+  away: string | number | null | undefined,
+  homeColor: string,
+  awayColor: string
 ) => {
   if ((home === null || home === undefined) && (away === null || away === undefined)) return null
+  const homeNum = parseStatNumber(home)
+  const awayNum = parseStatNumber(away)
+  let homePct = 50
+  let awayPct = 50
+  if (homeNum !== null && awayNum !== null && homeNum + awayNum > 0) {
+    homePct = (homeNum / (homeNum + awayNum)) * 100
+    awayPct = 100 - homePct
+  } else if (homeNum !== null && awayNum === null) {
+    homePct = 100
+    awayPct = 0
+  } else if (awayNum !== null && homeNum === null) {
+    homePct = 0
+    awayPct = 100
+  }
   return (
-    <div className="match-center-stats-row" key={label}>
-      <span className="match-center-stats-value">{home ?? '—'}</span>
-      <span className="match-center-stats-label">{label}</span>
-      <span className="match-center-stats-value">{away ?? '—'}</span>
+    <div className="match-center-stats-block" key={label}>
+      <div className="match-center-stats-row">
+        <span className="match-center-stats-value">{home ?? '—'}</span>
+        <span className="match-center-stats-label">{label}</span>
+        <span className="match-center-stats-value">{away ?? '—'}</span>
+      </div>
+      <div className="match-center-stats-bar">
+        <div className="match-center-stats-bar-home" style={{ width: `${homePct}%`, background: homeColor }} />
+        <div className="match-center-stats-bar-away" style={{ width: `${awayPct}%`, background: awayColor }} />
+      </div>
     </div>
   )
 }
@@ -6052,24 +6113,43 @@ function App() {
                   <SkeletonBlock rows={5} />
                 ) : (
                   <>
-                    <div className="match-center-hero">
-                      <div className="match-center-team">
-                        <TeamCrest name={matchCenterData.home_team || ''} />
-                        <span className="match-center-team-name">{matchCenterData.home_team}</span>
-                      </div>
-                      <div className="match-center-mid">
-                        <span className="match-center-kickoff">{matchCenterData.kickoff} МСК</span>
-                        <span className="match-center-score">
-                          {matchCenterData.home_score != null && matchCenterData.away_score != null
-                            ? `${matchCenterData.home_score} : ${matchCenterData.away_score}`
-                            : '— : —'}
-                        </span>
-                      </div>
-                      <div className="match-center-team">
-                        <TeamCrest name={matchCenterData.away_team || ''} alt />
-                        <span className="match-center-team-name">{matchCenterData.away_team}</span>
-                      </div>
-                    </div>
+                    {(() => {
+                      const homeColor = teamColor(matchCenterData.home_team || '')
+                      const awayColor = teamColor(matchCenterData.away_team || '')
+                      return (
+                        <div
+                          className="match-center-hero"
+                          style={{
+                            background: `linear-gradient(135deg, ${hexToRgba(homeColor, 0.5)} 0%, #0e0e0e 45%, #0e0e0e 55%, ${hexToRgba(awayColor, 0.5)} 100%)`,
+                          }}
+                        >
+                          <div
+                            className="match-center-hero-blob match-center-hero-blob-home"
+                            style={{ background: homeColor }}
+                          />
+                          <div
+                            className="match-center-hero-blob match-center-hero-blob-away"
+                            style={{ background: awayColor }}
+                          />
+                          <div className="match-center-team">
+                            <TeamCrest name={matchCenterData.home_team || ''} />
+                            <span className="match-center-team-name">{matchCenterData.home_team}</span>
+                          </div>
+                          <div className="match-center-mid">
+                            <span className="match-center-kickoff">{matchCenterData.kickoff} МСК</span>
+                            <span className="match-center-score">
+                              {matchCenterData.home_score != null && matchCenterData.away_score != null
+                                ? `${matchCenterData.home_score} : ${matchCenterData.away_score}`
+                                : '— : —'}
+                            </span>
+                          </div>
+                          <div className="match-center-team">
+                            <TeamCrest name={matchCenterData.away_team || ''} alt />
+                            <span className="match-center-team-name">{matchCenterData.away_team}</span>
+                          </div>
+                        </div>
+                      )
+                    })()}
 
                     {(() => {
                       const myPrediction = predictItems.find((i) => i.match_id === matchCenterId)?.prediction
@@ -6088,7 +6168,13 @@ function App() {
                       {matchCenterData.accuracy?.home || matchCenterData.accuracy?.away ? (
                         <>
                           <div className="match-center-row">
-                            <span>{matchCenterData.home_team}</span>
+                            <span className="team-name-with-dot">
+                              <span
+                                className="team-color-dot"
+                                style={{ background: teamColor(matchCenterData.home_team || '') }}
+                              />
+                              {matchCenterData.home_team}
+                            </span>
                             <span className="match-center-dim">
                               {matchCenterData.accuracy?.home
                                 ? `${matchCenterData.accuracy.home.percent}% (${matchCenterData.accuracy.home.correct} из ${matchCenterData.accuracy.home.total})`
@@ -6096,7 +6182,13 @@ function App() {
                             </span>
                           </div>
                           <div className="match-center-row">
-                            <span>{matchCenterData.away_team}</span>
+                            <span className="team-name-with-dot">
+                              <span
+                                className="team-color-dot"
+                                style={{ background: teamColor(matchCenterData.away_team || '') }}
+                              />
+                              {matchCenterData.away_team}
+                            </span>
                             <span className="match-center-dim">
                               {matchCenterData.accuracy?.away
                                 ? `${matchCenterData.accuracy.away.percent}% (${matchCenterData.accuracy.away.correct} из ${matchCenterData.accuracy.away.total})`
@@ -6114,7 +6206,13 @@ function App() {
                       {matchCenterData.standings?.home || matchCenterData.standings?.away ? (
                         <>
                           <div className="match-center-row">
-                            <span>{matchCenterData.home_team}</span>
+                            <span className="team-name-with-dot">
+                              <span
+                                className="team-color-dot"
+                                style={{ background: teamColor(matchCenterData.home_team || '') }}
+                              />
+                              {matchCenterData.home_team}
+                            </span>
                             <span className="match-center-dim">
                               {matchCenterData.standings?.home
                                 ? `${matchCenterData.standings.home.rank} место · ${matchCenterData.standings.home.points} очк.`
@@ -6122,7 +6220,13 @@ function App() {
                             </span>
                           </div>
                           <div className="match-center-row">
-                            <span>{matchCenterData.away_team}</span>
+                            <span className="team-name-with-dot">
+                              <span
+                                className="team-color-dot"
+                                style={{ background: teamColor(matchCenterData.away_team || '') }}
+                              />
+                              {matchCenterData.away_team}
+                            </span>
                             <span className="match-center-dim">
                               {matchCenterData.standings?.away
                                 ? `${matchCenterData.standings.away.rank} место · ${matchCenterData.standings.away.points} очк.`
@@ -6207,6 +6311,10 @@ function App() {
                             .sort((a, b) => (a.minute || 0) - (b.minute || 0))
                             .map((item, idx) => (
                               <div className="match-center-event-row" key={idx}>
+                                <span
+                                  className="match-center-event-bar"
+                                  style={{ background: teamColor(item.team_name || '') }}
+                                />
                                 <span className="match-center-event-minute">
                                   {item.minute ?? ''}
                                   {item.extra ? `+${item.extra}` : ''}'
@@ -6227,48 +6335,68 @@ function App() {
                     <div className="card match-center-card">
                       <div className="match-center-card-title">Статистика матча</div>
                       {matchCenterData.statistics && (matchCenterData.statistics.home || matchCenterData.statistics.away) ? (
-                        <>
-                          <div className="match-center-stats-row match-center-stats-header">
-                            <span className="match-center-stats-value">{matchCenterData.home_team}</span>
-                            <span className="match-center-stats-label"> </span>
-                            <span className="match-center-stats-value">{matchCenterData.away_team}</span>
-                          </div>
-                          {matchStatRow(
-                            'Владение мячом',
-                            matchCenterData.statistics.home?.possession,
-                            matchCenterData.statistics.away?.possession
-                          )}
-                          {matchStatRow(
-                            'Удары всего',
-                            matchCenterData.statistics.home?.shots_total,
-                            matchCenterData.statistics.away?.shots_total
-                          )}
-                          {matchStatRow(
-                            'Удары в створ',
-                            matchCenterData.statistics.home?.shots_on_target,
-                            matchCenterData.statistics.away?.shots_on_target
-                          )}
-                          {matchStatRow(
-                            'Угловые',
-                            matchCenterData.statistics.home?.corners,
-                            matchCenterData.statistics.away?.corners
-                          )}
-                          {matchStatRow(
-                            'Фолы',
-                            matchCenterData.statistics.home?.fouls,
-                            matchCenterData.statistics.away?.fouls
-                          )}
-                          {matchStatRow(
-                            'Жёлтые карточки',
-                            matchCenterData.statistics.home?.yellow_cards,
-                            matchCenterData.statistics.away?.yellow_cards
-                          )}
-                          {matchStatRow(
-                            'Красные карточки',
-                            matchCenterData.statistics.home?.red_cards,
-                            matchCenterData.statistics.away?.red_cards
-                          )}
-                        </>
+                        (() => {
+                          const homeColor = teamColor(matchCenterData.home_team || '')
+                          const awayColor = teamColor(matchCenterData.away_team || '')
+                          return (
+                            <>
+                              <div className="match-center-stats-row match-center-stats-header">
+                                <span className="match-center-stats-value">{matchCenterData.home_team}</span>
+                                <span className="match-center-stats-label"> </span>
+                                <span className="match-center-stats-value">{matchCenterData.away_team}</span>
+                              </div>
+                              {matchStatRow(
+                                'Владение мячом',
+                                matchCenterData.statistics.home?.possession,
+                                matchCenterData.statistics.away?.possession,
+                                homeColor,
+                                awayColor
+                              )}
+                              {matchStatRow(
+                                'Удары всего',
+                                matchCenterData.statistics.home?.shots_total,
+                                matchCenterData.statistics.away?.shots_total,
+                                homeColor,
+                                awayColor
+                              )}
+                              {matchStatRow(
+                                'Удары в створ',
+                                matchCenterData.statistics.home?.shots_on_target,
+                                matchCenterData.statistics.away?.shots_on_target,
+                                homeColor,
+                                awayColor
+                              )}
+                              {matchStatRow(
+                                'Угловые',
+                                matchCenterData.statistics.home?.corners,
+                                matchCenterData.statistics.away?.corners,
+                                homeColor,
+                                awayColor
+                              )}
+                              {matchStatRow(
+                                'Фолы',
+                                matchCenterData.statistics.home?.fouls,
+                                matchCenterData.statistics.away?.fouls,
+                                homeColor,
+                                awayColor
+                              )}
+                              {matchStatRow(
+                                'Жёлтые карточки',
+                                matchCenterData.statistics.home?.yellow_cards,
+                                matchCenterData.statistics.away?.yellow_cards,
+                                homeColor,
+                                awayColor
+                              )}
+                              {matchStatRow(
+                                'Красные карточки',
+                                matchCenterData.statistics.home?.red_cards,
+                                matchCenterData.statistics.away?.red_cards,
+                                homeColor,
+                                awayColor
+                              )}
+                            </>
+                          )
+                        })()
                       ) : (
                         <div className="match-center-dim match-center-empty">Появится после начала матча</div>
                       )}

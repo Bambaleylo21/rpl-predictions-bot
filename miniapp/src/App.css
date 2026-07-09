@@ -4133,6 +4133,8 @@ select:focus-visible {
 }
 
 .match-center-hero {
+  position: relative;
+  overflow: hidden;
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
@@ -4141,6 +4143,31 @@ select:focus-visible {
   border: 1px solid var(--line-2);
   border-radius: 14px;
   padding: 16px 10px;
+}
+
+.match-center-hero-blob {
+  position: absolute;
+  width: 130px;
+  height: 130px;
+  border-radius: 50%;
+  filter: blur(38px);
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.match-center-hero-blob-home {
+  top: -50px;
+  left: -30px;
+}
+
+.match-center-hero-blob-away {
+  bottom: -50px;
+  right: -30px;
+}
+
+.match-center-hero > *:not(.match-center-hero-blob) {
+  position: relative;
+  z-index: 1;
 }
 
 .match-center-team {
@@ -4227,6 +4254,19 @@ select:focus-visible {
   padding: 5px 0;
 }
 
+.team-name-with-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.team-color-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
 .match-center-label {
   color: var(--text-dim);
 }
@@ -4304,6 +4344,13 @@ select:focus-visible {
   border-bottom: none;
 }
 
+.match-center-event-bar {
+  flex: 0 0 auto;
+  width: 3px;
+  align-self: stretch;
+  border-radius: 2px;
+}
+
 .match-center-event-minute {
   flex: 0 0 auto;
   min-width: 32px;
@@ -4315,17 +4362,35 @@ select:focus-visible {
   flex: 1 1 auto;
 }
 
+.match-center-stats-block {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line-2);
+}
+
+.match-center-stats-block:last-child {
+  border-bottom: none;
+}
+
 .match-center-stats-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 6px 0;
-  border-bottom: 1px solid var(--line-2);
 }
 
-.match-center-stats-row:last-child {
-  border-bottom: none;
+.match-center-stats-bar {
+  display: flex;
+  height: 5px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: rgba(230, 230, 230, 0.08);
+  margin-top: 5px;
+}
+
+.match-center-stats-bar-home,
+.match-center-stats-bar-away {
+  height: 100%;
+  transition: width 0.2s ease-out;
 }
 
 .match-center-stats-header {
