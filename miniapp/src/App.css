@@ -4011,6 +4011,103 @@ select:focus-visible {
   }
 }
 
+.tournament-switch-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-0);
+  animation: tournament-switch-fade-in 200ms ease-out;
+}
+
+.tournament-switch-overlay.is-closing {
+  animation: tournament-switch-fade-out 220ms ease-in forwards;
+}
+
+@keyframes tournament-switch-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes tournament-switch-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+.tournament-switch-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 32px;
+  animation: tournament-switch-pop-in 320ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes tournament-switch-pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.9) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.tournament-switch-icon {
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+  filter: drop-shadow(0 8px 20px rgba(185, 154, 85, 0.28));
+}
+
+.tournament-switch-spinner {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 3px solid var(--line-2);
+  border-top-color: var(--accent);
+  animation: tournament-switch-spin 800ms linear infinite;
+}
+
+@keyframes tournament-switch-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.tournament-switch-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-main);
+  text-align: center;
+}
+
+.tournament-switch-subtitle {
+  font-size: 13px;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tournament-switch-spinner {
+    animation: none;
+  }
+  .tournament-switch-card {
+    animation: none;
+  }
+}
+
 .round-nav-card {
   padding: 6px;
 }

@@ -1259,6 +1259,9 @@ function App() {
   const [scorerSearch, setScorerSearch] = useState<string>('')
   const [selectedTournamentCode, setSelectedTournamentCode] = useState<string>('WC2026')
   const [tournamentNotice, setTournamentNotice] = useState<string | null>(null)
+  const [tournamentSwitching, setTournamentSwitching] = useState<boolean>(false)
+  const [tournamentSwitchClosing, setTournamentSwitchClosing] = useState<boolean>(false)
+  const [tournamentSwitchTarget, setTournamentSwitchTarget] = useState<string>('')
   const [predictionsFilter, setPredictionsFilter] = useState<'open' | 'closed'>('open')
   const [rplRoundOverride, setRplRoundOverride] = useState<number | null>(null)
   const [rplRoundPickerOpen, setRplRoundPickerOpen] = useState<boolean>(false)
@@ -1890,6 +1893,52 @@ function App() {
     })
   }, [selectedTournamentCode, selectedRoundNumber, tableRoundFilter, refreshTick])
 
+  // Прячем страницу-заглушку переключения турнира, как только весь набор
+  // данных (матчи/прогнозы/таблица/дуэли/доп. прогнозы) для нового турнира
+  // прогрузился — либо успешно, либо с ошибкой (чтобы не зависнуть навечно).
+  useEffect(() => {
+    if (!tournamentSwitching) return
+    const settled =
+      (predictData !== null || predictError !== null) &&
+      (predictionsData !== null || predictionsError !== null) &&
+      (tableData !== null || tableError !== null) &&
+      (duelsData !== null || duelsError !== null) &&
+      (longtermData !== null || longtermError !== null)
+    if (!settled) return
+    const closeTimer = setTimeout(() => setTournamentSwitchClosing(true), 260)
+    const hideTimer = setTimeout(() => {
+      setTournamentSwitching(false)
+      setTournamentSwitchClosing(false)
+    }, 260 + 220)
+    return () => {
+      clearTimeout(closeTimer)
+      clearTimeout(hideTimer)
+    }
+  }, [
+    tournamentSwitching,
+    predictData,
+    predictError,
+    predictionsData,
+    predictionsError,
+    tableData,
+    tableError,
+    duelsData,
+    duelsError,
+    longtermData,
+    longtermError,
+  ])
+
+  // Аварийный предохранитель: если что-то зависло (плохая сеть и т.п.),
+  // не даём заглушке висеть вечно.
+  useEffect(() => {
+    if (!tournamentSwitching) return
+    const failsafe = setTimeout(() => {
+      setTournamentSwitchClosing(false)
+      setTournamentSwitching(false)
+    }, 6000)
+    return () => clearTimeout(failsafe)
+  }, [tournamentSwitching])
+
   useEffect(() => {
     const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
     const initData = getInitData()
@@ -1944,6 +1993,22 @@ function App() {
       'X-Telegram-Init-Data': initData,
     }
     setTournamentNotice(null)
+    // Показываем страницу-заглушку переключения и сразу же чистим все данные
+    // предыдущего турнира — иначе на долю секунды успевает отрисоваться
+    // старый список матчей/таблицы под новым турниром (см. баг с логотипами).
+    setTournamentSwitchTarget(code)
+    setTournamentSwitchClosing(false)
+    setTournamentSwitching(true)
+    setPredictData(null)
+    setPredictError(null)
+    setPredictionsData(null)
+    setPredictionsError(null)
+    setTableData(null)
+    setTableError(null)
+    setDuelsData(null)
+    setDuelsError(null)
+    setLongtermData(null)
+    setLongtermError(null)
     try {
       const res = await fetch(`${apiBase}/api/miniapp/tournament/select`, {
         method: 'POST',
@@ -1959,6 +2024,7 @@ function App() {
       setProfileTargetUserId(null)
       setTournamentNotice(`Выбран турнир: ${nextCode}`)
     } catch (_err) {
+      setTournamentSwitching(false)
       setTournamentNotice('Не удалось переключить турнир. Попробуй ещё раз.')
     }
   }
@@ -4330,8 +4396,28 @@ function App() {
   const showJoinOnboarding =
     !showRplComingSoon && screen !== 'admin' && !profileTargetUserId && Boolean(profileData && profileData.joined === false)
 
+  const tournamentSwitchInfo = tournamentButtons.find((t) => t.code === tournamentSwitchTarget)
+
   return (
     <div className="app-shell">
+      {tournamentSwitching ? (
+        <div className={`tournament-switch-overlay ${tournamentSwitchClosing ? 'is-closing' : ''}`}>
+          <div className="tournament-switch-card">
+            {tournamentSwitchInfo ? (
+              <img
+                className="tournament-switch-icon"
+                src={tournamentSwitchInfo.activeIcon}
+                alt={tournamentSwitchInfo.label}
+              />
+            ) : null}
+            <div className="tournament-switch-spinner" aria-hidden="true" />
+            <div className="tournament-switch-title">
+              Переключаемся на {tournamentSwitchTarget === 'RPL' ? 'РПЛ' : 'Чемпионат мира'}
+            </div>
+            <div className="tournament-switch-subtitle">Загружаем матчи, таблицу и составы…</div>
+          </div>
+        </div>
+      ) : null}
       <header className="topbar sticky">
         <div className="topbar-row">
           <div>
