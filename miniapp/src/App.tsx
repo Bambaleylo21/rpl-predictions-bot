@@ -5422,7 +5422,7 @@ function App() {
         {!showRplComingSoon && !showJoinOnboarding && screen === 'duels' ? (
           <>
             <section className="cards">
-              <div className="card">
+              <div className="card duel-hero-card">
                 {duelsError ? (
                   <div className="card-text">
                     Не удалось загрузить раздел 1x1. Попробуй обновить экран.

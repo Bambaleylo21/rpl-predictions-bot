@@ -211,6 +211,15 @@ body {
   width: 180px;
 }
 
+/* Полупрозрачная рамка пилюли (var(--line-2)) просвечивала красным от
+   фонового свечения позади и читалась как обводка вокруг "Активные" —
+   в исходном примере тумблер вообще без коробки, только текст и
+   подчёркивание. Убираем рамку/фон контейнера совсем. */
+.theme-rpl .match-toggle {
+  border: none;
+  background: transparent;
+}
+
 .match-toggle-btn {
   border: 0;
   border-radius: var(--radius-pill);
@@ -710,6 +719,25 @@ body {
   box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.28) inset;
 }
 
+/* 1x1: внешняя карточка (шапка с именем/рейтингом) больше не боксируется —
+   как и на Профиле, текст лежит прямо на графитовом фоне. А сами поля
+   выбора матча/соперника получают своё стекло, раз они функциональные
+   элементы, а не просто заголовок. */
+.theme-rpl .duel-hero-card {
+  border: none;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+}
+
+.theme-rpl .duel-picker-btn {
+  border: 1px solid transparent;
+  background:
+    linear-gradient(rgba(18, 18, 24, 0.78), rgba(18, 18, 24, 0.78)) padding-box,
+    linear-gradient(135deg, rgba(227, 6, 19, 0.5), rgba(0, 92, 169, 0.38)) border-box;
+}
+
 .duel-picker-label {
   display: block;
   font-size: 11px;
@@ -826,6 +854,19 @@ body {
   box-shadow: none;
 }
 
+/* Баг с прошлого раунда: .theme-rpl .card (2 класса) специфичнее, чем
+   .compact-list-card (1 класс), поэтому стеклянная рамка карточки
+   перебивала это намеренное обнуление и создавала "подложку" вокруг
+   всего списка матчей. Три класса в селекторе ниже специфичнее обоих —
+   явно возвращаем невидимость именно для связки card+compact-list-card. */
+.theme-rpl .card.compact-list-card {
+  border: none;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+}
+
 .day-group + .day-group {
   margin-top: var(--vr-lg);
 }
@@ -861,6 +902,18 @@ body {
   border-radius: var(--radius-card);
   padding: 10px 10px 8px;
   box-shadow: var(--shadow-soft);
+}
+
+/* Это и есть настоящие видимые "карточки матчей" — отдельный класс, никак
+   не связанный с .card, поэтому раньше ни разу не подхватывал новый стиль
+   и оставался плоским чёрным. Теперь тоже стекло с окантовкой. */
+.theme-rpl .day-group-inset {
+  border: 1px solid transparent;
+  background:
+    linear-gradient(rgba(18, 18, 24, 0.78), rgba(18, 18, 24, 0.78)) padding-box,
+    linear-gradient(135deg, rgba(227, 6, 19, 0.5), rgba(0, 92, 169, 0.38)) border-box;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
 
 .compact-match {
@@ -1596,14 +1649,18 @@ body {
   color: #ffffff;
 }
 
+/* Даже без accent-заливки полупрозрачный цветной фон на границе с чёрной
+   карточкой сам по себе читается как "рамка". Для этих двух нейтральных
+   по смыслу состояний (ещё не заполнено / матч уже идёт) убираем цветной
+   фон совсем — остаётся обычная тёмная кнопка без намёка на контур. */
 .theme-rpl .prediction-save-btn.is-empty {
-  background: rgba(227, 6, 19, 0.1);
+  background: #151515;
   border-color: transparent;
   box-shadow: none;
 }
 
 .theme-rpl .prediction-save-btn.is-locked {
-  background: rgba(227, 6, 19, 0.12);
+  background: #151515;
   border-color: transparent;
 }
 
@@ -2649,6 +2706,39 @@ body {
   align-items: center;
   padding-bottom: 10px;
   border-bottom: 1px solid var(--line-3);
+}
+
+/* Профиль: вся секция (аватар...уведомления) раньше была одной большой
+   карточкой .card — отсюда гигантская общая рамка. Для РПЛ гасим рамку у
+   внешней обёртки (герой с аватаркой лежит прямо на графитовом фоне, без
+   рамки), а каждый внутренний блок ниже одеваем в своё стекло по
+   отдельности — см. правила для .profile-progress/.profile-insight/
+   .profile-achievements/.profile-history/.profile-notifications-row ниже.
+   В экране Профиля ровно одна .card на весь экран, так что можно смело
+   бить по .screen-profile .card, не задевая ничего лишнего. */
+.theme-rpl .screen-profile .card {
+  border: none;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+}
+
+.theme-rpl .profile-hero {
+  border-bottom: none;
+}
+
+.theme-rpl .profile-progress,
+.theme-rpl .profile-insight,
+.theme-rpl .profile-achievements,
+.theme-rpl .profile-history,
+.theme-rpl .profile-notifications-row {
+  border: 1px solid transparent;
+  background:
+    linear-gradient(rgba(18, 18, 24, 0.78), rgba(18, 18, 24, 0.78)) padding-box,
+    linear-gradient(135deg, rgba(227, 6, 19, 0.5), rgba(0, 92, 169, 0.38)) border-box;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
 
 .profile-back-btn {
