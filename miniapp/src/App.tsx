@@ -4399,7 +4399,7 @@ function App() {
   const tournamentSwitchInfo = tournamentButtons.find((t) => t.code === tournamentSwitchTarget)
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${selectedTournamentCode === 'RPL' ? 'theme-rpl' : ''}`}>
       {tournamentSwitching ? (
         <div className={`tournament-switch-overlay ${tournamentSwitchClosing ? 'is-closing' : ''}`}>
           <div className="tournament-switch-card">
@@ -4410,7 +4410,11 @@ function App() {
                 alt={tournamentSwitchInfo.label}
               />
             ) : null}
-            <div className="tournament-switch-spinner" aria-hidden="true" />
+            <div
+              className="tournament-switch-spinner"
+              aria-hidden="true"
+              style={{ borderTopColor: tournamentSwitchTarget === 'RPL' ? '#E30613' : 'var(--accent)' }}
+            />
             <div className="tournament-switch-title">
               Переключаемся на {tournamentSwitchTarget === 'RPL' ? 'РПЛ' : 'Чемпионат мира'}
             </div>
