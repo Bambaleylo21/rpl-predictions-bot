@@ -861,22 +861,22 @@ const TEAM_LOGO_SLUGS: Record<string, string> = {
 }
 
 const TEAM_COLORS: Record<string, string> = {
-  'Ахмат': '#159957',
-  'Акрон': '#e07b1f',
-  'Балтика': '#2a5fc9',
-  'ЦСКА': '#d81e2c',
-  'Динамо Мхч': '#f2b134',
-  'Динамо Мск': '#1450a3',
-  'Краснодар': '#3fae49',
-  'Оренбург': '#2456a6',
-  'Ростов': '#f7c948',
-  'Факел': '#1e56a0',
-  'Кр. Советов': '#1f8a70',
-  'Локомотив': '#3c8f3c',
-  'Родина': '#1f3f6b',
-  'Рубин': '#1c8a4b',
-  'Спартак': '#c8102e',
-  'Зенит': '#1e6fd9',
+  'Ахмат': '#008753',
+  'Акрон': '#9E1B1B',
+  'Балтика': '#005FA9',
+  'ЦСКА': '#E01B22',
+  'Динамо Мхч': '#4B9EC9',
+  'Динамо Мск': '#164987',
+  'Краснодар': '#083A2E',
+  'Оренбург': '#005FA9',
+  'Ростов': '#FFD600',
+  'Факел': '#0F4C81',
+  'Кр. Советов': '#6CACE4',
+  'Локомотив': '#007236',
+  'Родина': '#7EC0EE',
+  'Рубин': '#8A1E31',
+  'Спартак': '#E3304A',
+  'Зенит': '#0097DB',
 }
 
 const teamColor = (name: string): string => TEAM_COLORS[name.trim()] || '#b99a55'
@@ -3372,6 +3372,10 @@ function App() {
     const savedInput = normalizeScore(item.prediction || '')
     return Boolean(currentInput && currentInput !== savedInput)
   }).length
+  const emptyOpenPredictionCount = predictItems.filter((item) => {
+    if (item.is_placeholder || item.locked) return false
+    return !normalizeScore(item.prediction || '')
+  }).length
   const predictGroups = (() => {
     const grouped: Record<string, typeof predictItems> = {}
     for (const item of predictItems) {
@@ -5073,7 +5077,13 @@ function App() {
                         ))
                       )}
                       <button
-                        className={`save-btn save-all-predictions-btn ${dirtyPredictItemsCount > 0 ? 'is-dirty' : 'is-saved'}`}
+                        className={`save-btn save-all-predictions-btn ${
+                          dirtyPredictItemsCount > 0
+                            ? 'is-dirty'
+                            : emptyOpenPredictionCount > 0
+                              ? 'is-incomplete'
+                              : 'is-saved'
+                        }`}
                         onClick={saveAllPredictions}
                         disabled={savingAllPredictions || dirtyPredictItemsCount === 0}
                       >
@@ -5081,7 +5091,9 @@ function App() {
                           ? 'Сохраняю...'
                           : dirtyPredictItemsCount > 0
                             ? `Сохранить все матчи (${dirtyPredictItemsCount})`
-                            : 'Все матчи сохранены'}
+                            : emptyOpenPredictionCount > 0
+                              ? 'Остались непроставленные матчи'
+                              : 'Все матчи сохранены'}
                       </button>
                     </div>
                   ) : closedPredictionGroups.length === 0 ? (

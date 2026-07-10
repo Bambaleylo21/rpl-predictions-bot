@@ -462,7 +462,10 @@ body {
 }
 
 .legend-dot-champion {
-  background: var(--accent);
+  /* Золотая точка легенды — та же "медаль" за 1 место, что и подсветка
+     строки (zone-champion). Не завязываем на var(--accent): в теме РПЛ
+     акцент красный, а строка чемпиона намеренно остаётся золотой. */
+  background: #b99a55;
 }
 
 .legend-dot-promotion {
@@ -701,6 +704,19 @@ body {
 
 .duel-rules-btn:active {
   transform: translateY(1px);
+}
+
+/* "Таблица 1x1" / "Правила" не попадали под рестайлинг — обычная серая
+   пилюля. Даём им лёгкий стеклянный акцент в тон остальным элементам. */
+.theme-rpl .duel-rules-btn {
+  border-color: rgba(var(--accent-rgb), 0.35);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-main);
+}
+
+.theme-rpl .duel-rules-btn:hover {
+  border-color: rgba(var(--accent-rgb), 0.6);
+  background: rgba(var(--accent-rgb), 0.1);
 }
 
 .duel-picker-btn {
@@ -1603,6 +1619,16 @@ body {
   font-weight: 800;
 }
 
+/* Всё сохранено, но остались матчи без счёта — не "всё готово" и не
+   "надо сохранить", отдельное третье состояние с честным текстом. */
+.save-all-predictions-btn.is-incomplete {
+  background: #151515;
+  border-color: var(--line-2);
+  color: var(--text-dim);
+  opacity: 0.85;
+  box-shadow: none;
+}
+
 .prediction-save-btn.is-dirty,
 .save-all-predictions-btn.is-dirty {
   background: linear-gradient(180deg, #d4b460 0%, #9f7b31 100%);
@@ -1684,23 +1710,32 @@ body {
    контуром поверх уже двухцветной окантовки карточки. Оставляем только
    цвет (заливку/оттенок), border-color гасим до прозрачного — иначе
    базовое правило (border-color: var(--accent)) всё равно даст красный. */
-/* Раньше "Сохранить" при вводе счёта загоралось сплошным ярким
-   красным градиентом — на графитовом фоне читалось слишком резко,
-   почти как предупреждение. Делаем мягче: приглушённая полупрозрачная
-   заливка вместо сплошного цвета, тонкая тёплая обводка вместо резкого
-   контраста. */
+/* "Сохранить" / "Сохранить все матчи" — единый зелёный акцент для
+   любого действия подтверждения (тот же цвет, что и "Принять вызов"),
+   вместо красного/акцентного цвета темы турнира. Зелёный тут выбран
+   осознанно как самостоятельный "цвет действия", а не часть триколора. */
 .theme-rpl .prediction-save-btn.is-dirty,
 .theme-rpl .save-all-predictions-btn.is-dirty {
-  background: linear-gradient(180deg, rgba(255, 90, 95, 0.55) 0%, rgba(227, 6, 19, 0.5) 55%, rgba(163, 4, 16, 0.55) 100%);
-  border-color: rgba(227, 6, 19, 0.4);
+  background: linear-gradient(180deg, #3ec478 0%, #1f8a4c 55%, #146a39 100%);
+  border-color: #2fae64;
   color: #ffffff;
-  box-shadow: 0 0 10px rgba(227, 6, 19, 0.14);
+  box-shadow: 0 0 10px rgba(31, 138, 76, 0.24);
 }
 
 .theme-rpl .prediction-save-btn.is-saving {
-  background: linear-gradient(180deg, rgba(240, 87, 92, 0.5) 0%, rgba(163, 4, 16, 0.55) 100%);
-  border-color: rgba(227, 6, 19, 0.32);
+  background: linear-gradient(180deg, #2fae64 0%, #146a39 100%);
+  border-color: #2fae64;
   color: #ffffff;
+}
+
+/* "Все матчи сохранены", но остались непроставленные матчи — раньше
+   кнопка молчала об этом. Мягкий оранжевый (тот же смысл "требует
+   внимания", что и у зоны вылета) вместо нейтрально-серого. */
+.theme-rpl .save-all-predictions-btn.is-incomplete {
+  background: rgba(255, 107, 53, 0.1);
+  border-color: rgba(255, 107, 53, 0.32);
+  color: rgba(255, 255, 255, 0.75);
+  box-shadow: none;
 }
 
 /* Даже без accent-заливки полупрозрачный цветной фон на границе с чёрной
@@ -1720,13 +1755,13 @@ body {
 
 @keyframes save-success-pulse-rpl {
   0% {
-    box-shadow: 0 0 0 0 rgba(227, 6, 19, 0.55);
+    box-shadow: 0 0 0 0 rgba(31, 138, 76, 0.55);
   }
   60% {
-    box-shadow: 0 0 0 8px rgba(227, 6, 19, 0.1);
+    box-shadow: 0 0 0 8px rgba(31, 138, 76, 0.1);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(227, 6, 19, 0);
+    box-shadow: 0 0 0 0 rgba(31, 138, 76, 0);
   }
 }
 
@@ -3383,6 +3418,24 @@ body {
 .duel-accept-btn:disabled {
   opacity: 0.72;
   cursor: wait;
+}
+
+/* Пустое состояние (счёт ещё не введён) раньше было тонкой красноватой
+   рамкой поверх слабой красной заливки — читалось как недоделанное, а
+   не как осознанное "неактивно". Делаем нейтрально-плоским, как и
+   другие "пустые" кнопки в приложении. Готовое состояние (is-ready) —
+   тот же зелёный, что и у "Сохранить"/"Принять вызов" при вводе счёта. */
+.theme-rpl .duel-accept-btn {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-dim);
+}
+
+.theme-rpl .duel-accept-btn.is-ready {
+  border-color: #2fae64;
+  background: linear-gradient(180deg, rgba(63, 196, 120, 0.95) 0%, rgba(31, 138, 76, 0.95) 100%);
+  color: #ffffff;
+  box-shadow: 0 10px 20px rgba(31, 138, 76, 0.22);
 }
 
 .duel-card-actions {
