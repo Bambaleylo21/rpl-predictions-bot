@@ -142,6 +142,7 @@ async def get_user_stage_scope(tg_user_id: int) -> UserStageScope | None:
 async def build_active_stage_league_table(
     tg_user_id: int,
     requested_league_code: str | None = None,
+    round_number: int | None = None,
 ) -> tuple[list[dict], LeagueTableMeta | None]:
     async with SessionLocal() as session:
         season = await get_active_season(session)
@@ -227,6 +228,15 @@ async def build_active_stage_league_table(
 
         user_ids = [int(r[0]) for r in participant_rows]
 
+        # "Общая таблица" (round_number=None) считает по всему этапу целиком
+        # (round_min..round_max), а выбор конкретного тура сужает выборку
+        # до очков/прогнозов именно этого тура — как отдельный срез формы.
+        round_bounds = (
+            [Match.round_number == int(round_number)]
+            if round_number is not None
+            else [Match.round_number >= stage.round_min, Match.round_number <= stage.round_max]
+        )
+
         preds_q = await session.execute(
             select(
                 Prediction.tg_user_id,
@@ -239,8 +249,7 @@ async def build_active_stage_league_table(
                 Prediction.tg_user_id.in_(user_ids),
                 Match.tournament_id == rpl.id,
                 Match.season_id == season.id,
-                Match.round_number >= stage.round_min,
-                Match.round_number <= stage.round_max,
+                *round_bounds,
             )
             .group_by(Prediction.tg_user_id)
         )
@@ -254,8 +263,7 @@ async def build_active_stage_league_table(
             select(func.count(Match.id)).where(
                 Match.tournament_id == rpl.id,
                 Match.season_id == season.id,
-                Match.round_number >= stage.round_min,
-                Match.round_number <= stage.round_max,
+                *round_bounds,
                 Match.kickoff_time <= now,
             )
         )
@@ -269,8 +277,7 @@ async def build_active_stage_league_table(
                 Prediction.tg_user_id.in_(user_ids),
                 Match.tournament_id == rpl.id,
                 Match.season_id == season.id,
-                Match.round_number >= stage.round_min,
-                Match.round_number <= stage.round_max,
+                *round_bounds,
                 Match.kickoff_time <= now,
             )
             .group_by(Prediction.tg_user_id)
@@ -292,8 +299,7 @@ async def build_active_stage_league_table(
                 Point.tg_user_id.in_(user_ids),
                 Match.tournament_id == rpl.id,
                 Match.season_id == season.id,
-                Match.round_number >= stage.round_min,
-                Match.round_number <= stage.round_max,
+                *round_bounds,
             )
             .group_by(Point.tg_user_id)
         )
@@ -313,7 +319,10 @@ async def build_active_stage_league_table(
             tgid = int(uid)
             pred_total, last_pred_at = pred_map.get(tgid, (0, None))
             pts = points_map.get(tgid, {})
-            total = int(pts.get("total", 0)) + int(ut_bonus or 0)
+            # Ручные бонусные очки администратора относятся к сезону в целом,
+            # а не к конкретному туру — прибавляем их только в "Общей таблице".
+            bonus_for_total = int(ut_bonus or 0) if round_number is None else 0
+            total = int(pts.get("total", 0)) + bonus_for_total
             exact = int(pts.get("exact", 0))
             diff = int(pts.get("diff", 0))
             outcome = int(pts.get("outcome", 0))

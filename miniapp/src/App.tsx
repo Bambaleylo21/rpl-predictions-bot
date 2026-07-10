@@ -341,6 +341,7 @@ type TableResponse = {
   stage_name?: string
   stage_round_min?: number
   stage_round_max?: number
+  selected_round?: number | null
   league_name?: string
   participants?: number
   user_place?: number | null
@@ -1279,6 +1280,8 @@ function App() {
   const [tournamentSwitchTarget, setTournamentSwitchTarget] = useState<string>('')
   const [predictionsFilter, setPredictionsFilter] = useState<'open' | 'closed'>('open')
   const [rplRoundOverride, setRplRoundOverride] = useState<number | null>(null)
+  const [rplTableRoundOverride, setRplTableRoundOverride] = useState<number | null>(null)
+  const [rplTableRoundPickerOpen, setRplTableRoundPickerOpen] = useState<boolean>(false)
   const [rplRoundPickerOpen, setRplRoundPickerOpen] = useState<boolean>(false)
   const [profileTargetUserId, setProfileTargetUserId] = useState<number | null>(null)
   const [stageTab, setStageTab] = useState<'1' | '2' | '3' | 'PO' | 'LT'>('1')
@@ -1874,7 +1877,9 @@ function App() {
     const tableRoundParam =
       selectedTournamentCode === 'WC2026' && tableRoundFilter !== 'ALL'
         ? `&round=${encodeURIComponent(String(tableRoundFilter))}`
-        : ''
+        : selectedTournamentCode === 'RPL' && rplTableRoundOverride != null
+          ? `&round=${encodeURIComponent(String(rplTableRoundOverride))}`
+          : ''
     fetch(`${apiBase}/api/miniapp/table/current?t=${tParam}${tableRoundParam}`, { headers })
       .then(async (res) => {
         const data = (await res.json()) as TableResponse
@@ -1906,7 +1911,7 @@ function App() {
     loadDuelsCurrent(apiBase, initData, selectedTournamentCode).catch((err) => {
       setDuelsError(String(err))
     })
-  }, [selectedTournamentCode, selectedRoundNumber, tableRoundFilter, refreshTick])
+  }, [selectedTournamentCode, selectedRoundNumber, tableRoundFilter, rplTableRoundOverride, refreshTick])
 
   // Прячем страницу-заглушку переключения турнира, как только весь набор
   // данных (матчи/прогнозы/таблица/дуэли/доп. прогнозы) для нового турнира
@@ -3507,6 +3512,19 @@ function App() {
     if (rplRoundMin == null || rplRoundMax == null) return
     haptic.select()
     setRplRoundOverride(Math.min(Math.max(target, rplRoundMin), rplRoundMax))
+  }
+
+  // Переключатель тура в разделе "Таблица" (РПЛ): null = "Общая таблица"
+  // (весь текущий этап целиком), число = очки/прогнозы только этого тура.
+  const rplTableRoundMin = tableData?.stage_round_min ?? null
+  const rplTableRoundMax = tableData?.stage_round_max ?? null
+  const goToRplTableRound = (target: number | null) => {
+    haptic.select()
+    if (target == null || rplTableRoundMin == null || rplTableRoundMax == null) {
+      setRplTableRoundOverride(null)
+      return
+    }
+    setRplTableRoundOverride(Math.min(Math.max(target, rplTableRoundMin), rplTableRoundMax))
   }
 
   useEffect(() => {
@@ -5992,6 +6010,48 @@ function App() {
               </section>
             ) : null}
 
+            {selectedTournamentCode === 'RPL' && rplTableRoundMin != null && rplTableRoundMax != null ? (
+              <section className="cards">
+                <div className="card card-static round-nav-card">
+                  <div className="round-nav">
+                    <button
+                      type="button"
+                      className="round-nav-arrow"
+                      onClick={() =>
+                        goToRplTableRound(
+                          rplTableRoundOverride == null || rplTableRoundOverride <= rplTableRoundMin
+                            ? null
+                            : rplTableRoundOverride - 1
+                        )
+                      }
+                      disabled={rplTableRoundOverride == null}
+                      aria-label="Предыдущий тур"
+                    >
+                      ‹
+                    </button>
+                    <button
+                      type="button"
+                      className="round-nav-label"
+                      onClick={() => setRplTableRoundPickerOpen(true)}
+                    >
+                      {rplTableRoundOverride == null ? 'Общая таблица' : `Тур ${rplTableRoundOverride} из ${rplTableRoundMax}`}
+                    </button>
+                    <button
+                      type="button"
+                      className="round-nav-arrow"
+                      onClick={() =>
+                        goToRplTableRound(rplTableRoundOverride == null ? rplTableRoundMin : rplTableRoundOverride + 1)
+                      }
+                      disabled={rplTableRoundOverride != null && rplTableRoundOverride >= rplTableRoundMax}
+                      aria-label="Следующий тур"
+                    >
+                      ›
+                    </button>
+                  </div>
+                </div>
+              </section>
+            ) : null}
+
             <section className="cards space-top">
               {tableError ? (
                 <div className="card">
@@ -6523,6 +6583,52 @@ function App() {
                     onClick={() => {
                       goToRplRound(r)
                       setRplRoundPickerOpen(false)
+                    }}
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {rplTableRoundPickerOpen && rplTableRoundMin != null && rplTableRoundMax != null ? (
+          <div className="round-picker-overlay" onClick={() => setRplTableRoundPickerOpen(false)}>
+            <div className="round-picker-sheet" onClick={(ev) => ev.stopPropagation()}>
+              <div className="round-picker-head">
+                <div className="round-picker-title">Выбери тур</div>
+                <button
+                  type="button"
+                  className="round-picker-close"
+                  onClick={() => setRplTableRoundPickerOpen(false)}
+                  aria-label="Закрыть"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="round-picker-grid">
+                <button
+                  type="button"
+                  className={`round-picker-chip ${rplTableRoundOverride == null ? 'is-active' : ''}`}
+                  onClick={() => {
+                    goToRplTableRound(null)
+                    setRplTableRoundPickerOpen(false)
+                  }}
+                >
+                  Общая
+                </button>
+                {Array.from(
+                  { length: rplTableRoundMax - rplTableRoundMin + 1 },
+                  (_, i) => rplTableRoundMin + i
+                ).map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    className={`round-picker-chip ${r === rplTableRoundOverride ? 'is-active' : ''}`}
+                    onClick={() => {
+                      goToRplTableRound(r)
+                      setRplTableRoundPickerOpen(false)
                     }}
                   >
                     {r}

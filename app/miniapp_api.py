@@ -5755,8 +5755,12 @@ async def table_current(request: web.Request) -> web.Response:
                         return int(r.get("place", 0))
                 return None
 
-            high_rows, high_meta = await build_active_stage_league_table(int(tg_user_id), requested_league_code="HIGH")
-            low_rows, low_meta = await build_active_stage_league_table(int(tg_user_id), requested_league_code="LOW")
+            high_rows, high_meta = await build_active_stage_league_table(
+                int(tg_user_id), requested_league_code="HIGH", round_number=requested_round
+            )
+            low_rows, low_meta = await build_active_stage_league_table(
+                int(tg_user_id), requested_league_code="LOW", round_number=requested_round
+            )
             meta = high_meta or low_meta
             if meta is None:
                 return web.json_response(
@@ -5804,7 +5808,12 @@ async def table_current(request: web.Request) -> web.Response:
                     "tournament_name": tournament.name,
                     "has_table": True,
                     "season_name": meta.season_name,
-                    "stage_name": meta.stage_name,
+                    "stage_name": (
+                        display_round_name(tournament.code, int(requested_round))
+                        if requested_round is not None
+                        else meta.stage_name
+                    ),
+                    "selected_round": int(requested_round) if requested_round is not None else None,
                     "stage_round_min": int(meta.stage_round_min),
                     "stage_round_max": int(meta.stage_round_max),
                     "promote_count": int(meta.promote_count),
