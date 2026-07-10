@@ -228,6 +228,7 @@ type MatchPredictionsResponse = {
     category?: string | null
     emoji?: string | null
     is_me?: boolean
+    league_code?: string | null
     place_before?: number | null
     place_after?: number | null
     place_delta?: number | null
@@ -6531,6 +6532,35 @@ function App() {
                     })()}
 
                     <div className="card match-center-card">
+                      <div className="match-center-card-title">События матча</div>
+                      {matchCenterData.events && matchCenterData.events.length > 0 ? (
+                        <div className="match-center-events">
+                          {[...matchCenterData.events]
+                            .sort((a, b) => (a.minute || 0) - (b.minute || 0))
+                            .map((item, idx) => (
+                              <div className="match-center-event-row" key={idx}>
+                                <span
+                                  className="match-center-event-bar"
+                                  style={{ background: teamColor(item.team_name || '') }}
+                                />
+                                <span className="match-center-event-minute">
+                                  {item.minute ?? ''}
+                                  {item.extra ? `+${item.extra}` : ''}'
+                                </span>
+                                <span className="match-center-event-text">
+                                  {matchEventLabel(item)} — {item.player_name}
+                                  {item.assist_name ? ` (ассист: ${item.assist_name})` : ''}
+                                  <span className="match-center-dim"> · {item.team_name}</span>
+                                </span>
+                              </div>
+                            ))}
+                        </div>
+                      ) : (
+                        <div className="match-center-dim match-center-empty">Матч ещё не начался или событий пока нет</div>
+                      )}
+                    </div>
+
+                    <div className="card match-center-card">
                       <div className="match-center-card-title">Процент угадывания</div>
                       {matchCenterData.accuracy?.home || matchCenterData.accuracy?.away ? (
                         <>
@@ -6681,37 +6711,6 @@ function App() {
                     </>
                     ) : null}
 
-                    {matchCenterTab === 'details' ? (
-                    <div className="card match-center-card">
-                      <div className="match-center-card-title">События матча</div>
-                      {matchCenterData.events && matchCenterData.events.length > 0 ? (
-                        <div className="match-center-events">
-                          {[...matchCenterData.events]
-                            .sort((a, b) => (a.minute || 0) - (b.minute || 0))
-                            .map((item, idx) => (
-                              <div className="match-center-event-row" key={idx}>
-                                <span
-                                  className="match-center-event-bar"
-                                  style={{ background: teamColor(item.team_name || '') }}
-                                />
-                                <span className="match-center-event-minute">
-                                  {item.minute ?? ''}
-                                  {item.extra ? `+${item.extra}` : ''}'
-                                </span>
-                                <span className="match-center-event-text">
-                                  {matchEventLabel(item)} — {item.player_name}
-                                  {item.assist_name ? ` (ассист: ${item.assist_name})` : ''}
-                                  <span className="match-center-dim"> · {item.team_name}</span>
-                                </span>
-                              </div>
-                            ))}
-                        </div>
-                      ) : (
-                        <div className="match-center-dim match-center-empty">Матч ещё не начался или событий пока нет</div>
-                      )}
-                    </div>
-                    ) : null}
-
                     {matchCenterTab === 'stats' ? (
                     <div className="card match-center-card">
                       <div className="match-center-card-title">Статистика матча</div>
@@ -6824,9 +6823,9 @@ function App() {
                       ) : (matchCenterCrowd.items || []).length === 0 ? (
                         <div className="match-center-dim match-center-empty">Прогнозов пока нет</div>
                       ) : (
-                        <div className="match-predictions-list">
-                          {(matchCenterCrowd.items || []).map((row) => {
-                            const isClosed = matchCenterCrowd.status === 'closed'
+                        (() => {
+                          const isClosed = matchCenterCrowd.status === 'closed'
+                          const renderRow = (row: NonNullable<MatchPredictionsResponse['items']>[number]) => {
                             const pos = isClosed ? positionChangeLabel(row) : null
                             return (
                               <div
@@ -6852,8 +6851,27 @@ function App() {
                                 ) : null}
                               </div>
                             )
-                          })}
-                        </div>
+                          }
+                          const items = matchCenterCrowd.items || []
+                          const high = items.filter((r) => r.league_code === 'HIGH')
+                          const low = items.filter((r) => r.league_code === 'LOW')
+                          const rest = items.filter((r) => r.league_code !== 'HIGH' && r.league_code !== 'LOW')
+                          const hasLeagueSplit = high.length > 0 && low.length > 0
+                          if (!hasLeagueSplit) {
+                            return <div className="match-predictions-list">{items.map(renderRow)}</div>
+                          }
+                          return (
+                            <>
+                              <div className="match-predictions-league-heading">Высшая лига</div>
+                              <div className="match-predictions-list">{high.map(renderRow)}</div>
+                              <div className="match-predictions-league-heading">Низшая лига</div>
+                              <div className="match-predictions-list">{low.map(renderRow)}</div>
+                              {rest.length > 0 ? (
+                                <div className="match-predictions-list">{rest.map(renderRow)}</div>
+                              ) : null}
+                            </>
+                          )
+                        })()
                       )}
                     </div>
                     ) : null}

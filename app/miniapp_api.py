@@ -3177,6 +3177,41 @@ async def profile(request: web.Request) -> web.Response:
                 )
             ).one_or_none()
 
+            # "Прогресс турнира" должен считаться по текущему этапу (осенний
+            # 1-17 / весенний 18-30), а не по всему сезону разом — иначе после
+            # старта весеннего этапа участник видел бы прогресс, "утяжелённый"
+            # уже сыгранным осенним этапом. Если участник состоит в лиге с
+            # активным этапом (round_min/round_max из Stage), пересчитываем
+            # total/played/pct в границах этого этапа. Для ЧМ (нет League/Stage
+            # членства) league_row всегда None — поведение не меняется.
+            if league_row is not None and league_row.round_min is not None and league_row.round_max is not None:
+                stage_round_min = int(league_row.round_min)
+                stage_round_max = int(league_row.round_max)
+                stage_total_matches_q = await session.execute(
+                    select(func.count(Match.id)).where(
+                        Match.tournament_id == int(tournament.id),
+                        Match.is_placeholder == 0,
+                        Match.round_number >= stage_round_min,
+                        Match.round_number <= stage_round_max,
+                    )
+                )
+                stage_total_matches = int(stage_total_matches_q.scalar_one() or 0)
+                if stage_total_matches > 0:
+                    stage_played_matches_q = await session.execute(
+                        select(func.count(Match.id)).where(
+                            Match.tournament_id == int(tournament.id),
+                            Match.is_placeholder == 0,
+                            Match.round_number >= stage_round_min,
+                            Match.round_number <= stage_round_max,
+                            Match.home_score.is_not(None),
+                            Match.away_score.is_not(None),
+                        )
+                    )
+                    stage_played_matches = int(stage_played_matches_q.scalar_one() or 0)
+                    total_matches = stage_total_matches
+                    played_matches = stage_played_matches
+                    tournament_progress_pct = round((played_matches * 100.0 / total_matches), 1)
+
             display_name = (
                 user_tournament_row.display_name
                 or user_row.display_name
@@ -4590,6 +4625,7 @@ async def match_predictions_current(request: web.Request) -> web.Response:
                         Prediction.pred_away,
                         Point.points,
                         Point.category,
+                        League.code.label("league_code"),
                     )
                     .select_from(UserTournament)
                     .outerjoin(User, User.tg_user_id == UserTournament.tg_user_id)
@@ -4603,6 +4639,16 @@ async def match_predictions_current(request: web.Request) -> web.Response:
                         (Point.tg_user_id == UserTournament.tg_user_id)
                         & (Point.match_id == int(match.id)),
                     )
+                    .outerjoin(
+                        LeagueParticipant,
+                        (LeagueParticipant.tg_user_id == UserTournament.tg_user_id)
+                        & (LeagueParticipant.is_active == 1),
+                    )
+                    .outerjoin(
+                        Stage,
+                        (Stage.id == LeagueParticipant.stage_id) & (Stage.is_active == 1),
+                    )
+                    .outerjoin(League, League.id == LeagueParticipant.league_id)
                     .where(UserTournament.tournament_id == int(tournament.id))
                     .order_by(UserTournament.created_at.asc(), UserTournament.id.asc())
                 )
@@ -4625,6 +4671,7 @@ async def match_predictions_current(request: web.Request) -> web.Response:
                 pred_away,
                 points,
                 category,
+                league_code,
             ) in rows:
                 position_change = position_changes.get(int(uid), {})
                 name = (
@@ -4646,6 +4693,7 @@ async def match_predictions_current(request: web.Request) -> web.Response:
                         "category": category_val,
                         "emoji": _point_category_emoji(category_val, points_val) if match_closed and prediction is not None else None,
                         "is_me": int(uid) == int(tg_user_id),
+                        "league_code": str(league_code) if league_code else None,
                         "place_before": position_change.get("place_before") if match_closed else None,
                         "place_after": position_change.get("place_after") if match_closed else None,
                         "place_delta": position_change.get("place_delta") if match_closed else None,
