@@ -738,6 +738,54 @@ body {
     linear-gradient(135deg, rgba(227, 6, 19, 0.5), rgba(0, 92, 169, 0.38)) border-box;
 }
 
+/* Раскрывающаяся панель (поиск + список) под "Выбрать матч"/"Выбрать
+   соперника" раньше оставалась на нейтральных серых тонах — то же
+   стекло, что и у самой кнопки-переключателя. */
+.theme-rpl .duel-picker-panel {
+  border: 1px solid transparent;
+  background:
+    linear-gradient(rgba(14, 14, 19, 0.9), rgba(14, 14, 19, 0.9)) padding-box,
+    linear-gradient(135deg, rgba(227, 6, 19, 0.4), rgba(0, 92, 169, 0.32)) border-box;
+}
+
+.theme-rpl .duel-picker-search {
+  border-color: rgba(var(--accent-rgb), 0.3);
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.theme-rpl .duel-picker-search:focus {
+  border-color: rgba(var(--accent-rgb), 0.55);
+  outline: none;
+}
+
+.theme-rpl .duel-picker-item {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.theme-rpl .duel-picker-item.is-selected {
+  border-color: rgba(var(--accent-rgb), 0.55);
+  background: rgba(var(--accent-rgb), 0.16);
+}
+
+.theme-rpl .duel-picker-more {
+  border-color: rgba(var(--accent-rgb), 0.28);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-main);
+}
+
+/* 1x1: тумблер Активные/Завершённые обёрнут в свою карточку только ради
+   разметки — по дизайну он должен лежать прямо на графитовом фоне, без
+   рамки-пилюли вокруг (текст+подчёркивание, как и everywhere else). */
+.theme-rpl .duel-toggle-card {
+  border: none;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+  padding: 0;
+}
+
 .duel-picker-label {
   display: block;
   font-size: 11px;
@@ -1636,16 +1684,22 @@ body {
    контуром поверх уже двухцветной окантовки карточки. Оставляем только
    цвет (заливку/оттенок), border-color гасим до прозрачного — иначе
    базовое правило (border-color: var(--accent)) всё равно даст красный. */
+/* Раньше "Сохранить" при вводе счёта загоралось сплошным ярким
+   красным градиентом — на графитовом фоне читалось слишком резко,
+   почти как предупреждение. Делаем мягче: приглушённая полупрозрачная
+   заливка вместо сплошного цвета, тонкая тёплая обводка вместо резкого
+   контраста. */
 .theme-rpl .prediction-save-btn.is-dirty,
 .theme-rpl .save-all-predictions-btn.is-dirty {
-  background: linear-gradient(180deg, #ff5a5f 0%, #e30613 55%, #a30410 100%);
-  border-color: transparent;
+  background: linear-gradient(180deg, rgba(255, 90, 95, 0.55) 0%, rgba(227, 6, 19, 0.5) 55%, rgba(163, 4, 16, 0.55) 100%);
+  border-color: rgba(227, 6, 19, 0.4);
   color: #ffffff;
+  box-shadow: 0 0 10px rgba(227, 6, 19, 0.14);
 }
 
 .theme-rpl .prediction-save-btn.is-saving {
-  background: linear-gradient(180deg, #f0575c 0%, #a30410 100%);
-  border-color: transparent;
+  background: linear-gradient(180deg, rgba(240, 87, 92, 0.5) 0%, rgba(163, 4, 16, 0.55) 100%);
+  border-color: rgba(227, 6, 19, 0.32);
   color: #ffffff;
 }
 

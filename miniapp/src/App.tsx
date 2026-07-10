@@ -4449,7 +4449,7 @@ function App() {
                 </button>
               ))}
             </div>
-            {screen === 'predict' && !(showWcSelector && stageTab === 'LT') ? (
+            {screen === 'predict' && !(showWcSelector && stageTab === 'LT') && selectedTournamentCode !== 'RPL' ? (
               <div className="match-toggle">
                 <button
                   className={`match-toggle-btn ${predictionsFilter === 'open' ? 'is-active' : ''}`}
@@ -4883,6 +4883,30 @@ function App() {
                           </>
                         ) : null}
                       </div>
+                    </div>
+                  </section>
+                ) : null}
+
+                {selectedTournamentCode === 'RPL' ? (
+                  <section className="cards space-top">
+                    <div className="match-toggle match-toggle-inline">
+                      <button
+                        className={`match-toggle-btn ${predictionsFilter === 'open' ? 'is-active' : ''}`}
+                        onClick={() => setPredictionsFilter('open')}
+                      >
+                        Активные
+                      </button>
+                      <button
+                        className={`match-toggle-btn ${predictionsFilter === 'closed' ? 'is-active' : ''}`}
+                        onClick={() => {
+                          setPredictionsFilter('closed')
+                          if (latestClosedStageRound) {
+                            selectMatchStageRound(latestClosedStageRound)
+                          }
+                        }}
+                      >
+                        Завершённые
+                      </button>
                     </div>
                   </section>
                 ) : null}
@@ -5615,7 +5639,7 @@ function App() {
 
             {duelsData?.joined ? (
               <section className="cards space-top">
-                <div className="card card-static">
+                <div className="card card-static duel-toggle-card">
                   <div className="match-toggle">
                     <button
                       className={`match-toggle-btn ${duelsFilter === 'active' ? 'is-active' : ''}`}
