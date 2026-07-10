@@ -1247,6 +1247,7 @@ function App() {
   const [savingMatchId, setSavingMatchId] = useState<number | null>(null)
   const [savingAllPredictions, setSavingAllPredictions] = useState<boolean>(false)
   const [autoPredicting, setAutoPredicting] = useState<boolean>(false)
+  const [autoPredictNotice, setAutoPredictNotice] = useState<string | null>(null)
   const [predictNotice, setPredictNotice] = useState<string | null>(null)
   const [matchPredictionsSheet, setMatchPredictionsSheet] = useState<MatchPredictionsResponse | null>(null)
   const [matchPredictionsLoadingId, setMatchPredictionsLoadingId] = useState<number | null>(null)
@@ -2168,8 +2169,7 @@ function App() {
     setSavingMatchId(matchId)
     setPredictNotice(null)
     try {
-      const saved = await savePredictionRequest(apiBase, initData, selectedTournamentCode, matchId, score)
-      setPredictNotice(`Прогноз сохранён: ${saved}`)
+      await savePredictionRequest(apiBase, initData, selectedTournamentCode, matchId, score)
       haptic.success()
       await loadPredictCurrent(apiBase, initData, selectedTournamentCode, selectedRoundNumber)
     } catch (_err) {
@@ -2224,7 +2224,7 @@ function App() {
     })
 
     if (targets.length === 0) {
-      setPredictNotice('Все матчи тура уже проставлены.')
+      setAutoPredictNotice('Все матчи тура уже проставлены.')
       return
     }
 
@@ -2232,7 +2232,7 @@ function App() {
     const initData = getInitData()
     const tParam = encodeURIComponent(selectedTournamentCode || 'RPL')
     setAutoPredicting(true)
-    setPredictNotice(null)
+    setAutoPredictNotice(null)
     try {
       const res = await fetch(`${apiBase}/api/miniapp/predict/auto_odds?t=${tParam}`, {
         method: 'POST',
@@ -2254,7 +2254,7 @@ function App() {
       }
       const suggested = data.items || []
       if (suggested.length === 0) {
-        setPredictNotice('Коэффициенты пока недоступны ни для одного матча тура.')
+        setAutoPredictNotice('Коэффициенты пока недоступны ни для одного матча тура.')
         return
       }
       setScoreInputs((prev) => {
@@ -2274,7 +2274,7 @@ function App() {
         )
       }
       const skippedCount = (data.skipped_match_ids || []).length
-      setPredictNotice(
+      setAutoPredictNotice(
         skippedCount > 0
           ? `Заполнено и сохранено: ${suggested.length}. Коэффициенты пока недоступны для ${skippedCount} матч(ей).`
           : `Заполнено и сохранено прогнозов: ${suggested.length}.`
@@ -2283,7 +2283,7 @@ function App() {
       await loadPredictCurrent(apiBase, initData, selectedTournamentCode, selectedRoundNumber)
     } catch (_err) {
       haptic.error()
-      setPredictNotice('Не удалось заполнить прогнозы по коэффициентам. Попробуй ещё раз.')
+      setAutoPredictNotice('Не удалось заполнить прогнозы по коэффициентам. Попробуй ещё раз.')
     } finally {
       setAutoPredicting(false)
     }
@@ -3766,7 +3766,11 @@ function App() {
               {showSection ? <div className="admin-match-section-title">{sectionTitle}</div> : null}
               <div className="compact-match">
                 <div className="compact-meta">
-                  {m.group_label ? <span className="group-small">[{m.group_label}]</span> : <span className="group-small">—</span>}
+                  {m.group_label ? (
+                    <span className="group-small">[{m.group_label}]</span>
+                  ) : selectedTournamentCode === 'RPL' ? null : (
+                    <span className="group-small">—</span>
+                  )}
                   <span className="kickoff-small">{m.kickoff || '—'}</span>
                 </div>
                 {m.is_placeholder ? (
@@ -5017,7 +5021,11 @@ function App() {
                                       <>
                                         <div className="match-card-top">
                                           {showDateBadge ? <span className="day-title">{dateKey}</span> : <span />}
-                                          {m.group_label ? <span className="group-small">[{m.group_label}]</span> : <span className="group-small">—</span>}
+                                          {m.group_label ? (
+                                            <span className="group-small">[{m.group_label}]</span>
+                                          ) : selectedTournamentCode === 'RPL' ? null : (
+                                            <span className="group-small">—</span>
+                                          )}
                                           <span className="kickoff-small">{(m.kickoff || '').split(' ')[1] || ''} МСК</span>
                                         </div>
                                         <div className="compact-main compact-main-result">
@@ -5066,7 +5074,11 @@ function App() {
                                         role={canOpenMatchCenter ? 'button' : undefined}
                                       >
                                         {showDateBadge ? <span className="day-title">{dateKey}</span> : <span />}
-                                        {m.group_label ? <span className="group-small">[{m.group_label}]</span> : <span className="group-small">—</span>}
+                                        {m.group_label ? (
+                                            <span className="group-small">[{m.group_label}]</span>
+                                          ) : selectedTournamentCode === 'RPL' ? null : (
+                                            <span className="group-small">—</span>
+                                          )}
                                         <span className="kickoff-small">
                                           {(m.kickoff || '').split(' ')[1] || ''} МСК
                                           {canOpenMatchCenter ? (
@@ -5181,14 +5193,19 @@ function App() {
                               : 'Все матчи сохранены'}
                       </button>
                       {selectedTournamentCode === 'RPL' ? (
-                        <button
-                          type="button"
-                          className="save-btn auto-predict-btn"
-                          onClick={autoFillPredictionsFromOdds}
-                          disabled={autoPredicting || savingAllPredictions || emptyOpenPredictionCount === 0}
-                        >
-                          {autoPredicting ? 'Считаю коэффициенты...' : 'Прогноз от ИИ'}
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            className="save-btn auto-predict-btn"
+                            onClick={autoFillPredictionsFromOdds}
+                            disabled={autoPredicting || savingAllPredictions || emptyOpenPredictionCount === 0}
+                          >
+                            {autoPredicting ? 'Считаю коэффициенты...' : 'Прогноз от ИИ'}
+                          </button>
+                          {autoPredictNotice ? (
+                            <div className="auto-predict-notice">{autoPredictNotice}</div>
+                          ) : null}
+                        </>
                       ) : null}
                     </div>
                   ) : closedPredictionGroups.length === 0 ? (
@@ -5784,7 +5801,11 @@ function App() {
                           id={`duel-card-${d.duel_id}`}
                         >
                           <div className="compact-meta duel-card-meta">
-                            {d.group_label ? <span className="group-small">[{d.group_label}]</span> : <span className="group-small">—</span>}
+                            {d.group_label ? (
+                              <span className="group-small">[{d.group_label}]</span>
+                            ) : selectedTournamentCode === 'RPL' ? null : (
+                              <span className="group-small">—</span>
+                            )}
                             <span className="kickoff-small">{d.kickoff} МСК</span>
                           </div>
                           {duelsFilter === 'finished' ? (
