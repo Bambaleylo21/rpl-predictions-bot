@@ -1619,6 +1619,36 @@ body {
   font-weight: 800;
 }
 
+/* "Прогноз от ИИ" — заполняет и сразу сохраняет пустые матчи тура по
+   букмекерским коэффициентам. Второстепенное действие относительно
+   "Сохранить все матчи", поэтому визуально спокойнее: тонкая рамка,
+   без сплошной заливки. Только для РПЛ — у матчей ЧМ нет привязки к
+   API-Football, коэффициенты им взять неоткуда. */
+.auto-predict-btn {
+  width: 100%;
+  min-height: 36px;
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  background: #151515;
+  border: 1px solid var(--line-2);
+  color: var(--text-dim);
+}
+
+.auto-predict-btn:disabled {
+  opacity: 0.55;
+}
+
+.theme-rpl .auto-predict-btn {
+  border: 1px solid rgba(0, 92, 169, 0.4);
+  background: rgba(0, 92, 169, 0.1);
+  color: #bcd9f5;
+}
+
+.theme-rpl .auto-predict-btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
 /* Всё сохранено, но остались матчи без счёта — не "всё готово" и не
    "надо сохранить", отдельное третье состояние с честным текстом. */
 .save-all-predictions-btn.is-incomplete {

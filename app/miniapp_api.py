@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
 import asyncio
 import random
@@ -3637,6 +3638,92 @@ def _point_category_emoji(category: str | None, points: int | None) -> str:
     return "❌"
 
 
+# --- "Прогноз от ИИ": счёт на основе букмекерских коэффициентов -------------
+# Никакой LLM тут нет и не нужна — коэффициенты 1X2 переводятся в вероятности
+# исхода, под них подбирается независимая пуассоновская модель (λ_home, λ_away),
+# и берётся самый вероятный счёт по этой модели. Чистая статистика.
+
+_POISSON_LAMBDA_GRID = [round(0.2 + 0.1 * i, 2) for i in range(35)]  # 0.2 .. 3.6
+_POISSON_MAX_GOALS_FIT = 8
+_POISSON_MAX_GOALS_SCORE = 6
+
+
+def _poisson_pmf(k: int, lam: float) -> float:
+    if lam <= 0:
+        return 1.0 if k == 0 else 0.0
+    return math.exp(-lam) * (lam ** k) / math.factorial(k)
+
+
+def _outcome_probs_from_lambdas(pmf_home: list[float], pmf_away: list[float]) -> tuple[float, float, float]:
+    p_home = p_draw = p_away = 0.0
+    for i, pi in enumerate(pmf_home):
+        if pi < 1e-9:
+            continue
+        for j, pj in enumerate(pmf_away):
+            p = pi * pj
+            if i > j:
+                p_home += p
+            elif i == j:
+                p_draw += p
+            else:
+                p_away += p
+    return p_home, p_draw, p_away
+
+
+def _fit_lambdas_to_odds(target_home: float, target_draw: float, target_away: float) -> tuple[float, float]:
+    """Подбирает (λ_home, λ_away) независимой пуассоновской модели так, чтобы
+    получившиеся из неё вероятности П1/Х/П2 были максимально близки к тем,
+    что подразумевают букмекерские коэффициенты (после снятия маржи)."""
+    pmf_cache = {
+        lam: [_poisson_pmf(k, lam) for k in range(_POISSON_MAX_GOALS_FIT + 1)] for lam in _POISSON_LAMBDA_GRID
+    }
+    best = (1.3, 1.1)
+    best_err = float("inf")
+    for lam_home in _POISSON_LAMBDA_GRID:
+        pmf_home = pmf_cache[lam_home]
+        for lam_away in _POISSON_LAMBDA_GRID:
+            pmf_away = pmf_cache[lam_away]
+            p_home, p_draw, p_away = _outcome_probs_from_lambdas(pmf_home, pmf_away)
+            err = (p_home - target_home) ** 2 + (p_draw - target_draw) ** 2 + (p_away - target_away) ** 2
+            if err < best_err:
+                best_err = err
+                best = (lam_home, lam_away)
+    return best
+
+
+def _most_likely_score(lam_home: float, lam_away: float) -> tuple[int, int]:
+    best_score = (0, 0)
+    best_p = -1.0
+    for i in range(_POISSON_MAX_GOALS_SCORE + 1):
+        pi = _poisson_pmf(i, lam_home)
+        for j in range(_POISSON_MAX_GOALS_SCORE + 1):
+            p = pi * _poisson_pmf(j, lam_away)
+            if p > best_p:
+                best_p = p
+                best_score = (i, j)
+    return best_score
+
+
+def _score_from_odds(home_odd: Any, draw_odd: Any, away_odd: Any) -> tuple[int, int] | None:
+    """Из строковых коэффициентов 1X2 в наиболее вероятный счёт по Пуассону.
+    Возвращает None, если каких-то коэффициентов не хватает или они некорректны."""
+    try:
+        h = float(home_odd)
+        d = float(draw_odd)
+        a = float(away_odd)
+    except (TypeError, ValueError):
+        return None
+    if h <= 1.0 or d <= 1.0 or a <= 1.0:
+        return None
+    inv_h, inv_d, inv_a = 1.0 / h, 1.0 / d, 1.0 / a
+    overround = inv_h + inv_d + inv_a
+    if overround <= 0:
+        return None
+    p_home, p_draw, p_away = inv_h / overround, inv_d / overround, inv_a / overround
+    lam_home, lam_away = _fit_lambdas_to_odds(p_home, p_draw, p_away)
+    return _most_likely_score(lam_home, lam_away)
+
+
 async def _crowd_stats_for_matches(session, tournament_id: int, match_ids: list[int]) -> dict[int, dict[str, int]]:
     """
     Возвращает агрегированную статистику по прогнозам комьюнити:
@@ -5080,6 +5167,100 @@ async def predict_set(request: web.Request) -> web.Response:
         )
 
 
+async def predict_auto_odds(request: web.Request) -> web.Response:
+    """"Прогноз от ИИ": считает счёт по коэффициентам (см. _score_from_odds),
+    ничего не сохраняет — фронтенд подставляет счета в поля и сохраняет их
+    через обычный /predict/set, как при ручном вводе."""
+    try:
+        auth_result = _extract_verified_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = user.get("id") if isinstance(user, dict) else None
+        if not tg_user_id:
+            return web.json_response({"ok": False, "error": "user_not_found_in_init_data"}, status=400)
+
+        body = await request.json()
+        raw_ids = body.get("match_ids") or []
+        try:
+            match_ids = sorted({int(x) for x in raw_ids if int(x) > 0})
+        except (TypeError, ValueError):
+            return web.json_response({"ok": False, "error": "invalid_payload"}, status=400)
+        if not match_ids:
+            return web.json_response({"ok": False, "error": "empty_match_ids"}, status=400)
+        match_ids = match_ids[:40]
+
+        now = _now_msk_naive()
+        async with SessionLocal() as session:
+            tournament = await _resolve_tournament(session, int(tg_user_id), requested_code=request.query.get("t"))
+            await session.commit()
+            if not _is_tournament_predict_open(tournament):
+                return web.json_response({"ok": False, "error": "predict_closed"}, status=409)
+
+            in_tournament = (
+                await session.execute(
+                    select(UserTournament.id).where(
+                        UserTournament.tg_user_id == int(tg_user_id),
+                        UserTournament.tournament_id == int(tournament.id),
+                    )
+                )
+            ).first() is not None
+            if not in_tournament:
+                return web.json_response({"ok": False, "error": "user_not_joined_tournament"}, status=403)
+
+            matches = (
+                await session.execute(
+                    select(Match).where(
+                        Match.id.in_(match_ids),
+                        Match.tournament_id == int(tournament.id),
+                        Match.is_placeholder == 0,
+                    )
+                )
+            ).scalars().all()
+
+            from app.match_center import fetch_odds
+
+            skipped_match_ids: list[int] = sorted(set(match_ids) - {int(m.id) for m in matches})
+
+            usable = [m for m in matches if m.kickoff_time > now and m.api_fixture_id]
+            skipped_match_ids.extend(int(m.id) for m in matches if m not in usable)
+
+            odds_list = await asyncio.gather(*(fetch_odds(int(m.api_fixture_id)) for m in usable))
+
+            items: list[dict[str, Any]] = []
+            for m, odds in zip(usable, odds_list):
+                score = (
+                    _score_from_odds(odds.get("home_odd"), odds.get("draw_odd"), odds.get("away_odd"))
+                    if odds
+                    else None
+                )
+                if score is None:
+                    skipped_match_ids.append(int(m.id))
+                    continue
+                items.append({"match_id": int(m.id), "pred_home": score[0], "pred_away": score[1]})
+
+            return web.json_response(
+                {
+                    "ok": True,
+                    "items": items,
+                    "skipped_match_ids": sorted(set(skipped_match_ids)),
+                }
+            )
+    except (ValueError, TypeError):
+        return web.json_response({"ok": False, "error": "invalid_payload"}, status=400)
+    except Exception as e:
+        logger.exception("miniapp predict_auto_odds error")
+        return web.json_response(
+            {
+                "ok": False,
+                "error": "predict_auto_odds_failed",
+                "reason": str(e),
+                "signature_checked": True,
+            },
+            status=500,
+        )
+
+
 async def longterm_current(request: web.Request) -> web.Response:
     try:
         auth_result = _extract_verified_user(request)
@@ -6281,6 +6462,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/miniapp/match/predictions", match_predictions_current)
     app.router.add_get("/api/miniapp/match/center", match_center_current)
     app.router.add_post("/api/miniapp/predict/set", predict_set)
+    app.router.add_post("/api/miniapp/predict/auto_odds", predict_auto_odds)
     app.router.add_get("/api/miniapp/longterm/current", longterm_current)
     app.router.add_post("/api/miniapp/longterm/set", longterm_set)
     app.router.add_get("/api/miniapp/duels/current", duels_current)
