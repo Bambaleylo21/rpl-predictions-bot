@@ -240,6 +240,12 @@ type MatchCenterStanding = {
   played?: number | null
 }
 
+type MatchCenterStandingRow = MatchCenterStanding & {
+  team_name: string
+}
+
+type MatchCenterTab = 'details' | 'h2h' | 'table' | 'lineups' | 'stats' | 'odds'
+
 type MatchCenterH2hItem = {
   date?: string | null
   home_team?: string
@@ -301,6 +307,7 @@ type MatchCenterResponse = {
     home?: MatchCenterStanding | null
     away?: MatchCenterStanding | null
   }
+  standings_table?: MatchCenterStandingRow[]
   h2h?: MatchCenterH2hItem[]
   lineups?: Record<string, MatchCenterLineup> | null
   odds?: {
@@ -1242,6 +1249,7 @@ function App() {
   const [matchPredictionsSheet, setMatchPredictionsSheet] = useState<MatchPredictionsResponse | null>(null)
   const [matchPredictionsLoadingId, setMatchPredictionsLoadingId] = useState<number | null>(null)
   const [matchCenterId, setMatchCenterId] = useState<number | null>(null)
+  const [matchCenterTab, setMatchCenterTab] = useState<MatchCenterTab>('details')
   const [matchCenterData, setMatchCenterData] = useState<MatchCenterResponse | null>(null)
   const [matchCenterError, setMatchCenterError] = useState<string | null>(null)
   const [matchCenterCrowd, setMatchCenterCrowd] = useState<MatchPredictionsResponse | null>(null)
@@ -2235,6 +2243,7 @@ function App() {
 
   const openMatchCenter = (matchId: number) => {
     haptic.select()
+    setMatchCenterTab('details')
     setMatchCenterId(matchId)
   }
 
@@ -6457,7 +6466,12 @@ function App() {
                           />
                           <div className="match-center-team">
                             <TeamCrest name={matchCenterData.home_team || ''} />
-                            <span className="match-center-team-name">{matchCenterData.home_team}</span>
+                            <span className="match-center-team-name">
+                              {matchCenterData.standings?.home?.rank ? (
+                                <span className="match-center-team-rank">({matchCenterData.standings.home.rank}) </span>
+                              ) : null}
+                              {matchCenterData.home_team}
+                            </span>
                           </div>
                           <div className="match-center-mid">
                             <span className="match-center-kickoff">{matchCenterData.kickoff} МСК</span>
@@ -6469,12 +6483,41 @@ function App() {
                           </div>
                           <div className="match-center-team">
                             <TeamCrest name={matchCenterData.away_team || ''} alt />
-                            <span className="match-center-team-name">{matchCenterData.away_team}</span>
+                            <span className="match-center-team-name">
+                              {matchCenterData.standings?.away?.rank ? (
+                                <span className="match-center-team-rank">({matchCenterData.standings.away.rank}) </span>
+                              ) : null}
+                              {matchCenterData.away_team}
+                            </span>
                           </div>
                         </div>
                       )
                     })()}
 
+                    <div className="match-center-tabs">
+                      {(
+                        [
+                          ['details', 'Детали'],
+                          ['h2h', 'Встречи'],
+                          ['table', 'Таблица'],
+                          ['lineups', 'Составы'],
+                          ['stats', 'Статистика'],
+                          ['odds', 'Кэфы'],
+                        ] as [MatchCenterTab, string][]
+                      ).map(([key, label]) => (
+                        <button
+                          key={key}
+                          type="button"
+                          className={`match-center-tab-btn ${matchCenterTab === key ? 'is-active' : ''}`}
+                          onClick={() => setMatchCenterTab(key)}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {matchCenterTab === 'details' ? (
+                    <>
                     {(() => {
                       const myPrediction = predictItems.find((i) => i.match_id === matchCenterId)?.prediction
                       return myPrediction ? (
@@ -6525,44 +6568,10 @@ function App() {
                       )}
                     </div>
 
-                    <div className="card match-center-card">
-                      <div className="match-center-card-title">Позиции в РПЛ</div>
-                      {matchCenterData.standings?.home || matchCenterData.standings?.away ? (
-                        <>
-                          <div className="match-center-row">
-                            <span className="team-name-with-dot">
-                              <span
-                                className="team-color-dot"
-                                style={{ background: teamColor(matchCenterData.home_team || '') }}
-                              />
-                              {matchCenterData.home_team}
-                            </span>
-                            <span className="match-center-dim">
-                              {matchCenterData.standings?.home
-                                ? `${matchCenterData.standings.home.rank} место · ${matchCenterData.standings.home.points} очк.`
-                                : '—'}
-                            </span>
-                          </div>
-                          <div className="match-center-row">
-                            <span className="team-name-with-dot">
-                              <span
-                                className="team-color-dot"
-                                style={{ background: teamColor(matchCenterData.away_team || '') }}
-                              />
-                              {matchCenterData.away_team}
-                            </span>
-                            <span className="match-center-dim">
-                              {matchCenterData.standings?.away
-                                ? `${matchCenterData.standings.away.rank} место · ${matchCenterData.standings.away.points} очк.`
-                                : '—'}
-                            </span>
-                          </div>
-                        </>
-                      ) : (
-                        <div className="match-center-dim match-center-empty">Пока нет данных</div>
-                      )}
-                    </div>
+                    </>
+                    ) : null}
 
+                    {matchCenterTab === 'h2h' ? (
                     <div className="card match-center-card">
                       <div className="match-center-card-title">Личные встречи</div>
                       {matchCenterData.h2h && matchCenterData.h2h.length > 0 ? (
@@ -6578,7 +6587,50 @@ function App() {
                         <div className="match-center-dim match-center-empty">Нет данных о личных встречах</div>
                       )}
                     </div>
+                    ) : null}
 
+                    {matchCenterTab === 'table' ? (
+                    <div className="card match-center-card">
+                      <div className="match-center-card-title">Таблица РПЛ</div>
+                      {matchCenterData.standings_table && matchCenterData.standings_table.length > 0 ? (
+                        <div className="match-center-standings-table">
+                          <div className="match-center-standings-row match-center-standings-header-row">
+                            <span className="mcst-rank">#</span>
+                            <span className="mcst-team">Команда</span>
+                            <span className="mcst-played">И</span>
+                            <span className="mcst-points">Очки</span>
+                          </div>
+                          {matchCenterData.standings_table.map((row) => {
+                            const isHome = row.team_name === matchCenterData.home_team
+                            const isAway = row.team_name === matchCenterData.away_team
+                            const highlighted = isHome || isAway
+                            const rowColor = highlighted ? teamColor(row.team_name) : null
+                            return (
+                              <div
+                                key={row.team_name}
+                                className={`match-center-standings-row ${highlighted ? 'is-highlighted' : ''}`}
+                                style={
+                                  highlighted && rowColor
+                                    ? { background: hexToRgba(rowColor, 0.16), boxShadow: `inset 3px 0 0 0 ${rowColor}` }
+                                    : undefined
+                                }
+                              >
+                                <span className="mcst-rank">{row.rank ?? '—'}</span>
+                                <span className="mcst-team">{row.team_name}</span>
+                                <span className="mcst-played">{row.played ?? '—'}</span>
+                                <span className="mcst-points">{row.points ?? '—'}</span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      ) : (
+                        <div className="match-center-dim match-center-empty">Таблица пока недоступна</div>
+                      )}
+                    </div>
+                    ) : null}
+
+                    {matchCenterTab === 'lineups' ? (
+                    <>
                     <div className="card match-center-card">
                       <div className="match-center-card-title">Составы</div>
                       {matchCenterData.lineups ? (
@@ -6626,7 +6678,10 @@ function App() {
                         <div className="match-center-dim match-center-empty">Нет данных о травмах и дисквалификациях</div>
                       )}
                     </div>
+                    </>
+                    ) : null}
 
+                    {matchCenterTab === 'details' ? (
                     <div className="card match-center-card">
                       <div className="match-center-card-title">События матча</div>
                       {matchCenterData.events && matchCenterData.events.length > 0 ? (
@@ -6655,7 +6710,9 @@ function App() {
                         <div className="match-center-dim match-center-empty">Матч ещё не начался или событий пока нет</div>
                       )}
                     </div>
+                    ) : null}
 
+                    {matchCenterTab === 'stats' ? (
                     <div className="card match-center-card">
                       <div className="match-center-card-title">Статистика матча</div>
                       {matchCenterData.statistics && (matchCenterData.statistics.home || matchCenterData.statistics.away) ? (
@@ -6725,7 +6782,9 @@ function App() {
                         <div className="match-center-dim match-center-empty">Появится после начала матча</div>
                       )}
                     </div>
+                    ) : null}
 
+                    {matchCenterTab === 'odds' ? (
                     <div className="card match-center-card">
                       <div className="match-center-card-title">
                         Котировки букмекеров
@@ -6751,7 +6810,9 @@ function App() {
                         <div className="match-center-dim match-center-empty">Букмекеры пока не выставили котировки</div>
                       )}
                     </div>
+                    ) : null}
 
+                    {matchCenterTab === 'details' ? (
                     <div className="card match-center-card">
                       <div className="match-center-card-title">Прогнозы соперников</div>
                       {matchCenterCrowdError ? (
@@ -6795,6 +6856,7 @@ function App() {
                         </div>
                       )}
                     </div>
+                    ) : null}
                   </>
                 )}
               </div>

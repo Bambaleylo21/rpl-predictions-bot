@@ -4755,6 +4755,11 @@ select:focus-visible {
   line-height: 1.25;
 }
 
+.match-center-team-rank {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
 .match-center-mid {
   display: flex;
   flex-direction: column;
@@ -4816,6 +4821,110 @@ select:focus-visible {
 .match-center-empty {
   text-align: center;
   padding: 8px 0;
+}
+
+/* Переключатель вкладок Матч-центра — тот же принцип "текст + подчёркивание
+   активной", что и Активные/Завершённые, только на N пунктов и со
+   горизонтальной прокруткой (подписи могут не влезать на узкий экран). */
+.match-center-tabs {
+  display: flex;
+  gap: 18px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding: 2px 2px 10px;
+  margin: 2px 0 4px;
+  border-bottom: 1px solid var(--line-1);
+}
+
+.match-center-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.match-center-tab-btn {
+  flex: 0 0 auto;
+  background: transparent;
+  border: 0;
+  padding: 4px 1px 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-dim);
+  white-space: nowrap;
+  position: relative;
+  cursor: pointer;
+}
+
+.match-center-tab-btn.is-active {
+  color: var(--text-main);
+}
+
+.match-center-tab-btn.is-active::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.theme-rpl .match-center-tab-btn.is-active {
+  color: #ff9a9d;
+}
+
+.theme-rpl .match-center-tab-btn.is-active::after {
+  background: linear-gradient(90deg, #e30613, #005ca9);
+}
+
+/* Вкладка "Таблица" — полная официальная таблица РПЛ (16 команд), с
+   подсветкой двух играющих команд их клубным цветом. */
+.match-center-standings-table {
+  display: flex;
+  flex-direction: column;
+}
+
+.match-center-standings-row {
+  display: grid;
+  grid-template-columns: 22px 1fr 30px 40px;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.match-center-standings-header-row {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px 6px;
+}
+
+.mcst-rank {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.mcst-team {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcst-played {
+  text-align: center;
+  color: var(--text-dim);
+}
+
+.mcst-points {
+  text-align: right;
+  font-weight: 700;
+}
+
+.match-center-standings-row.is-highlighted .mcst-team {
+  font-weight: 800;
+  color: #ffffff;
 }
 
 .match-center-lineups {

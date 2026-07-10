@@ -4883,6 +4883,22 @@ async def match_center_current(request: web.Request) -> web.Response:
             if home_stats or away_stats:
                 statistics_out = {"home": home_stats, "away": away_stats}
 
+        # Полная официальная таблица РПЛ (все 16 команд) для вкладки "Таблица"
+        # в Матч-центре — те же данные, что уже пришли из fetch_standings выше
+        # для _find_standing, просто без отбрасывания остальных строк.
+        standings_table = sorted(
+            (
+                {
+                    "team_name": display_team_name(str(row.get("team_name") or "")),
+                    "rank": row.get("rank"),
+                    "points": row.get("points"),
+                    "played": row.get("played"),
+                }
+                for row in standings
+            ),
+            key=lambda r: (r.get("rank") if r.get("rank") is not None else 999),
+        )
+
         return web.json_response(
             {
                 "ok": True,
@@ -4898,6 +4914,7 @@ async def match_center_current(request: web.Request) -> web.Response:
                     "home": _find_standing(home_raw),
                     "away": _find_standing(away_raw),
                 },
+                "standings_table": standings_table,
                 "h2h": h2h,
                 "lineups": lineups_out,
                 "odds": odds_out,
