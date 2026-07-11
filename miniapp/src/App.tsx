@@ -1356,6 +1356,8 @@ function App() {
   const [adminRplCoverage, setAdminRplCoverage] = useState<RplApiCoverageResponse | null>(null)
   const [adminRplCoverageBusy, setAdminRplCoverageBusy] = useState<boolean>(false)
   const [adminRplCoverageError, setAdminRplCoverageError] = useState<string | null>(null)
+  const [adminRplBackfillBusy, setAdminRplBackfillBusy] = useState<boolean>(false)
+  const [adminRplBackfillResult, setAdminRplBackfillResult] = useState<string | null>(null)
   const [adminRplParticipants, setAdminRplParticipants] = useState<RplParticipantItem[]>([])
   const [adminRplAssigningId, setAdminRplAssigningId] = useState<number | null>(null)
   const [adminRplPointsInputs, setAdminRplPointsInputs] = useState<Record<number, string>>({})
@@ -2763,6 +2765,38 @@ function App() {
       setAdminRplCoverageError(`Не удалось проверить: ${String(err)}`)
     } finally {
       setAdminRplCoverageBusy(false)
+    }
+  }
+
+  const runRplHistoryBackfill = async () => {
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    setAdminRplBackfillBusy(true)
+    setAdminRplBackfillResult(null)
+    try {
+      const res = await fetch(`${apiBase}/api/miniapp/admin/rpl/history_backfill`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': initData },
+        body: JSON.stringify({}),
+      })
+      const data = (await res.json()) as {
+        ok?: boolean
+        error?: string
+        reason?: string
+        seasons?: number[]
+        total_fetched?: number
+        total_saved?: number
+      }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      setAdminRplBackfillResult(
+        `Загружено матчей: ${data.total_fetched ?? 0}, новых сохранено: ${data.total_saved ?? 0} (сезоны ${(data.seasons || []).join(', ')}).`
+      )
+    } catch (err) {
+      setAdminRplBackfillResult(`Не удалось загрузить: ${String(err)}`)
+    } finally {
+      setAdminRplBackfillBusy(false)
     }
   }
 
@@ -4343,6 +4377,19 @@ function App() {
             })}
           </div>
         ) : null}
+
+        <div className="admin-status-divider" />
+
+        <button
+          type="button"
+          className="admin-reset-btn admin-reset-btn-wide"
+          onClick={runRplHistoryBackfill}
+          disabled={adminRplBackfillBusy}
+        >
+          {adminRplBackfillBusy ? '…' : 'Загрузить историю результатов (для Оценки ИИ)'}
+        </button>
+
+        {adminRplBackfillResult ? <div className="card-text admin-status-line">{adminRplBackfillResult}</div> : null}
       </div>
     )
   }

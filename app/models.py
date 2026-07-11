@@ -385,6 +385,33 @@ class Duel(Base):
     )
 
 
+class HistoricalResult(Base):
+    """Результаты прошлых сезонов РПЛ, подтянутые один раз из API-Football
+    (/fixtures, этот эндпоинт открыт всегда, без ограничений покрытия) — нужны
+    как исходные данные для собственной Пуассон-модели "Прогноз от ИИ"/"Оценка ИИ"
+    (сила атаки/обороны команд), чтобы не зависеть от чужого /predictions.
+    Хранится навсегда — итоги прошлых сезонов задним числом не меняются, повторно
+    их из API дёргать не нужно."""
+    __tablename__ = "historical_results"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    tournament_code: Mapped[str] = mapped_column(String(16), nullable=False, default="RPL", server_default="RPL", index=True)
+    season_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    api_fixture_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, unique=True, index=True)
+
+    home_team: Mapped[str] = mapped_column(String(64), nullable=False)
+    away_team: Mapped[str] = mapped_column(String(64), nullable=False)
+    home_score: Mapped[int] = mapped_column(Integer, nullable=False)
+    away_score: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        server_default=func.now(),
+    )
+
+
 class DuelElo(Base):
     __tablename__ = "duel_elo"
 

@@ -41,7 +41,7 @@ from app.duels import (
     respond_duel,
 )
 from app.league_table import build_active_stage_league_table
-from app.models import Duel, DuelElo, League, LeagueParticipant, LongtermPrediction, Match, Point, Prediction, Setting, Stage, Tournament, User, UserTournament
+from app.models import Duel, DuelElo, HistoricalResult, League, LeagueParticipant, LongtermPrediction, Match, Point, Prediction, Setting, Stage, Tournament, User, UserTournament
 from app.notify_prefs import get_user_notification_prefs, set_user_notification_pref, should_send_notification
 from app.scoring import calculate_points, get_stage_points_multiplier
 
@@ -3745,6 +3745,124 @@ def _score_from_percent(home_pct: Any, draw_pct: Any, away_pct: Any) -> tuple[in
     return _most_likely_score(lam_home, lam_away)
 
 
+_STRENGTH_HIST_WEIGHT = 1.0
+_STRENGTH_CURRENT_WEIGHT = 2.5
+_STRENGTH_SHRINK_MATCHES = 8.0
+
+
+async def _compute_team_strengths(
+    session,
+) -> tuple[dict[str, dict[str, float]], float, float] | None:
+    """Считает силу атаки/обороны команд РПЛ по накопленным результатам —
+    прошлые сезоны (HistoricalResult, разовый бэкфилл из API-Football) + текущий
+    сезон (Match, из нашей же синхронизации), с более высоким весом за текущий
+    сезон (свежая форма важнее старой). Это упрощённая классическая Пуассон-модель
+    (attack/defense — отношение среднего числа голов команды к среднему по лиге)
+    с "усадкой" (shrinkage) к 1.0 для команд с малой историей — новички лиги не
+    получают шальные оценки на 1-2 матчах. Возвращает (strengths, avg_home_goals,
+    avg_away_goals) или None, если данных вообще нет (бэкфилл ещё не запускали
+    и текущий сезон пуст)."""
+    rows: list[tuple[str, str, int, int, float]] = []
+
+    hist_q = await session.execute(
+        select(
+            HistoricalResult.home_team,
+            HistoricalResult.away_team,
+            HistoricalResult.home_score,
+            HistoricalResult.away_score,
+        ).where(HistoricalResult.tournament_code == "RPL")
+    )
+    for home_team, away_team, home_score, away_score in hist_q.all():
+        rows.append((str(home_team), str(away_team), int(home_score), int(away_score), _STRENGTH_HIST_WEIGHT))
+
+    rpl_q = await session.execute(select(Tournament).where(Tournament.code == "RPL"))
+    rpl = rpl_q.scalar_one_or_none()
+    if rpl is not None:
+        from app.season_setup import get_active_season
+
+        season = await get_active_season(session)
+        season_filter = [Match.season_id == int(season.id)] if season is not None else []
+        current_q = await session.execute(
+            select(Match.home_team, Match.away_team, Match.home_score, Match.away_score).where(
+                Match.tournament_id == int(rpl.id),
+                Match.is_placeholder == 0,
+                Match.home_score.is_not(None),
+                Match.away_score.is_not(None),
+                *season_filter,
+            )
+        )
+        for home_team, away_team, home_score, away_score in current_q.all():
+            rows.append((str(home_team), str(away_team), int(home_score), int(away_score), _STRENGTH_CURRENT_WEIGHT))
+
+    if not rows:
+        return None
+
+    total_home_goals_w = 0.0
+    total_away_goals_w = 0.0
+    total_w = 0.0
+    scored_w: dict[str, float] = {}
+    conceded_w: dict[str, float] = {}
+    played_w: dict[str, float] = {}
+
+    for home_team, away_team, home_score, away_score, w in rows:
+        total_home_goals_w += home_score * w
+        total_away_goals_w += away_score * w
+        total_w += w
+        scored_w[home_team] = scored_w.get(home_team, 0.0) + home_score * w
+        scored_w[away_team] = scored_w.get(away_team, 0.0) + away_score * w
+        conceded_w[home_team] = conceded_w.get(home_team, 0.0) + away_score * w
+        conceded_w[away_team] = conceded_w.get(away_team, 0.0) + home_score * w
+        played_w[home_team] = played_w.get(home_team, 0.0) + w
+        played_w[away_team] = played_w.get(away_team, 0.0) + w
+
+    if total_w <= 0:
+        return None
+
+    avg_home_goals = total_home_goals_w / total_w
+    avg_away_goals = total_away_goals_w / total_w
+    league_avg_goals = (avg_home_goals + avg_away_goals) / 2.0
+    if league_avg_goals <= 0:
+        return None
+
+    strengths: dict[str, dict[str, float]] = {}
+    for team, pw in played_w.items():
+        raw_attack = (scored_w.get(team, 0.0) / pw) / league_avg_goals if pw > 0 else 1.0
+        raw_defense = (conceded_w.get(team, 0.0) / pw) / league_avg_goals if pw > 0 else 1.0
+        k = _STRENGTH_SHRINK_MATCHES
+        attack = (raw_attack * pw + 1.0 * k) / (pw + k)
+        defense = (raw_defense * pw + 1.0 * k) / (pw + k)
+        strengths[team] = {"attack": attack, "defense": defense, "played_w": pw}
+
+    return strengths, avg_home_goals, avg_away_goals
+
+
+def _lambda_for_fixture(
+    home_team: str,
+    away_team: str,
+    strengths: dict[str, dict[str, float]],
+    avg_home_goals: float,
+    avg_away_goals: float,
+) -> tuple[float, float]:
+    """Ожидаемые голы (λ) хозяев/гостей для конкретной пары команд. Команды,
+    которых вообще нет в наших данных (совсем новые/без истории), получают
+    среднюю по лиге силу (attack=defense=1.0) — нейтральная оценка."""
+    home = strengths.get(home_team) or {"attack": 1.0, "defense": 1.0}
+    away = strengths.get(away_team) or {"attack": 1.0, "defense": 1.0}
+    lam_home = avg_home_goals * home["attack"] * away["defense"]
+    lam_away = avg_away_goals * away["attack"] * home["defense"]
+    return max(lam_home, 0.05), max(lam_away, 0.05)
+
+
+def _score_and_probs_from_lambdas(
+    lam_home: float, lam_away: float
+) -> tuple[tuple[int, int], tuple[float, float, float]]:
+    pmf_home = [_poisson_pmf(k, lam_home) for k in range(_POISSON_MAX_GOALS_FIT + 1)]
+    pmf_away = [_poisson_pmf(k, lam_away) for k in range(_POISSON_MAX_GOALS_FIT + 1)]
+    probs = _outcome_probs_from_lambdas(pmf_home, pmf_away)
+    score = _most_likely_score(lam_home, lam_away)
+    return score, probs
+
+
 async def _crowd_stats_for_matches(session, tournament_id: int, match_ids: list[int]) -> dict[int, dict[str, int]]:
     """
     Возвращает агрегированную статистику по прогнозам комьюнити:
@@ -4916,7 +5034,6 @@ async def match_center_current(request: web.Request) -> web.Response:
             fetch_h2h,
             fetch_injuries,
             fetch_lineups,
-            fetch_predictions,
             fetch_standings,
             fetch_team_id_map,
         )
@@ -4981,25 +5098,36 @@ async def match_center_current(request: web.Request) -> web.Response:
             ]
 
         lineups_out: dict[str, Any] | None = None
-        # "Оценка ИИ" во вкладке матч-центра — по факту статистический прогноз
-        # самого API-Football (fetch_predictions), а не кэфы букмекеров: кэфы
-        # для РПЛ у поставщика данных не покрыты ни в одном сезоне (проверено
-        # через /leagues coverage), а вот собственный алгоритмический прогноз —
-        # покрыт даже в текущем сезоне.
-        ai_estimate_out: dict[str, Any] | None = None
         raw_injuries: list[dict[str, Any]] = []
         raw_events: list[dict[str, Any]] = []
         raw_stats: dict[str, dict[str, Any]] | None = None
         if api_fixture_id:
-            raw_lineups, ai_estimate_out, raw_injuries, raw_events, raw_stats = await asyncio.gather(
+            raw_lineups, raw_injuries, raw_events, raw_stats = await asyncio.gather(
                 fetch_lineups(int(api_fixture_id)),
-                fetch_predictions(int(api_fixture_id)),
                 fetch_injuries(int(api_fixture_id)),
                 fetch_fixture_events(int(api_fixture_id), ttl_seconds=live_ttl),
                 fetch_fixture_statistics(int(api_fixture_id), ttl_seconds=live_ttl),
             )
             if raw_lineups:
                 lineups_out = {display_team_name(name): info for name, info in raw_lineups.items()}
+
+        # "Оценка ИИ" во вкладке матч-центра — собственная Пуассон-модель силы
+        # атаки/обороны команд (см. _compute_team_strengths), а не чужой
+        # /predictions: для РПЛ он оказался ненадёжным (мало данных, крайние
+        # значения) и не покрывает матчи без api_fixture_id, а своя модель не
+        # требует внешнего запроса вовсе и доступна для любого матча РПЛ.
+        ai_estimate_out: dict[str, Any] | None = None
+        async with SessionLocal() as strength_session:
+            strengths_data = await _compute_team_strengths(strength_session)
+        if strengths_data is not None:
+            strengths, avg_home_goals, avg_away_goals = strengths_data
+            lam_home, lam_away = _lambda_for_fixture(home_raw, away_raw, strengths, avg_home_goals, avg_away_goals)
+            _score, (p_home, p_draw, p_away) = _score_and_probs_from_lambdas(lam_home, lam_away)
+            ai_estimate_out = {
+                "home_pct": round(p_home * 100),
+                "draw_pct": round(p_draw * 100),
+                "away_pct": round(p_away * 100),
+            }
 
         injuries_out = [
             {
@@ -5194,13 +5322,15 @@ async def predict_set(request: web.Request) -> web.Response:
 
 
 async def predict_auto_odds(request: web.Request) -> web.Response:
-    """"Прогноз от ИИ": считает счёт по алгоритмическому прогнозу API-Football
-    (см. _score_from_percent) — букмекерские кэфы для РПЛ у поставщика данных
-    не покрыты ни в одном сезоне, поэтому используем их собственную статистическую
-    оценку исхода (эндпоинт /predictions). Ничего не сохраняет — фронтенд
-    подставляет счета в поля и сохраняет их через обычный /predict/set, как при
-    ручном вводе. Название эндпоинта (auto_odds) осталось историческим, чтобы не
-    трогать фронтенд без необходимости."""
+    """"Прогноз от ИИ": считает счёт по собственной Пуассон-модели силы атаки/
+    обороны команд (см. _compute_team_strengths) — букмекерские кэфы для РПЛ
+    у поставщика данных не покрыты ни в одном сезоне, а их собственный
+    алгоритмический /predictions оказался ненадёжным для РПЛ (мало откалиброван
+    под лигу, давал странные крайние значения). Своя модель строится на истории
+    голов (прошлые сезоны + текущий) и не требует внешних запросов на каждый
+    матч. Ничего не сохраняет — фронтенд подставляет счета в поля и сохраняет их
+    через обычный /predict/set, как при ручном вводе. Название эндпоинта
+    (auto_odds) осталось историческим, чтобы не трогать фронтенд без необходимости."""
     try:
         auth_result = _extract_verified_user(request)
         if auth_result[0] is None:
@@ -5248,28 +5378,27 @@ async def predict_auto_odds(request: web.Request) -> web.Response:
                 )
             ).scalars().all()
 
-            from app.match_center import fetch_predictions
-
             skipped_match_ids: list[int] = sorted(set(match_ids) - {int(m.id) for m in matches})
 
-            usable = [m for m in matches if m.kickoff_time > now and m.api_fixture_id]
+            # Своя модель не завязана на внешний api_fixture_id — ей достаточно
+            # названий команд, поэтому годится любой ещё не начавшийся матч РПЛ,
+            # даже добавленный вручную (а не только синхронизированный из API).
+            usable = [m for m in matches if m.kickoff_time > now]
             skipped_match_ids.extend(int(m.id) for m in matches if m not in usable)
 
-            predictions_list = await asyncio.gather(
-                *(fetch_predictions(int(m.api_fixture_id)) for m in usable)
-            )
+            strengths_data = await _compute_team_strengths(session)
 
             items: list[dict[str, Any]] = []
-            for m, pred in zip(usable, predictions_list):
-                score = (
-                    _score_from_percent(pred.get("home_pct"), pred.get("draw_pct"), pred.get("away_pct"))
-                    if pred
-                    else None
-                )
-                if score is None:
-                    skipped_match_ids.append(int(m.id))
-                    continue
-                items.append({"match_id": int(m.id), "pred_home": score[0], "pred_away": score[1]})
+            if strengths_data is not None:
+                strengths, avg_home_goals, avg_away_goals = strengths_data
+                for m in usable:
+                    lam_home, lam_away = _lambda_for_fixture(
+                        str(m.home_team), str(m.away_team), strengths, avg_home_goals, avg_away_goals
+                    )
+                    score, _probs = _score_and_probs_from_lambdas(lam_home, lam_away)
+                    items.append({"match_id": int(m.id), "pred_home": score[0], "pred_away": score[1]})
+            else:
+                skipped_match_ids.extend(int(m.id) for m in usable)
 
             return web.json_response(
                 {
@@ -6300,6 +6429,81 @@ async def admin_rpl_api_coverage(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": "admin_rpl_api_coverage_failed"}, status=500)
 
 
+async def admin_rpl_history_backfill(request: web.Request) -> web.Response:
+    """Разовая загрузка результатов прошлых сезонов РПЛ из API-Football
+    (эндпоинт /fixtures, открыт всегда, без ограничений покрытия) — исходные
+    данные для собственной Пуассон-модели "Прогноз от ИИ"/"Оценка ИИ"
+    (см. _compute_team_strengths). Идемпотентно: можно вызывать повторно,
+    дубли не создаются (upsert по api_fixture_id). Результаты сохраняются
+    в historical_results навсегда, повторно эти сезоны из API дёргать не нужно.
+    """
+    try:
+        auth_result = _extract_verified_admin_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        seasons_raw = body.get("seasons") or [2022, 2023, 2024, 2025]
+        seasons = sorted({int(s) for s in seasons_raw})
+
+        from app.football_api import fetch_league_fixtures
+
+        league_id = int(os.getenv("FOOTBALL_RPL_LEAGUE_ID", "235"))
+
+        total_fetched = 0
+        total_saved = 0
+        per_season: dict[str, int] = {}
+        async with SessionLocal() as session:
+            for season_year in seasons:
+                fixtures = await fetch_league_fixtures(league_id, season_year)
+                finished = [
+                    fx for fx in fixtures if fx.is_finished and fx.home_score is not None and fx.away_score is not None
+                ]
+                total_fetched += len(finished)
+                saved_count = 0
+                for fx in finished:
+                    existing = (
+                        await session.execute(
+                            select(HistoricalResult.id).where(HistoricalResult.api_fixture_id == int(fx.fixture_id))
+                        )
+                    ).first()
+                    if existing:
+                        continue
+                    session.add(
+                        HistoricalResult(
+                            tournament_code="RPL",
+                            season_year=int(season_year),
+                            api_fixture_id=int(fx.fixture_id),
+                            home_team=fx.home_team,
+                            away_team=fx.away_team,
+                            home_score=int(fx.home_score),
+                            away_score=int(fx.away_score),
+                        )
+                    )
+                    saved_count += 1
+                await session.commit()
+                per_season[str(season_year)] = saved_count
+                total_saved += saved_count
+
+        return web.json_response(
+            {
+                "ok": True,
+                "trusted": True,
+                "is_admin": True,
+                "seasons": seasons,
+                "total_fetched": total_fetched,
+                "total_saved": total_saved,
+                "per_season": per_season,
+            }
+        )
+    except Exception:
+        logger.exception("miniapp admin_rpl_history_backfill error")
+        return web.json_response({"ok": False, "error": "admin_rpl_history_backfill_failed"}, status=500)
+
+
 async def admin_rpl_participants_current(request: web.Request) -> web.Response:
     try:
         auth_result = _extract_verified_admin_user(request)
@@ -6568,6 +6772,7 @@ def build_app() -> web.Application:
     app.router.add_post("/api/miniapp/admin/rpl/enroll", admin_rpl_enroll_set)
     app.router.add_get("/api/miniapp/admin/rpl/participants", admin_rpl_participants_current)
     app.router.add_get("/api/miniapp/admin/rpl/api_coverage", admin_rpl_api_coverage)
+    app.router.add_post("/api/miniapp/admin/rpl/history_backfill", admin_rpl_history_backfill)
     app.router.add_post("/api/miniapp/admin/rpl/participants/assign", admin_rpl_participant_assign)
     app.router.add_post("/api/miniapp/admin/rpl/points/adjust", admin_rpl_points_adjust)
     return app
