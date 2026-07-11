@@ -3724,6 +3724,27 @@ def _score_from_odds(home_odd: Any, draw_odd: Any, away_odd: Any) -> tuple[int, 
     return _most_likely_score(lam_home, lam_away)
 
 
+def _score_from_percent(home_pct: Any, draw_pct: Any, away_pct: Any) -> tuple[int, int] | None:
+    """То же самое, но источник вероятностей — не букмекерские коэффициенты
+    (для РПЛ они у API-Football не покрыты ни в одном сезоне, проверено через
+    /leagues coverage), а собственный алгоритмический прогноз поставщика данных
+    (fetch_predictions, эндпоинт /predictions) — там coverage для РПЛ есть даже
+    в текущем сезоне. Проценты уже сами по себе вероятности, снимать маржу
+    букмекера не нужно — только нормализовать, если сумма не ровно 100."""
+    try:
+        h = float(home_pct)
+        d = float(draw_pct)
+        a = float(away_pct)
+    except (TypeError, ValueError):
+        return None
+    total = h + d + a
+    if total <= 0:
+        return None
+    p_home, p_draw, p_away = h / total, d / total, a / total
+    lam_home, lam_away = _fit_lambdas_to_odds(p_home, p_draw, p_away)
+    return _most_likely_score(lam_home, lam_away)
+
+
 async def _crowd_stats_for_matches(session, tournament_id: int, match_ids: list[int]) -> dict[int, dict[str, int]]:
     """
     Возвращает агрегированную статистику по прогнозам комьюнити:
@@ -4895,7 +4916,7 @@ async def match_center_current(request: web.Request) -> web.Response:
             fetch_h2h,
             fetch_injuries,
             fetch_lineups,
-            fetch_odds,
+            fetch_predictions,
             fetch_standings,
             fetch_team_id_map,
         )
@@ -4960,14 +4981,19 @@ async def match_center_current(request: web.Request) -> web.Response:
             ]
 
         lineups_out: dict[str, Any] | None = None
-        odds_out: dict[str, Any] | None = None
+        # "Оценка ИИ" во вкладке матч-центра — по факту статистический прогноз
+        # самого API-Football (fetch_predictions), а не кэфы букмекеров: кэфы
+        # для РПЛ у поставщика данных не покрыты ни в одном сезоне (проверено
+        # через /leagues coverage), а вот собственный алгоритмический прогноз —
+        # покрыт даже в текущем сезоне.
+        ai_estimate_out: dict[str, Any] | None = None
         raw_injuries: list[dict[str, Any]] = []
         raw_events: list[dict[str, Any]] = []
         raw_stats: dict[str, dict[str, Any]] | None = None
         if api_fixture_id:
-            raw_lineups, odds_out, raw_injuries, raw_events, raw_stats = await asyncio.gather(
+            raw_lineups, ai_estimate_out, raw_injuries, raw_events, raw_stats = await asyncio.gather(
                 fetch_lineups(int(api_fixture_id)),
-                fetch_odds(int(api_fixture_id)),
+                fetch_predictions(int(api_fixture_id)),
                 fetch_injuries(int(api_fixture_id)),
                 fetch_fixture_events(int(api_fixture_id), ttl_seconds=live_ttl),
                 fetch_fixture_statistics(int(api_fixture_id), ttl_seconds=live_ttl),
@@ -5052,7 +5078,7 @@ async def match_center_current(request: web.Request) -> web.Response:
                 "standings_table": standings_table,
                 "h2h": h2h,
                 "lineups": lineups_out,
-                "odds": odds_out,
+                "ai_estimate": ai_estimate_out,
                 "accuracy": {
                     "home": accuracy_home,
                     "away": accuracy_away,
@@ -5168,9 +5194,13 @@ async def predict_set(request: web.Request) -> web.Response:
 
 
 async def predict_auto_odds(request: web.Request) -> web.Response:
-    """"Прогноз от ИИ": считает счёт по коэффициентам (см. _score_from_odds),
-    ничего не сохраняет — фронтенд подставляет счета в поля и сохраняет их
-    через обычный /predict/set, как при ручном вводе."""
+    """"Прогноз от ИИ": считает счёт по алгоритмическому прогнозу API-Football
+    (см. _score_from_percent) — букмекерские кэфы для РПЛ у поставщика данных
+    не покрыты ни в одном сезоне, поэтому используем их собственную статистическую
+    оценку исхода (эндпоинт /predictions). Ничего не сохраняет — фронтенд
+    подставляет счета в поля и сохраняет их через обычный /predict/set, как при
+    ручном вводе. Название эндпоинта (auto_odds) осталось историческим, чтобы не
+    трогать фронтенд без необходимости."""
     try:
         auth_result = _extract_verified_user(request)
         if auth_result[0] is None:
@@ -5218,20 +5248,22 @@ async def predict_auto_odds(request: web.Request) -> web.Response:
                 )
             ).scalars().all()
 
-            from app.match_center import fetch_odds
+            from app.match_center import fetch_predictions
 
             skipped_match_ids: list[int] = sorted(set(match_ids) - {int(m.id) for m in matches})
 
             usable = [m for m in matches if m.kickoff_time > now and m.api_fixture_id]
             skipped_match_ids.extend(int(m.id) for m in matches if m not in usable)
 
-            odds_list = await asyncio.gather(*(fetch_odds(int(m.api_fixture_id)) for m in usable))
+            predictions_list = await asyncio.gather(
+                *(fetch_predictions(int(m.api_fixture_id)) for m in usable)
+            )
 
             items: list[dict[str, Any]] = []
-            for m, odds in zip(usable, odds_list):
+            for m, pred in zip(usable, predictions_list):
                 score = (
-                    _score_from_odds(odds.get("home_odd"), odds.get("draw_odd"), odds.get("away_odd"))
-                    if odds
+                    _score_from_percent(pred.get("home_pct"), pred.get("draw_pct"), pred.get("away_pct"))
+                    if pred
                     else None
                 )
                 if score is None:

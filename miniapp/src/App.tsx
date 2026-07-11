@@ -311,11 +311,10 @@ type MatchCenterResponse = {
   standings_table?: MatchCenterStandingRow[]
   h2h?: MatchCenterH2hItem[]
   lineups?: Record<string, MatchCenterLineup> | null
-  odds?: {
-    bookmaker?: string
-    home_odd?: string | null
-    draw_odd?: string | null
-    away_odd?: string | null
+  ai_estimate?: {
+    home_pct?: number | null
+    draw_pct?: number | null
+    away_pct?: number | null
   } | null
   accuracy?: {
     home?: MatchCenterAccuracy
@@ -2290,7 +2289,7 @@ function App() {
       }
       const suggested = data.items || []
       if (suggested.length === 0) {
-        setAutoPredictNotice('Коэффициенты пока недоступны ни для одного матча тура.')
+        setAutoPredictNotice('Оценка ИИ пока недоступна ни для одного матча тура.')
         return
       }
       setScoreInputs((prev) => {
@@ -2312,14 +2311,14 @@ function App() {
       const skippedCount = (data.skipped_match_ids || []).length
       setAutoPredictNotice(
         skippedCount > 0
-          ? `Заполнено и сохранено: ${suggested.length}. Коэффициенты пока недоступны для ${skippedCount} матч(ей).`
+          ? `Заполнено и сохранено: ${suggested.length}. Оценка ИИ пока недоступна для ${skippedCount} матч(ей).`
           : `Заполнено и сохранено прогнозов: ${suggested.length}.`
       )
       haptic.success()
       await loadPredictCurrent(apiBase, initData, selectedTournamentCode, selectedRoundNumber)
     } catch (_err) {
       haptic.error()
-      setAutoPredictNotice('Не удалось заполнить прогнозы по коэффициентам. Попробуй ещё раз.')
+      setAutoPredictNotice('Не удалось заполнить прогнозы. Попробуй ещё раз.')
     } finally {
       setAutoPredicting(false)
     }
@@ -5321,7 +5320,7 @@ function App() {
                             onClick={autoFillPredictionsFromOdds}
                             disabled={autoPredicting || savingAllPredictions || emptyOpenPredictionCount === 0}
                           >
-                            {autoPredicting ? 'Считаю коэффициенты...' : 'Прогноз от ИИ'}
+                            {autoPredicting ? 'Считаю оценку ИИ...' : 'Прогноз от ИИ'}
                           </button>
                           {autoPredictNotice ? (
                             <div className="auto-predict-notice">{autoPredictNotice}</div>
@@ -6818,7 +6817,7 @@ function App() {
                           ['table', 'Таблица'],
                           ['lineups', 'Составы'],
                           ['stats', 'Статистика'],
-                          ['odds', 'Кэфы'],
+                          ['odds', 'Оценка ИИ'],
                         ] as [MatchCenterTab, string][]
                       ).map(([key, label]) => (
                         <button
@@ -7100,28 +7099,30 @@ function App() {
 
                     {matchCenterTab === 'odds' ? (
                     <div className="card match-center-card">
-                      <div className="match-center-card-title">
-                        Котировки букмекеров
-                        {matchCenterData.odds?.bookmaker ? ` · ${matchCenterData.odds.bookmaker}` : ''}
-                      </div>
-                      {matchCenterData.odds &&
-                      (matchCenterData.odds.home_odd || matchCenterData.odds.draw_odd || matchCenterData.odds.away_odd) ? (
-                        <div className="match-center-odds-row">
-                          <div className="match-center-odds-cell">
-                            <span className="match-center-dim">П1</span>
-                            <b>{matchCenterData.odds.home_odd || '—'}</b>
+                      <div className="match-center-card-title">Оценка ИИ</div>
+                      {matchCenterData.ai_estimate &&
+                      (matchCenterData.ai_estimate.home_pct != null ||
+                        matchCenterData.ai_estimate.draw_pct != null ||
+                        matchCenterData.ai_estimate.away_pct != null) ? (
+                        <>
+                          <div className="match-center-odds-row">
+                            <div className="match-center-odds-cell">
+                              <span className="match-center-dim">П1</span>
+                              <b>{matchCenterData.ai_estimate.home_pct != null ? `${matchCenterData.ai_estimate.home_pct}%` : '—'}</b>
+                            </div>
+                            <div className="match-center-odds-cell">
+                              <span className="match-center-dim">Х</span>
+                              <b>{matchCenterData.ai_estimate.draw_pct != null ? `${matchCenterData.ai_estimate.draw_pct}%` : '—'}</b>
+                            </div>
+                            <div className="match-center-odds-cell">
+                              <span className="match-center-dim">П2</span>
+                              <b>{matchCenterData.ai_estimate.away_pct != null ? `${matchCenterData.ai_estimate.away_pct}%` : '—'}</b>
+                            </div>
                           </div>
-                          <div className="match-center-odds-cell">
-                            <span className="match-center-dim">Х</span>
-                            <b>{matchCenterData.odds.draw_odd || '—'}</b>
-                          </div>
-                          <div className="match-center-odds-cell">
-                            <span className="match-center-dim">П2</span>
-                            <b>{matchCenterData.odds.away_odd || '—'}</b>
-                          </div>
-                        </div>
+                          <div className="segment-hint">Автоматическая статистическая оценка вероятного исхода</div>
+                        </>
                       ) : (
-                        <div className="match-center-dim match-center-empty">Букмекеры пока не выставили котировки</div>
+                        <div className="match-center-dim match-center-empty">Оценка пока недоступна</div>
                       )}
                     </div>
                     ) : null}
