@@ -5019,9 +5019,51 @@ select:focus-visible {
 }
 
 .match-center-lineup-player {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
   font-size: 12px;
   color: var(--text-dim);
   padding: 2px 0;
+}
+
+.match-center-lineup-player-name {
+  color: var(--text-main);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.match-center-lineup-player-stat {
+  flex-shrink: 0;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.match-center-form-dots {
+  display: flex;
+  gap: 4px;
+}
+
+.match-center-form-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(230, 230, 230, 0.25);
+}
+
+.match-center-form-dot.is-win {
+  background: #2fae64;
+}
+
+.match-center-form-dot.is-loss {
+  background: #e0433a;
+}
+
+.match-center-form-dot.is-draw {
+  background: rgba(230, 230, 230, 0.45);
 }
 
 .match-center-odds-row {

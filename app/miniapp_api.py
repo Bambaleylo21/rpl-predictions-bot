@@ -5035,7 +5035,9 @@ async def match_center_current(request: web.Request) -> web.Response:
             fetch_injuries,
             fetch_lineups,
             fetch_standings,
+            fetch_team_form,
             fetch_team_id_map,
+            fetch_team_player_stats,
         )
 
         league_id = int(os.getenv("FOOTBALL_RPL_LEAGUE_ID", "235"))
@@ -5097,6 +5099,19 @@ async def match_center_current(request: web.Request) -> web.Response:
                 for item in raw_h2h
             ]
 
+        # Форма команды (последние 5 матчей, любые турниры) — кружки под гербами
+        # в шапке матч-центра, самый свежий результат крайний правый.
+        async def _team_form(team_id_val: int | None) -> list[dict[str, Any]]:
+            if not team_id_val:
+                return []
+            return [{"result": item.get("result")} for item in await fetch_team_form(int(team_id_val), last=5)]
+
+        home_form, away_form = await asyncio.gather(
+            _team_form(home_team_id),
+            _team_form(away_team_id),
+        )
+        form_out = {"home": home_form, "away": away_form}
+
         lineups_out: dict[str, Any] | None = None
         raw_injuries: list[dict[str, Any]] = []
         raw_events: list[dict[str, Any]] = []
@@ -5109,7 +5124,35 @@ async def match_center_current(request: web.Request) -> web.Response:
                 fetch_fixture_statistics(int(api_fixture_id), ttl_seconds=live_ttl),
             )
             if raw_lineups:
-                lineups_out = {display_team_name(name): info for name, info in raw_lineups.items()}
+                # Сезонная статистика игроков (голы/передачи/рейтинг) подтягивается
+                # разом на весь состав (см. fetch_team_player_stats), а не по
+                # игроку — не более 2 доп. запросов на показ матч-центра, и те
+                # почти всегда берутся из 12-часового кэша.
+                async def _enrich_lineup(name: str, info: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+                    team_id_val = team_ids.get(name)
+                    player_stats = (
+                        await fetch_team_player_stats(int(team_id_val), league_id, season) if team_id_val else {}
+                    )
+                    starters_out = []
+                    for p in info.get("starters") or []:
+                        pid = p.get("id")
+                        stat = player_stats.get(int(pid)) if pid else None
+                        starters_out.append(
+                            {
+                                "name": p.get("name"),
+                                "number": p.get("number"),
+                                "pos": p.get("pos"),
+                                "goals": (stat or {}).get("goals"),
+                                "assists": (stat or {}).get("assists"),
+                                "rating": (stat or {}).get("rating"),
+                            }
+                        )
+                    return display_team_name(name), {"formation": info.get("formation"), "starters": starters_out}
+
+                enriched = await asyncio.gather(
+                    *(_enrich_lineup(name, info) for name, info in raw_lineups.items())
+                )
+                lineups_out = dict(enriched)
 
         # "Оценка ИИ" во вкладке матч-центра — собственная Пуассон-модель силы
         # атаки/обороны команд (см. _compute_team_strengths), а не чужой
@@ -5205,6 +5248,7 @@ async def match_center_current(request: web.Request) -> web.Response:
                 },
                 "standings_table": standings_table,
                 "h2h": h2h,
+                "form": form_out,
                 "lineups": lineups_out,
                 "ai_estimate": ai_estimate_out,
                 "accuracy": {

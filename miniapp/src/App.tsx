@@ -255,9 +255,22 @@ type MatchCenterH2hItem = {
   away_score?: number | null
 }
 
+type MatchCenterLineupPlayer = {
+  name: string
+  number?: number | null
+  pos?: string | null
+  goals?: number | null
+  assists?: number | null
+  rating?: number | null
+}
+
 type MatchCenterLineup = {
   formation?: string | null
-  starters?: string[]
+  starters?: MatchCenterLineupPlayer[]
+}
+
+type MatchCenterFormItem = {
+  result?: 'W' | 'D' | 'L' | string
 }
 
 type MatchCenterAccuracy = {
@@ -310,6 +323,10 @@ type MatchCenterResponse = {
   }
   standings_table?: MatchCenterStandingRow[]
   h2h?: MatchCenterH2hItem[]
+  form?: {
+    home?: MatchCenterFormItem[]
+    away?: MatchCenterFormItem[]
+  }
   lineups?: Record<string, MatchCenterLineup> | null
   ai_estimate?: {
     home_pct?: number | null
@@ -943,6 +960,25 @@ const TeamCrest = ({ name, alt }: { name: string; alt?: boolean }) => {
     )
   }
   return <div className={`match-center-crest ${alt ? 'match-center-crest-alt' : ''}`}>{name.slice(0, 3).toUpperCase()}</div>
+}
+
+// Форма команды — последние 5 матчей (любые турниры), самый свежий справа.
+// Порядок массива уже приходит от бэкенда от старого к новому, поэтому просто
+// рендерим по порядку слева направо.
+const TeamFormDots = ({ items }: { items?: MatchCenterFormItem[] }) => {
+  if (!items || items.length === 0) return null
+  return (
+    <div className="match-center-form-dots">
+      {items.map((item, i) => (
+        <span
+          key={i}
+          className={`match-center-form-dot ${
+            item.result === 'W' ? 'is-win' : item.result === 'L' ? 'is-loss' : 'is-draw'
+          }`}
+        />
+      ))}
+    </div>
+  )
 }
 
 // Логотип команды для списка "Матчи" (РПЛ) — отдельный от TeamCrest компонент с
@@ -6834,6 +6870,7 @@ function App() {
                               ) : null}
                               {matchCenterData.home_team}
                             </span>
+                            <TeamFormDots items={matchCenterData.form?.home} />
                           </div>
                           <div className="match-center-mid">
                             <span className="match-center-kickoff">{matchCenterData.kickoff} МСК</span>
@@ -6851,6 +6888,7 @@ function App() {
                               ) : null}
                               {matchCenterData.away_team}
                             </span>
+                            <TeamFormDots items={matchCenterData.form?.away} />
                           </div>
                         </div>
                       )
@@ -7032,11 +7070,26 @@ function App() {
                                 {teamName}
                                 {info.formation ? ` · ${info.formation}` : ''}
                               </div>
-                              {(info.starters || []).map((name, i) => (
-                                <div className="match-center-lineup-player" key={i}>
-                                  {name}
-                                </div>
-                              ))}
+                              {(info.starters || []).map((p, i) => {
+                                const statParts = [
+                                  p.goals ? `${p.goals} г` : null,
+                                  p.assists ? `${p.assists} п` : null,
+                                  p.rating ? `★${p.rating}` : null,
+                                ].filter(Boolean)
+                                return (
+                                  <div className="match-center-lineup-player" key={i}>
+                                    <span className="match-center-lineup-player-name">
+                                      {p.number != null ? `${p.number}. ` : ''}
+                                      {p.name}
+                                    </span>
+                                    {statParts.length > 0 ? (
+                                      <span className="match-center-lineup-player-stat match-center-dim">
+                                        {statParts.join(' · ')}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                )
+                              })}
                             </div>
                           ))}
                         </div>

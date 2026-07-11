@@ -137,6 +137,54 @@ async def fetch_h2h(team1_id: int, team2_id: int, last: int = 5) -> list[dict[st
     return out
 
 
+async def fetch_team_form(team_id: int, last: int = 5) -> list[dict[str, Any]]:
+    """Последние N сыгранных матчей команды (любые турниры, не только РПЛ) —
+    для индикатора формы (кружки П/Н/В) в шапке матч-центра. Кэш 2 часа: форма
+    команды меняется не чаще чем раз в несколько дней между турами."""
+    data = await _api_get(
+        "/fixtures",
+        {"team": str(team_id), "last": str(last)},
+        cache_key=f"form:{team_id}:{last}",
+        ttl_seconds=2 * 3600,
+    )
+    if not data:
+        return []
+    out: list[dict[str, Any]] = []
+    for item in data.get("response", []) or []:
+        fixture = item.get("fixture") or {}
+        teams = item.get("teams") or {}
+        goals = item.get("goals") or {}
+        status_short = str(((fixture.get("status") or {}).get("short")) or "")
+        if status_short not in ("FT", "AET", "PEN"):
+            continue
+        home = teams.get("home") or {}
+        away = teams.get("away") or {}
+        is_home = int((home.get("id")) or 0) == int(team_id)
+        team_goals = goals.get("home") if is_home else goals.get("away")
+        opp_goals = goals.get("away") if is_home else goals.get("home")
+        if team_goals is None or opp_goals is None:
+            continue
+        if team_goals > opp_goals:
+            result = "W"
+        elif team_goals < opp_goals:
+            result = "L"
+        else:
+            result = "D"
+        date_str = fixture.get("date")
+        out.append(
+            {
+                "date": str(date_str)[:10] if date_str else "",
+                "result": result,
+                "opponent": (away if is_home else home).get("name"),
+                "score": f"{team_goals}:{opp_goals}",
+            }
+        )
+    # Подстраховка на случай, если API не гарантирует порядок: сортируем сами,
+    # чтобы самый свежий матч точно оказался последним (справа в кружках).
+    out.sort(key=lambda x: x.get("date") or "")
+    return out[-last:]
+
+
 async def fetch_lineups(fixture_id: int) -> dict[str, Any] | None:
     """Стартовые составы по конкретному матчу. Появляются у API примерно за час до игры.
 
@@ -159,12 +207,77 @@ async def fetch_lineups(fixture_id: int) -> dict[str, Any] | None:
         team = side.get("team") or {}
         name = str(team.get("name") or "")
         formation = side.get("formation")
-        starters = [
-            str((p.get("player") or {}).get("name") or "").strip()
-            for p in side.get("startXI") or []
-        ]
-        out[name] = {"formation": formation, "starters": [s for s in starters if s]}
+        starters: list[dict[str, Any]] = []
+        for p in side.get("startXI") or []:
+            player = p.get("player") or {}
+            pname = str(player.get("name") or "").strip()
+            if not pname:
+                continue
+            # id нужен, чтобы потом сматчить игрока с его сезонной статистикой
+            # (см. fetch_team_player_stats) — по имени это делать ненадёжно
+            # из-за возможных расхождений в написании между эндпоинтами.
+            starters.append(
+                {
+                    "id": player.get("id"),
+                    "name": pname,
+                    "number": player.get("number"),
+                    "pos": player.get("pos"),
+                }
+            )
+        out[name] = {"formation": formation, "starters": starters}
     return out or None
+
+
+async def fetch_team_player_stats(team_id: int, league_id: int, season: int) -> dict[int, dict[str, Any]]:
+    """Сезонная статистика игроков команды (голы/передачи/рейтинг/матчи) —
+    один вызов на всю команду сразу (эндпоинт /players отдаёт весь состав
+    постранично), а не по игроку — иначе стартовый состав из 11 человек стоил
+    бы 11 отдельных запросов на каждый показ матч-центра. Кэш длинный (12ч):
+    статистика игроков обновляется не чаще чем раз в тур."""
+    out: dict[int, dict[str, Any]] = {}
+    page = 1
+    while page <= 3:  # РПЛ-состав ~25-30 игроков, обычно укладывается в 1-2 страницы
+        data = await _api_get(
+            "/players",
+            {"team": str(team_id), "league": str(league_id), "season": str(season), "page": str(page)},
+            cache_key=f"player_stats:{team_id}:{league_id}:{season}:{page}",
+            ttl_seconds=12 * 3600,
+        )
+        if not data:
+            break
+        response = data.get("response") or []
+        for item in response:
+            player = item.get("player") or {}
+            pid = player.get("id")
+            if not pid:
+                continue
+            stats_list = item.get("statistics") or []
+            league_stats = next(
+                (s for s in stats_list if ((s.get("league") or {}).get("id")) == league_id),
+                (stats_list[0] if stats_list else {}),
+            )
+            games = league_stats.get("games") or {}
+            goals = league_stats.get("goals") or {}
+            rating_raw = games.get("rating")
+            try:
+                rating = round(float(rating_raw), 1) if rating_raw else None
+            except (TypeError, ValueError):
+                rating = None
+            out[int(pid)] = {
+                # у API-Football опечатка в названии поля ("appearences"), но
+                # подстраховываемся на случай, если когда-нибудь поправят
+                "appearances": games.get("appearences") or games.get("appearances") or 0,
+                "goals": goals.get("total") or 0,
+                "assists": goals.get("assists") or 0,
+                "rating": rating,
+            }
+        paging = data.get("paging") or {}
+        current = int(paging.get("current") or 1)
+        total = int(paging.get("total") or 1)
+        if current >= total or not response:
+            break
+        page += 1
+    return out
 
 
 async def fetch_predictions(fixture_id: int) -> dict[str, Any] | None:
