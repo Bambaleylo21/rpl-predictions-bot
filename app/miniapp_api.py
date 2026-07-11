@@ -6233,6 +6233,41 @@ async def admin_rpl_enroll_set(request: web.Request) -> web.Response:
         )
 
 
+async def admin_rpl_api_coverage(request: web.Request) -> web.Response:
+    """Технический дебаг-эндпоинт (только для админа): что реально отдаёт
+    API-Football по лиге РПЛ — по каждому сезону отдельно (coverage может
+    отличаться год от года), плюс статус нашей подписки (тариф, дневной лимит,
+    сколько запросов уже потрачено сегодня). Не используется ни на одном
+    боевом экране, нужен только чтобы разово всё проверить из админки.
+    """
+    try:
+        auth_result = _extract_verified_admin_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+
+        from app.match_center import fetch_api_status, fetch_league_coverage
+
+        league_id = int(os.getenv("FOOTBALL_RPL_LEAGUE_ID", "235"))
+        status, seasons = await asyncio.gather(
+            fetch_api_status(),
+            fetch_league_coverage(league_id),
+        )
+
+        return web.json_response(
+            {
+                "ok": True,
+                "trusted": True,
+                "is_admin": True,
+                "league_id": league_id,
+                "status": status,
+                "seasons": seasons,
+            }
+        )
+    except Exception:
+        logger.exception("miniapp admin_rpl_api_coverage error")
+        return web.json_response({"ok": False, "error": "admin_rpl_api_coverage_failed"}, status=500)
+
+
 async def admin_rpl_participants_current(request: web.Request) -> web.Response:
     try:
         auth_result = _extract_verified_admin_user(request)
@@ -6500,6 +6535,7 @@ def build_app() -> web.Application:
     app.router.add_post("/api/miniapp/admin/rpl/season/name", admin_rpl_season_name)
     app.router.add_post("/api/miniapp/admin/rpl/enroll", admin_rpl_enroll_set)
     app.router.add_get("/api/miniapp/admin/rpl/participants", admin_rpl_participants_current)
+    app.router.add_get("/api/miniapp/admin/rpl/api_coverage", admin_rpl_api_coverage)
     app.router.add_post("/api/miniapp/admin/rpl/participants/assign", admin_rpl_participant_assign)
     app.router.add_post("/api/miniapp/admin/rpl/points/adjust", admin_rpl_points_adjust)
     return app

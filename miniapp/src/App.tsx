@@ -713,6 +713,34 @@ type AdminRplParticipantsResponse = {
   items?: RplParticipantItem[]
 }
 
+type RplApiCoverageSeason = {
+  year: number
+  current: boolean
+  coverage: {
+    fixtures_events: boolean
+    fixtures_lineups: boolean
+    fixtures_statistics_fixtures: boolean
+    fixtures_statistics_players: boolean
+    standings: boolean
+    players: boolean
+    top_scorers: boolean
+    top_assists: boolean
+    top_cards: boolean
+    injuries: boolean
+    predictions: boolean
+    odds: boolean
+  }
+}
+
+type RplApiCoverageResponse = {
+  ok: boolean
+  error?: string
+  reason?: string
+  league_id?: number
+  status?: { plan?: string | null; requests_current?: number | null; requests_limit_day?: number | null } | null
+  seasons?: RplApiCoverageSeason[]
+}
+
 const ENGLAND_FLAG = String.fromCodePoint(
   0x1f3f4,
   0xe0067,
@@ -1326,6 +1354,9 @@ function App() {
   const [adminParticipants, setAdminParticipants] = useState<AdminParticipantItem[]>([])
   const [adminRemovingUserId, setAdminRemovingUserId] = useState<number | null>(null)
   const [adminRplSeason, setAdminRplSeason] = useState<AdminRplSeasonResponse | null>(null)
+  const [adminRplCoverage, setAdminRplCoverage] = useState<RplApiCoverageResponse | null>(null)
+  const [adminRplCoverageBusy, setAdminRplCoverageBusy] = useState<boolean>(false)
+  const [adminRplCoverageError, setAdminRplCoverageError] = useState<string | null>(null)
   const [adminRplParticipants, setAdminRplParticipants] = useState<RplParticipantItem[]>([])
   const [adminRplAssigningId, setAdminRplAssigningId] = useState<number | null>(null)
   const [adminRplPointsInputs, setAdminRplPointsInputs] = useState<Record<number, string>>({})
@@ -2714,6 +2745,26 @@ function App() {
       throw new Error(data.reason || data.error || `HTTP ${res.status}`)
     }
     setAdminRplParticipants(data.items || [])
+  }
+
+  const checkRplApiCoverage = async () => {
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    setAdminRplCoverageBusy(true)
+    setAdminRplCoverageError(null)
+    try {
+      const headers = { 'X-Telegram-Init-Data': initData }
+      const res = await fetch(`${apiBase}/api/miniapp/admin/rpl/api_coverage`, { headers })
+      const data = (await res.json()) as RplApiCoverageResponse
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      setAdminRplCoverage(data)
+    } catch (err) {
+      setAdminRplCoverageError(`Не удалось проверить: ${String(err)}`)
+    } finally {
+      setAdminRplCoverageBusy(false)
+    }
   }
 
   const submitRplSeasonInit = async () => {
@@ -4239,6 +4290,58 @@ function App() {
             >
               {adminRplInitBusy ? '…' : season ? 'Пересоздать сезон' : 'Создать сезон'}
             </button>
+          </div>
+        ) : null}
+
+        <div className="admin-status-divider" />
+
+        <button
+          type="button"
+          className="admin-reset-btn admin-reset-btn-wide"
+          onClick={checkRplApiCoverage}
+          disabled={adminRplCoverageBusy}
+        >
+          {adminRplCoverageBusy ? '…' : 'Проверить данные API-Football'}
+        </button>
+
+        {adminRplCoverageError ? <div className="card-text admin-empty-text">{adminRplCoverageError}</div> : null}
+
+        {adminRplCoverage ? (
+          <div className="admin-status-block">
+            <div className="admin-status-row">
+              <span>Тариф</span>
+              <b>{adminRplCoverage.status?.plan || '—'}</b>
+            </div>
+            <div className="admin-status-row">
+              <span>Запросов сегодня</span>
+              <b>
+                {adminRplCoverage.status?.requests_current ?? '—'} / {adminRplCoverage.status?.requests_limit_day ?? '—'}
+              </b>
+            </div>
+
+            <div className="admin-status-divider" />
+
+            {(adminRplCoverage.seasons || []).map((s) => {
+              const labels: string[] = []
+              if (s.coverage.odds) labels.push('кэфы')
+              if (s.coverage.predictions) labels.push('прогнозы API')
+              if (s.coverage.standings) labels.push('таблица')
+              if (s.coverage.fixtures_statistics_fixtures) labels.push('статистика матча')
+              if (s.coverage.fixtures_statistics_players) labels.push('статистика игроков')
+              if (s.coverage.fixtures_events) labels.push('события')
+              if (s.coverage.fixtures_lineups) labels.push('составы')
+              if (s.coverage.injuries) labels.push('травмы')
+              if (s.coverage.top_scorers) labels.push('бомбардиры')
+              return (
+                <div className="admin-status-row" key={`cov-${s.year}`}>
+                  <span>
+                    {s.year}
+                    {s.current ? ' (текущий)' : ''}
+                  </span>
+                  <b>{labels.join(', ') || 'нет данных'}</b>
+                </div>
+              )
+            })}
           </div>
         ) : null}
       </div>

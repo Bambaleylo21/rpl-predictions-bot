@@ -316,6 +316,81 @@ async def fetch_fixture_events(fixture_id: int, ttl_seconds: int = 10 * 60) -> l
     return out
 
 
+async def fetch_league_coverage(league_id: int) -> list[dict[str, Any]]:
+    """Технический дебаг-хелпер (не используется на боевых экранах): какие типы
+    данных API-Football реально покрывает для этой лиги, по сезонам — coverage
+    может отличаться от сезона к сезону, поэтому смотрим все сразу, включая
+    прошлые. Кэш длинный (24ч) — справочная информация, не меняется на лету.
+    """
+    data = await _api_get(
+        "/leagues",
+        {"id": str(league_id)},
+        cache_key=f"coverage:{league_id}",
+        ttl_seconds=24 * 3600,
+    )
+    if not data:
+        return []
+    try:
+        entries = (data.get("response") or [{}])[0].get("seasons") or []
+    except Exception:
+        logger.exception("[match_center] unexpected leagues payload shape")
+        return []
+
+    out: list[dict[str, Any]] = []
+    for s in entries:
+        cov = s.get("coverage") or {}
+        fixtures_cov = cov.get("fixtures") or {}
+        out.append(
+            {
+                "year": s.get("year"),
+                "current": bool(s.get("current")),
+                "coverage": {
+                    "fixtures_events": bool(fixtures_cov.get("events")),
+                    "fixtures_lineups": bool(fixtures_cov.get("lineups")),
+                    "fixtures_statistics_fixtures": bool(fixtures_cov.get("statistics_fixtures")),
+                    "fixtures_statistics_players": bool(fixtures_cov.get("statistics_players")),
+                    "standings": bool(cov.get("standings")),
+                    "players": bool(cov.get("players")),
+                    "top_scorers": bool(cov.get("top_scorers")),
+                    "top_assists": bool(cov.get("top_assists")),
+                    "top_cards": bool(cov.get("top_cards")),
+                    "injuries": bool(cov.get("injuries")),
+                    "predictions": bool(cov.get("predictions")),
+                    "odds": bool(cov.get("odds")),
+                },
+            }
+        )
+    out.sort(key=lambda x: int(x.get("year") or 0), reverse=True)
+    return out
+
+
+async def fetch_api_status() -> dict[str, Any] | None:
+    """Технический дебаг-хелпер: инфо о нашей подписке (тариф, дневной лимит,
+    сколько запросов уже использовано сегодня). Короткий кэш (5 минут) — это
+    меняется в течение дня по мере использования.
+    """
+    data = await _api_get(
+        "/status",
+        {},
+        cache_key="account_status",
+        ttl_seconds=5 * 60,
+    )
+    if not data:
+        return None
+    try:
+        resp = data.get("response") or {}
+        subscription = resp.get("subscription") or {}
+        requests_info = resp.get("requests") or {}
+        return {
+            "plan": subscription.get("plan"),
+            "requests_current": requests_info.get("current"),
+            "requests_limit_day": requests_info.get("limit_day"),
+        }
+    except Exception:
+        logger.exception("[match_center] unexpected status payload shape")
+        return None
+
+
 async def fetch_fixture_statistics(fixture_id: int, ttl_seconds: int = 10 * 60) -> dict[str, dict[str, Any]] | None:
     """Статистика матча (владение мячом, удары, угловые и т.д.) по обеим командам.
 
