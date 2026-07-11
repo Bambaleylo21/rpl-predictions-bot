@@ -2773,6 +2773,19 @@ body {
   border-color: rgba(230, 230, 230, 0.16);
 }
 
+/* В РПЛ карточка "Сводка" не несёт кнопок/интерактива, только заголовок,
+   прогресс-бар и текст — убираем рамку/фон целиком, оставляя чистый текст
+   на графитовом фоне экрана, как и остальные информационные (не кнопочные)
+   блоки. ЧМ этот блок не затрагиваем — правим только под .theme-rpl. */
+.theme-rpl .matches-overview-card {
+  padding: 4px 2px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
 .matches-overview-top {
   display: flex;
   align-items: baseline;
@@ -4533,6 +4546,19 @@ select:focus-visible {
 
 .round-nav-card {
   padding: 6px;
+}
+
+/* Внешняя карточка round-nav-card дублировала окантовку: у неё самой стеклянная
+   красно-синяя рамка (от общего .theme-rpl .card), и внутри неё же свои пилюли
+   у стрелок и лейбла тура — визуально "рамка в рамке". Убираем именно внешнюю,
+   оставляя стрелки/лейбл как есть (у них собственные border/background). */
+.theme-rpl .round-nav-card {
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .round-nav {
