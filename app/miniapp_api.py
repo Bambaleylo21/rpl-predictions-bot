@@ -233,6 +233,23 @@ def _longterm_actual_scorer_key(tournament_id: int) -> str:
     return f"{LONGTERM_ACTUAL_SCORER_KEY_PREFIX}{int(tournament_id)}"
 
 
+def _parse_scorer_actual(raw: str | None) -> list[str]:
+    """Фактический(е) бомбардир(ы) хранится в Settings как JSON-список строк —
+    так можно засчитать сразу нескольких игроков, если по итогам турнира
+    несколько человек забили поровну голов и формально разделили приз "Лучший
+    бомбардир". До этой правки тут хранилась одна строка (одна фамилия) —
+    поддерживаем и такой старый формат для обратной совместимости."""
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            return [str(x).strip() for x in parsed if str(x).strip()]
+    except (TypeError, ValueError):
+        pass
+    return [raw.strip()] if raw.strip() else []
+
+
 def _legacy_trophies_for_username(username: str | None) -> list[dict[str, Any]]:
     uname = _normalize_username(username)
     if not uname:
@@ -1763,7 +1780,8 @@ async def admin_longterm_current(request: web.Request) -> web.Response:
 
             winner_options = await _wc_winner_options(session, int(tournament.id))
             winner_actual = await _get_setting(session, _longterm_actual_winner_key(int(tournament.id)))
-            scorer_actual = await _get_setting(session, _longterm_actual_scorer_key(int(tournament.id)))
+            scorer_actual_raw = await _get_setting(session, _longterm_actual_scorer_key(int(tournament.id)))
+            scorer_actual_list = _parse_scorer_actual(scorer_actual_raw)
 
             participants_q = await session.execute(
                 select(func.count(UserTournament.id)).where(UserTournament.tournament_id == int(tournament.id))
@@ -1794,7 +1812,7 @@ async def admin_longterm_current(request: web.Request) -> web.Response:
                 "tournament_code": tournament.code,
                 "tournament_name": tournament.name,
                 "winner_actual": winner_actual,
-                "scorer_actual": scorer_actual,
+                "scorer_actual": scorer_actual_list,
                 "participants": int(participants),
                 "winner_awarded": int(winner_awarded),
                 "scorer_awarded": int(scorer_awarded),
@@ -1822,8 +1840,21 @@ async def admin_longterm_set(request: web.Request) -> web.Response:
 
         body = await request.json()
         winner_value = str(body.get("winner") or "").strip()
-        scorer_value = str(body.get("scorer") or "").strip()
-        if not winner_value or not scorer_value:
+
+        # Бомбардир может быть не один — если по итогам турнира несколько игроков
+        # забили поровну и формально разделили приз, засчитываем прогноз участника
+        # верным, если он совпал с ЛЮБЫМ из них. Принимаем и список, и (для обратной
+        # совместимости со старым фронтендом) одиночную строку.
+        scorer_raw = body.get("scorer")
+        if isinstance(scorer_raw, list):
+            scorer_values = [str(x).strip() for x in scorer_raw if str(x).strip()]
+        elif isinstance(scorer_raw, str) and scorer_raw.strip():
+            scorer_values = [scorer_raw.strip()]
+        else:
+            scorer_values = []
+        scorer_values = list(dict.fromkeys(scorer_values))[:5]  # без дублей, не больше 5
+
+        if not winner_value or not scorer_values:
             return web.json_response({"ok": False, "error": "winner_and_scorer_required"}, status=400)
 
         async with SessionLocal() as session:
@@ -1834,11 +1865,12 @@ async def admin_longterm_set(request: web.Request) -> web.Response:
             winner_options = await _wc_winner_options(session, int(tournament.id))
             if winner_value not in winner_options:
                 return web.json_response({"ok": False, "error": "invalid_winner_value"}, status=400)
-            if scorer_value not in WC_TOP_SCORER_OPTIONS:
-                return web.json_response({"ok": False, "error": "invalid_scorer_value"}, status=400)
+            for sv in scorer_values:
+                if sv not in WC_TOP_SCORER_OPTIONS:
+                    return web.json_response({"ok": False, "error": "invalid_scorer_value"}, status=400)
 
             winner_norm = _normalize_pick_text(winner_value)
-            scorer_norm = _normalize_pick_text(scorer_value)
+            scorer_norms = {_normalize_pick_text(sv) for sv in scorer_values}
 
             participants_rows = (
                 await session.execute(
@@ -1881,7 +1913,7 @@ async def admin_longterm_set(request: web.Request) -> web.Response:
                 pick_scorer = _normalize_pick_text(picks.get("scorer"))
 
                 new_w = 5 if pick_winner and pick_winner == winner_norm else 0
-                new_s = 5 if pick_scorer and pick_scorer == scorer_norm else 0
+                new_s = 5 if pick_scorer and pick_scorer in scorer_norms else 0
                 new_total = new_w + new_s
                 if new_w > 0:
                     winner_awarded += 1
@@ -1907,7 +1939,11 @@ async def admin_longterm_set(request: web.Request) -> web.Response:
                 updated_count += 1
 
             await _set_setting(session, _longterm_actual_winner_key(int(tournament.id)), winner_value)
-            await _set_setting(session, _longterm_actual_scorer_key(int(tournament.id)), scorer_value)
+            await _set_setting(
+                session,
+                _longterm_actual_scorer_key(int(tournament.id)),
+                json.dumps(scorer_values, ensure_ascii=False),
+            )
             await session.commit()
 
         return web.json_response(
@@ -1916,7 +1952,7 @@ async def admin_longterm_set(request: web.Request) -> web.Response:
                 "trusted": True,
                 "is_admin": True,
                 "winner": winner_value,
-                "scorer": scorer_value,
+                "scorer": scorer_values,
                 "updated_participants": int(updated_count),
                 "changed_participants": int(changed_count),
                 "winner_awarded": int(winner_awarded),

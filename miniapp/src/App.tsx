@@ -625,7 +625,7 @@ type AdminLongtermCurrentResponse = {
   error?: string
   reason?: string
   winner_actual?: string | null
-  scorer_actual?: string | null
+  scorer_actual?: string[] | null
   participants?: number
   winner_awarded?: number
   scorer_awarded?: number
@@ -1376,7 +1376,7 @@ function App() {
   const [adminRoundTotal, setAdminRoundTotal] = useState<number>(0)
   const [adminWithoutResult, setAdminWithoutResult] = useState<number>(0)
   const [adminLongtermWinner, setAdminLongtermWinner] = useState<string>('')
-  const [adminLongtermScorer, setAdminLongtermScorer] = useState<string>('')
+  const [adminLongtermScorers, setAdminLongtermScorers] = useState<string[]>([])
   const [adminLongtermWinnerOptions, setAdminLongtermWinnerOptions] = useState<string[]>([])
   const [adminLongtermScorerOptions, setAdminLongtermScorerOptions] = useState<string[]>([])
   const [adminLongtermParticipants, setAdminLongtermParticipants] = useState<number>(0)
@@ -2719,7 +2719,7 @@ function App() {
       throw new Error(data.reason || data.error || `HTTP ${res.status}`)
     }
     setAdminLongtermWinner(data.winner_actual || '')
-    setAdminLongtermScorer(data.scorer_actual || '')
+    setAdminLongtermScorers(data.scorer_actual || [])
     setAdminLongtermWinnerOptions(data.options?.winner || [])
     setAdminLongtermScorerOptions(data.options?.scorer || [])
     setAdminLongtermParticipants(data.participants || 0)
@@ -3071,9 +3071,9 @@ function App() {
 
   const saveAdminLongterm = async () => {
     const winner = (adminLongtermWinner || '').trim()
-    const scorer = (adminLongtermScorer || '').trim()
-    if (!winner || !scorer) {
-      setAdminNotice('Выбери победителя и бомбардира.')
+    const scorers = adminLongtermScorers.filter((s) => s.trim())
+    if (!winner || scorers.length === 0) {
+      setAdminNotice('Выбери победителя и хотя бы одного бомбардира.')
       return
     }
     const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
@@ -3088,7 +3088,7 @@ function App() {
           'Content-Type': 'application/json',
           'X-Telegram-Init-Data': initData,
         },
-        body: JSON.stringify({ winner, scorer }),
+        body: JSON.stringify({ winner, scorer: scorers }),
       })
       const data = (await res.json()) as {
         ok?: boolean
@@ -4038,7 +4038,7 @@ function App() {
         </div>
         <div>
           <span>Факт</span>
-          <b>{adminLongtermWinner && adminLongtermScorer ? 'задан' : 'не задан'}</b>
+          <b>{adminLongtermWinner && adminLongtermScorers.length > 0 ? 'задан' : 'не задан'}</b>
         </div>
       </div>
       <div className="card-text admin-longterm-note">Выбери фактические итоги и пересчитай бонусы +5.</div>
@@ -4059,26 +4059,35 @@ function App() {
           </select>
         </label>
         <label className="admin-longterm-label">
-          <span>Лучший бомбардир</span>
-          <select
-            className="duel-picker-search admin-longterm-select"
-            value={adminLongtermScorer}
-            onChange={(e) => setAdminLongtermScorer(e.target.value)}
-          >
-            <option value="">Выбрать игрока</option>
+          <span>
+            Лучший бомбардир{adminLongtermScorers.length > 1 ? ` (выбрано: ${adminLongtermScorers.length})` : ''}
+          </span>
+          <div className="admin-longterm-checklist">
             {adminLongtermScorerOptions.map((v) => (
-              <option key={v} value={v}>
-                {v}
-              </option>
+              <label className="admin-longterm-check-row" key={v}>
+                <input
+                  type="checkbox"
+                  checked={adminLongtermScorers.includes(v)}
+                  onChange={(e) =>
+                    setAdminLongtermScorers((prev) =>
+                      e.target.checked ? [...prev, v] : prev.filter((x) => x !== v)
+                    )
+                  }
+                />
+                <span>{v}</span>
+              </label>
             ))}
-          </select>
+          </div>
+          <span className="segment-hint">
+            Если голов забито поровну на нескольких игроков — отметь всех, чей прогноз будет считаться верным.
+          </span>
         </label>
       </div>
       <div className="admin-longterm-actions">
         <button
           className="admin-recalc-btn"
           onClick={saveAdminLongterm}
-          disabled={adminLongtermSaving || !adminLongtermWinner || !adminLongtermScorer}
+          disabled={adminLongtermSaving || !adminLongtermWinner || adminLongtermScorers.length === 0}
         >
           {adminLongtermSaving ? 'Сохраняю…' : 'Сохранить'}
         </button>
