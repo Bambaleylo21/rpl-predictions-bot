@@ -31,6 +31,7 @@ from app.duel_notify import (
 )
 from app.display import display_round_name, display_team_name
 from app.duels import (
+    GLOBAL_ELO_TOURNAMENT_CODE,
     cancel_duel,
     create_duel,
     ensure_duel_elo,
@@ -2106,6 +2107,10 @@ async def admin_tournaments_current(request: web.Request) -> web.Response:
                 )
             ).scalars().all()
             await session.commit()
+
+        # ELO_GLOBAL — служебная запись для рейтинга Битв 1x1, не реальный турнир,
+        # не должна попадать в список для управления видимостью.
+        rows = [t for t in rows if str(t.code) != GLOBAL_ELO_TOURNAMENT_CODE]
 
         return web.json_response(
             {
