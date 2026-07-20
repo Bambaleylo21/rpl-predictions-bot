@@ -53,8 +53,13 @@ async def _apply_postgres_schema_fixes(conn) -> None:
         # Внимание: round_min/round_max/join_open/predict_open для RPL теперь управляются
         # динамически через app/season_setup.py и admin-эндпоинты в mini app — здесь их
         # больше не сбрасываем на каждом старте, чтобы не затирать текущий сезон/набор.
-        "UPDATE tournaments SET name='РПЛ', status='active', visible_in_miniapp=1, sort_order=100, is_active=1 WHERE code='RPL'",
-        "UPDATE tournaments SET name='ЧМ 2026', status='active', visible_in_miniapp=1, join_open=1, predict_open=1, sort_order=10, planned_matches_total = 104 WHERE code='WC2026'",
+        # ВАЖНО: status и visible_in_miniapp НЕ трогаем здесь принудительно — ими
+        # управляет админ через /api/miniapp/admin/tournaments/{status,visibility}
+        # (см. app/miniapp_api.py), и раньше эта же строка на каждом рестарте сервера
+        # молча возвращала скрытый/архивный турнир обратно в активный и видимый —
+        # это и была причина бага "турнир сам стал активен".
+        "UPDATE tournaments SET name='РПЛ', sort_order=100, is_active=1 WHERE code='RPL'",
+        "UPDATE tournaments SET name='ЧМ 2026', join_open=1, predict_open=1, sort_order=10, planned_matches_total = 104 WHERE code='WC2026'",
         "UPDATE tournaments SET status='active' WHERE status IS NULL OR trim(status) = ''",
         "DELETE FROM tournaments WHERE code='EPL'",
 
@@ -169,8 +174,10 @@ async def _apply_sqlite_schema_fixes(conn) -> None:
         # Внимание: round_min/round_max/join_open/predict_open для RPL теперь управляются
         # динамически через app/season_setup.py и admin-эндпоинты в mini app — здесь их
         # больше не сбрасываем на каждом старте, чтобы не затирать текущий сезон/набор.
-        "UPDATE tournaments SET name='РПЛ', status='active', visible_in_miniapp=1, sort_order=100, is_active=1 WHERE code='RPL'",
-        "UPDATE tournaments SET name='ЧМ 2026', status='active', visible_in_miniapp=1, join_open=1, predict_open=1, sort_order=10, planned_matches_total = 104 WHERE code='WC2026'",
+        # ВАЖНО: status и visible_in_miniapp НЕ трогаем здесь принудительно — см.
+        # аналогичный комментарий в _apply_postgres_schema_fixes выше.
+        "UPDATE tournaments SET name='РПЛ', sort_order=100, is_active=1 WHERE code='RPL'",
+        "UPDATE tournaments SET name='ЧМ 2026', join_open=1, predict_open=1, sort_order=10, planned_matches_total = 104 WHERE code='WC2026'",
         "UPDATE tournaments SET status='active' WHERE status IS NULL OR trim(status) = ''",
         "DELETE FROM tournaments WHERE code='EPL'",
 
