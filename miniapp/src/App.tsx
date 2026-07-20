@@ -414,6 +414,44 @@ type WcStageTab =
   | { type: 'playoff'; key: 4 | 5 | 6 | 7 | 8 | 9; label: string }
 const MATCH_STAGE_ROUND_NUMBERS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const
 
+const RPL_RULES_SECTIONS: Array<{ title: string; body: string }> = [
+  {
+    title: '1. Формат сезона',
+    body:
+      'Сезон РПЛ разбит на два этапа: Осенний (туры 1 – последний в году, в зависимости от последнего тура декабря) и Весенний (первый тур нового года – 30). Внутри каждого этапа участники разбиты на Высшую и Низшую лиги — таблица и очки считаются отдельно в каждой лиге.\n\nПо итогам Осеннего этапа 2 лучших участника Низшей лиги повышаются в Высшую, 2 худших участника Высшей — понижаются в Низшую, остальные остаются на местах. После этого автоматически открывается Весенний этап с пересчитанным составом лиг. Новый сезон открывается только после завершения Весеннего этапа.',
+  },
+  {
+    title: '2. Начисление очков за прогноз',
+    body:
+      '4 очка — точный счёт\n2 очка — исход и точная разница мячей\n1 очко — только исход, без разницы\n0 очков — исход не угадан\n\nКаждый тур и каждый матч оцениваются одинаково.',
+  },
+  {
+    title: '3. Правила прогноза',
+    body:
+      'Прогноз — счёт матча. Его можно ставить и менять сколько угодно раз, пока матч не начался. С момента стартового свистка (по плановому времени) прогноз блокируется навсегда. Если прогноз не поставлен до начала матча — очков за него просто нет.',
+  },
+  {
+    title: '4. Таблица — порядок при равенстве очков',
+    body:
+      '1) общая сумма очков (с бонусами)\n2) количество точных счетов\n3) количество «исход + разница»\n4) количество «только исход»\n5) процент угадывания\n6) количество сделанных прогнозов (меньше — выше)\n7) дата последнего прогноза (раньше — выше)',
+  },
+  {
+    title: '5. «Оценка ИИ»',
+    body:
+      'Вкладка «Оценка ИИ» в Матч-центре показывает процентную оценку исходов матча, рассчитанную собственной статистической моделью приложения — упрощённой Пуассон-моделью на истории голов команд, с учётом прошлых сезонов и текущей формы.\n\nЭто не букмекерские коэффициенты и не официальный прогноз, а справочная информация на основе статистики, без гарантии точности. Настоящих коэффициентов на матчи РПЛ в используемых данных нет.',
+  },
+  {
+    title: '6. Взносы',
+    body:
+      'Сумма взноса на участие определяется перед стартом каждого этапа путём голосования в телеграм-канале — отдельно участниками каждой лиги. Сначала определяется взнос Низшей лиги, затем — Высшей, поскольку взнос в Высшей лиге не может быть меньше, чем в Низшей.',
+  },
+  {
+    title: '7. Победители',
+    body:
+      'Победителем лиги становится участник, занявший 1-е место в своей лиге, — он получает 100% от призового фонда. Победителем не может стать ИИ: в этом случае первое место присуждается ближайшему человеку.',
+  },
+]
+
 type MatchStageAvailability = {
   round: number
   round_name?: string
@@ -1373,6 +1411,7 @@ function App() {
   const [achievementPreview, setAchievementPreview] = useState<AchievementWithVisual | null>(null)
   const [historyExpanded, setHistoryExpanded] = useState<boolean>(false)
   const [notifModalOpen, setNotifModalOpen] = useState<boolean>(false)
+  const [rulesModalOpen, setRulesModalOpen] = useState<boolean>(false)
   const [notifPrefs, setNotifPrefs] = useState<{ all: boolean; reminders: boolean; duels: boolean; achievements: boolean }>({
     all: true,
     reminders: true,
@@ -6456,6 +6495,15 @@ function App() {
                       </>
                     )}
                   </div>
+                  {selectedTournamentCode === 'RPL' ? (
+                    <button
+                      type="button"
+                      className="rules-open-btn"
+                      onClick={() => setRulesModalOpen(true)}
+                    >
+                      📖 Правила турнира
+                    </button>
+                  ) : null}
                 </div>
               </section>
             ) : null}
@@ -6756,6 +6804,37 @@ function App() {
                 })}
               </div>
               {notifError && showDebugPanels ? <div className="notif-modal-error">Debug: {notifError}</div> : null}
+            </div>
+          </div>
+        ) : null}
+
+        {rulesModalOpen ? (
+          <div className="notif-modal-overlay" onClick={() => setRulesModalOpen(false)}>
+            <div className="notif-modal-card rules-modal-card" onClick={(ev) => ev.stopPropagation()}>
+              <button
+                type="button"
+                className="notif-modal-close"
+                onClick={() => setRulesModalOpen(false)}
+                aria-label="Закрыть"
+              >
+                ✕
+              </button>
+              <div className="notif-modal-title">Правила турнира</div>
+              <div className="rules-modal-body">
+                {RPL_RULES_SECTIONS.map((section) => (
+                  <div className="rules-modal-section" key={section.title}>
+                    <div className="rules-modal-section-title">{section.title}</div>
+                    <div className="rules-modal-section-text">
+                      {section.body.split('\n').map((line, idx) => (
+                        <span key={idx}>
+                          {line}
+                          {idx < section.body.split('\n').length - 1 ? <br /> : null}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         ) : null}

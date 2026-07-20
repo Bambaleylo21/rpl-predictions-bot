@@ -2748,6 +2748,46 @@ body {
   line-height: 1.28;
 }
 
+.rules-open-btn {
+  margin-top: 10px;
+  width: 100%;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: #0d0d0d;
+  color: var(--text-main);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.rules-open-btn:active {
+  opacity: 0.8;
+}
+
+.rules-modal-card {
+  max-height: 82vh;
+  overflow-y: auto;
+}
+
+.rules-modal-body {
+  display: grid;
+  gap: 10px;
+}
+
+.rules-modal-section-title {
+  color: var(--text-main);
+  font-size: 12px;
+  font-weight: 800;
+  margin-bottom: 2px;
+}
+
+.rules-modal-section-text {
+  color: var(--text-muted);
+  font-size: 11.5px;
+  line-height: 1.32;
+}
+
 .segment-card {
   padding: 12px;
 }
