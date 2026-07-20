@@ -1325,8 +1325,7 @@ function App() {
   const [scoreInputs, setScoreInputs] = useState<Record<number, string>>({})
   const [savingMatchId, setSavingMatchId] = useState<number | null>(null)
   const [savingAllPredictions, setSavingAllPredictions] = useState<boolean>(false)
-  const [autoPredicting, setAutoPredicting] = useState<boolean>(false)
-  const [autoPredictNotice, setAutoPredictNotice] = useState<string | null>(null)
+
   const [predictNotice, setPredictNotice] = useState<string | null>(null)
   const [matchPredictionsSheet, setMatchPredictionsSheet] = useState<MatchPredictionsResponse | null>(null)
   const [matchPredictionsLoadingId, setMatchPredictionsLoadingId] = useState<number | null>(null)
@@ -2305,80 +2304,6 @@ function App() {
       setPredictNotice('Не удалось сохранить все прогнозы. Проверь счета и попробуй ещё раз.')
     } finally {
       setSavingAllPredictions(false)
-    }
-  }
-
-  const autoFillPredictionsFromOdds = async () => {
-    const targets = (predictData?.items || []).filter((item) => {
-      if (item.is_placeholder || item.locked) return false
-      if (normalizeScore(item.prediction || '')) return false
-      if (normalizeScore(scoreInputs[item.match_id] || '')) return false
-      return true
-    })
-
-    if (targets.length === 0) {
-      setAutoPredictNotice('Все матчи тура уже проставлены.')
-      return
-    }
-
-    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
-    const initData = getInitData()
-    const tParam = encodeURIComponent(selectedTournamentCode || 'RPL')
-    setAutoPredicting(true)
-    setAutoPredictNotice(null)
-    try {
-      const res = await fetch(`${apiBase}/api/miniapp/predict/auto_odds?t=${tParam}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Telegram-Init-Data': initData,
-        },
-        body: JSON.stringify({ match_ids: targets.map((item) => item.match_id) }),
-      })
-      const data = (await res.json()) as {
-        ok?: boolean
-        error?: string
-        reason?: string
-        items?: Array<{ match_id: number; pred_home: number; pred_away: number }>
-        skipped_match_ids?: number[]
-      }
-      if (!res.ok || !data.ok) {
-        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
-      }
-      const suggested = data.items || []
-      if (suggested.length === 0) {
-        setAutoPredictNotice('Оценка ИИ пока недоступна ни для одного матча тура.')
-        return
-      }
-      setScoreInputs((prev) => {
-        const next = { ...prev }
-        for (const item of suggested) {
-          next[item.match_id] = `${item.pred_home}:${item.pred_away}`
-        }
-        return next
-      })
-      for (const item of suggested) {
-        await savePredictionRequest(
-          apiBase,
-          initData,
-          selectedTournamentCode,
-          item.match_id,
-          `${item.pred_home}:${item.pred_away}`
-        )
-      }
-      const skippedCount = (data.skipped_match_ids || []).length
-      setAutoPredictNotice(
-        skippedCount > 0
-          ? `Заполнено и сохранено: ${suggested.length}. Оценка ИИ пока недоступна для ${skippedCount} матч(ей).`
-          : `Заполнено и сохранено прогнозов: ${suggested.length}.`
-      )
-      haptic.success()
-      await loadPredictCurrent(apiBase, initData, selectedTournamentCode, selectedRoundNumber)
-    } catch (_err) {
-      haptic.error()
-      setAutoPredictNotice('Не удалось заполнить прогнозы. Попробуй ещё раз.')
-    } finally {
-      setAutoPredicting(false)
     }
   }
 
@@ -5547,21 +5472,6 @@ function App() {
                               ? 'Остались непроставленные матчи'
                               : 'Все матчи сохранены'}
                       </button>
-                      {selectedTournamentCode === 'RPL' ? (
-                        <>
-                          <button
-                            type="button"
-                            className="save-btn auto-predict-btn"
-                            onClick={autoFillPredictionsFromOdds}
-                            disabled={autoPredicting || savingAllPredictions || emptyOpenPredictionCount === 0}
-                          >
-                            {autoPredicting ? 'Считаю оценку ИИ...' : 'Прогноз от ИИ'}
-                          </button>
-                          {autoPredictNotice ? (
-                            <div className="auto-predict-notice">{autoPredictNotice}</div>
-                          ) : null}
-                        </>
-                      ) : null}
                     </div>
                   ) : closedPredictionGroups.length === 0 ? (
                     <div className="card">
