@@ -2965,9 +2965,6 @@ async def _build_profile_tournament_history(
         return history
 
     for tid in tournament_ids:
-        if int(tid) == int(current_tournament_id):
-            continue
-
         tournament = (
             await session.execute(select(Tournament).where(Tournament.id == int(tid)))
         ).scalar_one_or_none()
@@ -2997,7 +2994,14 @@ async def _build_profile_tournament_history(
         )
         played_matches = int(played_matches_q.scalar_one() or 0)
 
-        # В историю попадают только завершённые турниры.
+        # В историю попадают только полностью завершённые турниры. Раньше здесь
+        # ещё безусловно пропускался турнир, если он совпадал с текущим выбранным
+        # (current_tournament_id) — это было нужно, чтобы не показывать ещё идущий
+        # турнир как "историю" самого себя. Но из-за этого полностью сыгранный ЧМ
+        # навсегда прятался из истории у всех, кто просто не переключил вкладку
+        # турнира на что-то другое после его окончания. Теперь единственное условие
+        # показа — реальная завершённость (все матчи сыграны), а не то, что сейчас
+        # выбрано в переключателе.
         if played_matches < total_matches:
             continue
 
