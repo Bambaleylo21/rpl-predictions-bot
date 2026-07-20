@@ -76,33 +76,14 @@
 /* Стеклянные карточки: полупрозрачная заливка + градиентная (красный→синий)
    окантовка вместо плоской однотонной рамки. Затрагивает .card целиком —
    то есть все карточки на Матчах/Таблице/1x1/Admin/Профиле сразу, для
-   цельного вида.
-
-   Важно: рамка сделана через маску (::before + mask-composite), а не через
-   старый приём с двумя background (padding-box/border-box) — тот приём в
-   Safari/WebKit на скруглённых углах иногда даёт артефакт: тонкая "палочка"
-   торчит за пределы закругления ровно в углу (видно на первой строке
-   таблицы РПЛ). Маска рисует рамку отдельным слоем строго по border-radius
-   родителя, без этого артефакта. */
+   цельного вида. */
 .theme-rpl .card {
-  position: relative;
   border: 1px solid transparent;
-  background: rgba(18, 18, 24, 0.78);
+  background:
+    linear-gradient(rgba(18, 18, 24, 0.78), rgba(18, 18, 24, 0.78)) padding-box,
+    linear-gradient(135deg, rgba(227, 6, 19, 0.5), rgba(0, 92, 169, 0.38)) border-box;
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-}
-
-.theme-rpl .card::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 1px;
-  background: linear-gradient(135deg, rgba(227, 6, 19, 0.5), rgba(0, 92, 169, 0.38));
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  pointer-events: none;
 }
 
 /* Раунд 2: компоненты с зашитыми (не переменными) золотыми hex-стопами
