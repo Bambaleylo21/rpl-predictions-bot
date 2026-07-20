@@ -1352,6 +1352,7 @@ function App() {
   const [winnerSearch, setWinnerSearch] = useState<string>('')
   const [scorerSearch, setScorerSearch] = useState<string>('')
   const [selectedTournamentCode, setSelectedTournamentCode] = useState<string>('WC2026')
+  const [visibleTournamentCodes, setVisibleTournamentCodes] = useState<string[] | null>(null)
   const [tournamentNotice, setTournamentNotice] = useState<string | null>(null)
   const [tournamentSwitching, setTournamentSwitching] = useState<boolean>(false)
   const [tournamentSwitchClosing, setTournamentSwitchClosing] = useState<boolean>(false)
@@ -1792,6 +1793,7 @@ function App() {
           const wcFirst = data.items?.find((x) => x.code === 'WC2026')?.code
           const selected = wcFirst || data.selected_tournament_code || data.items?.find((x) => x.selected)?.code || 'WC2026'
           setSelectedTournamentCode(selected)
+          setVisibleTournamentCodes((data.items || []).map((x) => x.code))
         })
         .catch(() => {
           // silent: fallback to default tournament code
@@ -2835,6 +2837,29 @@ function App() {
     }
   }
 
+  const setTournamentStatus = async (code: string, status: string) => {
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    setAdminTournamentTogglingCode(code)
+    setAdminTournamentsError(null)
+    try {
+      const res = await fetch(`${apiBase}/api/miniapp/admin/tournaments/status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': initData },
+        body: JSON.stringify({ code, status }),
+      })
+      const data = (await res.json()) as { ok?: boolean; error?: string; reason?: string }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      await loadAdminTournaments(apiBase, initData)
+    } catch (err) {
+      setAdminTournamentsError(`Не удалось изменить статус: ${String(err)}`)
+    } finally {
+      setAdminTournamentTogglingCode(null)
+    }
+  }
+
   const checkRplApiCoverage = async () => {
     const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
     const initData = getInitData()
@@ -3517,7 +3542,7 @@ function App() {
   const tournamentButtons = [
     { code: 'WC2026', label: 'WC', activeIcon: wcActiveIcon, inactiveIcon: wcInactiveIcon },
     { code: 'RPL', label: 'РПЛ', activeIcon: rplActiveIcon, inactiveIcon: rplInactiveIcon },
-  ]
+  ].filter((t) => visibleTournamentCodes == null || visibleTournamentCodes.includes(t.code))
   const showWcSelector = selectedTournamentCode === 'WC2026'
   const longtermLocked = Boolean(longtermData?.locked)
   const winnerCurrent = (longtermData?.picks?.winner || '').trim()
@@ -4590,7 +4615,7 @@ function App() {
   const renderAdminTournamentsContent = () => (
     <div className="admin-inline-panel">
       <div className="card-text admin-empty-text">
-        Показывает/скрывает турнир в переключателе наверху мини-аппа. Прогнозы, очки и история участников не затрагиваются — действие полностью обратимо.
+        «Показать/Скрыть» — управляет видимостью в переключателе наверху мини-аппа. «Завершить турнир» — помечает турнир как архивный (статус «Завершён»); архивный турнир автоматически скрывается из переключателя, даже если отдельно включена видимость. Прогнозы, очки и история участников не затрагиваются — оба действия полностью обратимы.
       </div>
       <div className="compact-list-card admin-inline-list">
         {adminTournaments.length === 0 ? (
@@ -4598,6 +4623,7 @@ function App() {
         ) : (
           adminTournaments.map((t) => {
             const isVisible = !!t.visible_in_miniapp
+            const isArchived = t.status === 'archived'
             const busy = adminTournamentTogglingCode === t.code
             return (
               <div className="compact-match admin-participant-row" key={`admin-tournament-${t.code}`}>
@@ -4617,6 +4643,15 @@ function App() {
                     disabled={busy}
                   >
                     {busy ? '…' : isVisible ? 'Скрыть' : 'Показать'}
+                  </button>
+                </div>
+                <div className="admin-points-adjust-row">
+                  <button
+                    className="admin-reset-btn"
+                    onClick={() => setTournamentStatus(t.code, isArchived ? 'active' : 'archived')}
+                    disabled={busy}
+                  >
+                    {busy ? '…' : isArchived ? 'Вернуть в активные' : 'Завершить турнир'}
                   </button>
                 </div>
               </div>

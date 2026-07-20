@@ -2174,6 +2174,53 @@ async def admin_tournament_visibility_set(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": "admin_tournament_visibility_set_failed"}, status=500)
 
 
+_TOURNAMENT_STATUS_CHOICES = {"active", "archived", "draft", "announce"}
+
+
+async def admin_tournament_status_set(request: web.Request) -> web.Response:
+    """Меняет Tournament.status (active/archived/draft/announce). Используется,
+    например, чтобы пометить турнир как «Завершён» (status=archived), когда все
+    матчи и доп.прогнозы уже отыграны. Архивный турнир автоматически скрывается
+    из переключателя (см. _is_tournament_visible_in_miniapp), независимо от
+    отдельного флага visible_in_miniapp. Прогнозы, очки и история участников не
+    затрагиваются — обратимо в любой момент."""
+    try:
+        auth_result = _extract_verified_admin_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+
+        body = await request.json()
+        code = str(body.get("code") or "").strip().upper()
+        status = str(body.get("status") or "").strip().lower()
+        if not code:
+            return web.json_response({"ok": False, "error": "code_required"}, status=400)
+        if status not in _TOURNAMENT_STATUS_CHOICES:
+            return web.json_response({"ok": False, "error": "invalid_status"}, status=400)
+
+        async with SessionLocal() as session:
+            tournament = (
+                await session.execute(select(Tournament).where(Tournament.code == code))
+            ).scalar_one_or_none()
+            if tournament is None:
+                return web.json_response({"ok": False, "error": "tournament_not_found"}, status=404)
+
+            tournament.status = status
+            await session.commit()
+
+        return web.json_response(
+            {
+                "ok": True,
+                "trusted": True,
+                "is_admin": True,
+                "code": code,
+                "status": status,
+            }
+        )
+    except Exception:
+        logger.exception("miniapp admin_tournament_status_set error")
+        return web.json_response({"ok": False, "error": "admin_tournament_status_set_failed"}, status=500)
+
+
 async def tournament_join(request: web.Request) -> web.Response:
     auth_result = _extract_verified_user(request)
     if auth_result[0] is None:
@@ -6907,6 +6954,7 @@ def build_app() -> web.Application:
     app.router.add_post("/api/miniapp/tournament/select", tournament_select)
     app.router.add_get("/api/miniapp/admin/tournaments/current", admin_tournaments_current)
     app.router.add_post("/api/miniapp/admin/tournaments/visibility", admin_tournament_visibility_set)
+    app.router.add_post("/api/miniapp/admin/tournaments/status", admin_tournament_status_set)
     app.router.add_post("/api/miniapp/tournament/join", tournament_join)
     app.router.add_get("/api/miniapp/notifications/current", notifications_current)
     app.router.add_post("/api/miniapp/notifications/set", notifications_set)
