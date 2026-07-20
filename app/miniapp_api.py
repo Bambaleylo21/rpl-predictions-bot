@@ -2084,6 +2084,91 @@ async def tournament_select(request: web.Request) -> web.Response:
         )
 
 
+async def admin_tournaments_current(request: web.Request) -> web.Response:
+    """Список ВСЕХ турниров (в т.ч. уже скрытых из переключателя) — для админ-
+    экрана управления видимостью. В отличие от tournaments_list (который берёт
+    только активные и видимые турниры для самого переключателя), тут нужно
+    видеть и то, что уже спрятано, чтобы можно было вернуть обратно."""
+    try:
+        auth_result = _extract_verified_admin_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+
+        async with SessionLocal() as session:
+            await _ensure_default_tournaments(session)
+            rows = (
+                await session.execute(
+                    select(Tournament).order_by(
+                        case((Tournament.sort_order.is_(None), 1), else_=0),
+                        Tournament.sort_order.asc(),
+                        Tournament.code.asc(),
+                    )
+                )
+            ).scalars().all()
+            await session.commit()
+
+        return web.json_response(
+            {
+                "ok": True,
+                "trusted": True,
+                "is_admin": True,
+                "items": [
+                    {
+                        "code": t.code,
+                        "name": t.name,
+                        "status": str(getattr(t, "status", "active") or "active"),
+                        "visible_in_miniapp": int(getattr(t, "visible_in_miniapp", 1) or 0),
+                        "is_active": int(getattr(t, "is_active", 1) or 0),
+                    }
+                    for t in rows
+                ],
+            }
+        )
+    except Exception:
+        logger.exception("miniapp admin_tournaments_current error")
+        return web.json_response({"ok": False, "error": "admin_tournaments_current_failed"}, status=500)
+
+
+async def admin_tournament_visibility_set(request: web.Request) -> web.Response:
+    """Показать/скрыть турнир в переключателе наверху мини-аппа (поле
+    Tournament.visible_in_miniapp). Ничего не удаляет и не архивирует —
+    предсказания, очки, история турниров участников не затрагиваются, только
+    видимость самого турнира в списке для выбора. Обратимо в любой момент."""
+    try:
+        auth_result = _extract_verified_admin_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+
+        body = await request.json()
+        code = str(body.get("code") or "").strip().upper()
+        visible = bool(body.get("visible"))
+        if not code:
+            return web.json_response({"ok": False, "error": "code_required"}, status=400)
+
+        async with SessionLocal() as session:
+            tournament = (
+                await session.execute(select(Tournament).where(Tournament.code == code))
+            ).scalar_one_or_none()
+            if tournament is None:
+                return web.json_response({"ok": False, "error": "tournament_not_found"}, status=404)
+
+            tournament.visible_in_miniapp = 1 if visible else 0
+            await session.commit()
+
+        return web.json_response(
+            {
+                "ok": True,
+                "trusted": True,
+                "is_admin": True,
+                "code": code,
+                "visible_in_miniapp": 1 if visible else 0,
+            }
+        )
+    except Exception:
+        logger.exception("miniapp admin_tournament_visibility_set error")
+        return web.json_response({"ok": False, "error": "admin_tournament_visibility_set_failed"}, status=500)
+
+
 async def tournament_join(request: web.Request) -> web.Response:
     auth_result = _extract_verified_user(request)
     if auth_result[0] is None:
@@ -6815,6 +6900,8 @@ def build_app() -> web.Application:
     app.router.add_get("/api/miniapp/me", me)
     app.router.add_get("/api/miniapp/tournaments", tournaments_list)
     app.router.add_post("/api/miniapp/tournament/select", tournament_select)
+    app.router.add_get("/api/miniapp/admin/tournaments/current", admin_tournaments_current)
+    app.router.add_post("/api/miniapp/admin/tournaments/visibility", admin_tournament_visibility_set)
     app.router.add_post("/api/miniapp/tournament/join", tournament_join)
     app.router.add_get("/api/miniapp/notifications/current", notifications_current)
     app.router.add_post("/api/miniapp/notifications/set", notifications_set)

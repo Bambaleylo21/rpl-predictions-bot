@@ -667,6 +667,21 @@ type AdminParticipantsCurrentResponse = {
   items?: AdminParticipantItem[]
 }
 
+type AdminTournamentItem = {
+  code: string
+  name: string
+  status: string
+  visible_in_miniapp: number
+  is_active: number
+}
+
+type AdminTournamentsCurrentResponse = {
+  ok: boolean
+  error?: string
+  reason?: string
+  items?: AdminTournamentItem[]
+}
+
 type RplStageInfo = {
   id: number
   name: string
@@ -1369,7 +1384,7 @@ function App() {
   const [currentInsight, setCurrentInsight] = useState<string | null>(null)
   const [adminRounds, setAdminRounds] = useState<AdminRound[]>([])
   const [adminRound, setAdminRound] = useState<number | null>(null)
-  const [adminViewMode, setAdminViewMode] = useState<'matches' | 'playoff' | 'longterm' | 'participants' | 'duels' | 'rpl_season' | 'rpl_participants' | null>('matches')
+  const [adminViewMode, setAdminViewMode] = useState<'matches' | 'playoff' | 'longterm' | 'participants' | 'duels' | 'rpl_season' | 'rpl_participants' | 'tournaments' | null>('matches')
   const [adminMode, setAdminMode] = useState<'open' | 'all'>('open')
   const [adminResults, setAdminResults] = useState<AdminResultItem[]>([])
   const [adminRoundName, setAdminRoundName] = useState<string>('')
@@ -1394,6 +1409,9 @@ function App() {
   const [adminRplCoverageError, setAdminRplCoverageError] = useState<string | null>(null)
   const [adminRplBackfillBusy, setAdminRplBackfillBusy] = useState<boolean>(false)
   const [adminRplBackfillResult, setAdminRplBackfillResult] = useState<string | null>(null)
+  const [adminTournaments, setAdminTournaments] = useState<AdminTournamentItem[]>([])
+  const [adminTournamentsError, setAdminTournamentsError] = useState<string | null>(null)
+  const [adminTournamentTogglingCode, setAdminTournamentTogglingCode] = useState<string | null>(null)
   const [adminRplParticipants, setAdminRplParticipants] = useState<RplParticipantItem[]>([])
   const [adminRplAssigningId, setAdminRplAssigningId] = useState<number | null>(null)
   const [adminRplPointsInputs, setAdminRplPointsInputs] = useState<Record<number, string>>({})
@@ -1439,7 +1457,7 @@ function App() {
   const [joinNameTouched, setJoinNameTouched] = useState<boolean>(false)
   const [refreshTick, setRefreshTick] = useState<number>(0)
 
-  const toggleAdminViewMode = (mode: 'matches' | 'playoff' | 'longterm' | 'participants' | 'duels' | 'rpl_season' | 'rpl_participants') => {
+  const toggleAdminViewMode = (mode: 'matches' | 'playoff' | 'longterm' | 'participants' | 'duels' | 'rpl_season' | 'rpl_participants' | 'tournaments') => {
     setAdminViewMode((current) => (current === mode ? null : mode))
   }
 
@@ -2784,6 +2802,39 @@ function App() {
     setAdminRplParticipants(data.items || [])
   }
 
+  const loadAdminTournaments = async (apiBase: string, initData: string) => {
+    const headers = { 'X-Telegram-Init-Data': initData }
+    const res = await fetch(`${apiBase}/api/miniapp/admin/tournaments/current`, { headers })
+    const data = (await res.json()) as AdminTournamentsCurrentResponse
+    if (!res.ok || !data.ok) {
+      throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+    }
+    setAdminTournaments(data.items || [])
+  }
+
+  const toggleTournamentVisibility = async (code: string, nextVisible: boolean) => {
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    setAdminTournamentTogglingCode(code)
+    setAdminTournamentsError(null)
+    try {
+      const res = await fetch(`${apiBase}/api/miniapp/admin/tournaments/visibility`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': initData },
+        body: JSON.stringify({ code, visible: nextVisible }),
+      })
+      const data = (await res.json()) as { ok?: boolean; error?: string; reason?: string }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      await loadAdminTournaments(apiBase, initData)
+    } catch (err) {
+      setAdminTournamentsError(`Не удалось изменить видимость: ${String(err)}`)
+    } finally {
+      setAdminTournamentTogglingCode(null)
+    }
+  }
+
   const checkRplApiCoverage = async () => {
     const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
     const initData = getInitData()
@@ -3426,6 +3477,15 @@ function App() {
     const initData = getInitData()
     if (!initData) return
     loadAdminRplParticipants(apiBase, initData).catch((err) => setAdminError(String(err)))
+  }, [meData?.is_admin, adminViewMode])
+
+  useEffect(() => {
+    if (!meData?.is_admin) return
+    if (adminViewMode !== 'tournaments') return
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    if (!initData) return
+    loadAdminTournaments(apiBase, initData).catch((err) => setAdminTournamentsError(String(err)))
   }, [meData?.is_admin, adminViewMode])
 
   useEffect(() => {
@@ -4519,6 +4579,54 @@ function App() {
       </div>
     )
   }
+
+  const tournamentStatusLabel = (t: AdminTournamentItem) => {
+    if (t.status === 'archived') return 'Архив'
+    if (t.status === 'draft') return 'Черновик'
+    if (t.status === 'announce') return 'Анонс'
+    return 'Активен'
+  }
+
+  const renderAdminTournamentsContent = () => (
+    <div className="admin-inline-panel">
+      <div className="card-text admin-empty-text">
+        Показывает/скрывает турнир в переключателе наверху мини-аппа. Прогнозы, очки и история участников не затрагиваются — действие полностью обратимо.
+      </div>
+      <div className="compact-list-card admin-inline-list">
+        {adminTournaments.length === 0 ? (
+          <div className="card-text admin-empty-text">Турниры не найдены.</div>
+        ) : (
+          adminTournaments.map((t) => {
+            const isVisible = !!t.visible_in_miniapp
+            const busy = adminTournamentTogglingCode === t.code
+            return (
+              <div className="compact-match admin-participant-row" key={`admin-tournament-${t.code}`}>
+                <div className="admin-participant-main">
+                  <div className="admin-participant-name">
+                    <span className="team-name team-left">{t.name}</span>
+                    <span className="group-small">
+                      {t.code} · {tournamentStatusLabel(t)}
+                    </span>
+                  </div>
+                  <b className={`status-pill ${isVisible ? 'status-pill-open' : 'status-pill-closed'}`}>
+                    {isVisible ? 'Виден' : 'Скрыт'}
+                  </b>
+                  <button
+                    className="admin-reset-btn"
+                    onClick={() => toggleTournamentVisibility(t.code, !isVisible)}
+                    disabled={busy}
+                  >
+                    {busy ? '…' : isVisible ? 'Скрыть' : 'Показать'}
+                  </button>
+                </div>
+              </div>
+            )
+          })
+        )}
+      </div>
+      {adminTournamentsError ? <div className="card-text admin-empty-text">{adminTournamentsError}</div> : null}
+    </div>
+  )
 
   const renderAdminDuelsContent = () => {
     const visibleAdminDuels = adminDuelsFilter === 'active' ? adminDuels?.active || [] : adminDuels?.finished || []
@@ -6510,6 +6618,18 @@ function App() {
                     <span className="admin-accordion-caret">{adminViewMode === 'duels' ? '⌃' : '⌄'}</span>
                   </button>
                   {adminViewMode === 'duels' ? renderAdminDuelsContent() : null}
+
+                  <button
+                    className={`admin-accordion-head ${adminViewMode === 'tournaments' ? 'is-active' : ''}`}
+                    onClick={() => toggleAdminViewMode('tournaments')}
+                  >
+                    <span>
+                      <b>Турниры</b>
+                      <small>показать/скрыть в переключателе</small>
+                    </span>
+                    <span className="admin-accordion-caret">{adminViewMode === 'tournaments' ? '⌃' : '⌄'}</span>
+                  </button>
+                  {adminViewMode === 'tournaments' ? renderAdminTournamentsContent() : null}
                 </div>
 
                 {adminError ? <div className="card-text admin-status-line">Ошибка: {adminError}</div> : null}
