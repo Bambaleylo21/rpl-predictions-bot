@@ -1351,7 +1351,7 @@ function App() {
   const [scorerPickerOpen, setScorerPickerOpen] = useState<boolean>(false)
   const [winnerSearch, setWinnerSearch] = useState<string>('')
   const [scorerSearch, setScorerSearch] = useState<string>('')
-  const [selectedTournamentCode, setSelectedTournamentCode] = useState<string>('WC2026')
+  const [selectedTournamentCode, setSelectedTournamentCode] = useState<string>('RPL')
   const [visibleTournamentCodes, setVisibleTournamentCodes] = useState<string[] | null>(null)
   const [tournamentNotice, setTournamentNotice] = useState<string | null>(null)
   const [tournamentSwitching, setTournamentSwitching] = useState<boolean>(false)
@@ -1790,8 +1790,8 @@ function App() {
           if (!res.ok) {
             throw new Error(data.reason || data.error || `HTTP ${res.status}`)
           }
-          const wcFirst = data.items?.find((x) => x.code === 'WC2026')?.code
-          const selected = wcFirst || data.selected_tournament_code || data.items?.find((x) => x.selected)?.code || 'WC2026'
+          const rplFirst = data.items?.find((x) => x.code === 'RPL')?.code
+          const selected = data.selected_tournament_code || rplFirst || data.items?.find((x) => x.selected)?.code || 'RPL'
           setSelectedTournamentCode(selected)
           setVisibleTournamentCodes((data.items || []).map((x) => x.code))
         })
@@ -2138,7 +2138,7 @@ function App() {
   }
 
   const joinSelectedTournament = async () => {
-    const joinTournamentCode = selectedTournamentCode || 'WC2026'
+    const joinTournamentCode = selectedTournamentCode || 'RPL'
     const displayName = joinNameInput.trim().replace(/\s+/g, ' ')
     if (displayName.length < 2 || displayName.length > 24) {
       setTournamentNotice('Введи имя для таблицы — от 2 до 24 символов.')
