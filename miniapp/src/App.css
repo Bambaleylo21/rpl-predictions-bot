@@ -382,9 +382,11 @@ body {
   border-bottom: 0;
 }
 
-.table-grid-row.is-user {
-  background: rgba(var(--accent-rgb), 0.16);
-  border-radius: 8px;
+.table-grid-row.is-user .col-place,
+.table-grid-row.is-user .col-name,
+.table-grid-row.is-user .col-num {
+  font-weight: 800;
+  color: var(--text-main);
 }
 
 .league-table-card {
