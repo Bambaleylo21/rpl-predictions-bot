@@ -429,6 +429,43 @@ async def fetch_fixture_events(fixture_id: int, ttl_seconds: int = 10 * 60) -> l
     return out
 
 
+def _parse_league_coverage_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    league_info = entry.get("league") or {}
+    country_info = entry.get("country") or {}
+    seasons_entries = entry.get("seasons") or []
+    seasons_out: list[dict[str, Any]] = []
+    for s in seasons_entries:
+        cov = s.get("coverage") or {}
+        fixtures_cov = cov.get("fixtures") or {}
+        seasons_out.append(
+            {
+                "year": s.get("year"),
+                "current": bool(s.get("current")),
+                "coverage": {
+                    "fixtures_events": bool(fixtures_cov.get("events")),
+                    "fixtures_lineups": bool(fixtures_cov.get("lineups")),
+                    "fixtures_statistics_fixtures": bool(fixtures_cov.get("statistics_fixtures")),
+                    "fixtures_statistics_players": bool(fixtures_cov.get("statistics_players")),
+                    "standings": bool(cov.get("standings")),
+                    "players": bool(cov.get("players")),
+                    "top_scorers": bool(cov.get("top_scorers")),
+                    "top_assists": bool(cov.get("top_assists")),
+                    "top_cards": bool(cov.get("top_cards")),
+                    "injuries": bool(cov.get("injuries")),
+                    "predictions": bool(cov.get("predictions")),
+                    "odds": bool(cov.get("odds")),
+                },
+            }
+        )
+    seasons_out.sort(key=lambda x: int(x.get("year") or 0), reverse=True)
+    return {
+        "league_id": league_info.get("id"),
+        "league_name": league_info.get("name"),
+        "country": country_info.get("name"),
+        "seasons": seasons_out,
+    }
+
+
 async def fetch_league_coverage(league_id: int) -> list[dict[str, Any]]:
     """Технический дебаг-хелпер (не используется на боевых экранах): какие типы
     данных API-Football реально покрывает для этой лиги, по сезонам — coverage
@@ -475,6 +512,43 @@ async def fetch_league_coverage(league_id: int) -> list[dict[str, Any]]:
         )
     out.sort(key=lambda x: int(x.get("year") or 0), reverse=True)
     return out
+
+
+async def fetch_league_coverage_search(
+    *, league_id: int | None = None, country: str | None = None, name: str | None = None
+) -> list[dict[str, Any]]:
+    """Как fetch_league_coverage, но ищет лигу по id ИЛИ по стране/названию —
+    удобно, когда точный league_id ещё не известен (например, для нового
+    чемпионата, который мы ещё не подключали). Возвращает список найденных
+    лиг (может быть несколько при неточном названии), с coverage по сезонам
+    у каждой. Не кэшируется отдельно от _api_get (кэш там уже по параметрам
+    запроса, поэтому одинаковые country/name не бьют лимит повторно)."""
+    params: dict[str, str] = {}
+    if league_id:
+        params["id"] = str(league_id)
+    if country:
+        params["country"] = country
+    if name:
+        params["search"] = name
+    if not params:
+        return []
+
+    cache_key = f"coverage_search:{league_id or ''}:{country or ''}:{name or ''}"
+    data = await _api_get(
+        "/leagues",
+        params,
+        cache_key=cache_key,
+        ttl_seconds=24 * 3600,
+    )
+    if not data:
+        return []
+    try:
+        entries = data.get("response") or []
+    except Exception:
+        logger.exception("[match_center] unexpected leagues payload shape")
+        return []
+
+    return [_parse_league_coverage_entry(entry) for entry in entries]
 
 
 async def fetch_api_status() -> dict[str, Any] | None:

@@ -6617,17 +6617,46 @@ async def admin_rpl_enroll_set(request: web.Request) -> web.Response:
 
 async def admin_rpl_api_coverage(request: web.Request) -> web.Response:
     """Технический дебаг-эндпоинт (только для админа): что реально отдаёт
-    API-Football по лиге РПЛ — по каждому сезону отдельно (coverage может
+    API-Football по лиге — по каждому сезону отдельно (coverage может
     отличаться год от года), плюс статус нашей подписки (тариф, дневной лимит,
     сколько запросов уже потрачено сегодня). Не используется ни на одном
     боевом экране, нужен только чтобы разово всё проверить из админки.
+
+    По умолчанию проверяет РПЛ (как раньше). Чтобы проверить любую другую
+    лигу — передать в query string ?league_id=39 (если id уже известен) или
+    ?country=Scotland&name=Premiership (поиск по названию/стране, если id
+    не известен). Можно найти несколько лиг сразу, если название неточное —
+    тогда в ответе будет несколько элементов в leagues[].
     """
     try:
         auth_result = _extract_verified_admin_user(request)
         if auth_result[0] is None:
             return auth_result[1]
 
-        from app.match_center import fetch_api_status, fetch_league_coverage
+        from app.match_center import fetch_api_status, fetch_league_coverage, fetch_league_coverage_search
+
+        query_league_id_raw = (request.query.get("league_id") or "").strip()
+        query_country = (request.query.get("country") or "").strip()
+        query_name = (request.query.get("name") or "").strip()
+
+        if query_league_id_raw or query_country or query_name:
+            query_league_id = int(query_league_id_raw) if query_league_id_raw.isdigit() else None
+            status, leagues = await asyncio.gather(
+                fetch_api_status(),
+                fetch_league_coverage_search(
+                    league_id=query_league_id, country=query_country or None, name=query_name or None
+                ),
+            )
+            return web.json_response(
+                {
+                    "ok": True,
+                    "trusted": True,
+                    "is_admin": True,
+                    "query": {"league_id": query_league_id, "country": query_country, "name": query_name},
+                    "status": status,
+                    "leagues": leagues,
+                }
+            )
 
         league_id = int(os.getenv("FOOTBALL_RPL_LEAGUE_ID", "235"))
         status, seasons = await asyncio.gather(

@@ -801,6 +801,13 @@ type RplApiCoverageSeason = {
   }
 }
 
+type RplApiCoverageLeague = {
+  league_id?: number | null
+  league_name?: string | null
+  country?: string | null
+  seasons: RplApiCoverageSeason[]
+}
+
 type RplApiCoverageResponse = {
   ok: boolean
   error?: string
@@ -808,6 +815,7 @@ type RplApiCoverageResponse = {
   league_id?: number
   status?: { plan?: string | null; requests_current?: number | null; requests_limit_day?: number | null } | null
   seasons?: RplApiCoverageSeason[]
+  leagues?: RplApiCoverageLeague[]
 }
 
 const ENGLAND_FLAG = String.fromCodePoint(
@@ -1446,6 +1454,9 @@ function App() {
   const [adminRplCoverage, setAdminRplCoverage] = useState<RplApiCoverageResponse | null>(null)
   const [adminRplCoverageBusy, setAdminRplCoverageBusy] = useState<boolean>(false)
   const [adminRplCoverageError, setAdminRplCoverageError] = useState<string | null>(null)
+  const [adminCoverageQueryLeagueId, setAdminCoverageQueryLeagueId] = useState<string>('')
+  const [adminCoverageQueryCountry, setAdminCoverageQueryCountry] = useState<string>('')
+  const [adminCoverageQueryName, setAdminCoverageQueryName] = useState<string>('')
   const [adminRplBackfillBusy, setAdminRplBackfillBusy] = useState<boolean>(false)
   const [adminRplBackfillResult, setAdminRplBackfillResult] = useState<string | null>(null)
   const [adminTournaments, setAdminTournaments] = useState<AdminTournamentItem[]>([])
@@ -2831,7 +2842,15 @@ function App() {
     setAdminRplCoverageError(null)
     try {
       const headers = { 'X-Telegram-Init-Data': initData }
-      const res = await fetch(`${apiBase}/api/miniapp/admin/rpl/api_coverage`, { headers })
+      const params = new URLSearchParams()
+      if (adminCoverageQueryLeagueId.trim()) params.set('league_id', adminCoverageQueryLeagueId.trim())
+      if (adminCoverageQueryCountry.trim()) params.set('country', adminCoverageQueryCountry.trim())
+      if (adminCoverageQueryName.trim()) params.set('name', adminCoverageQueryName.trim())
+      const qs = params.toString()
+      const res = await fetch(
+        `${apiBase}/api/miniapp/admin/rpl/api_coverage${qs ? `?${qs}` : ''}`,
+        { headers }
+      )
       const data = (await res.json()) as RplApiCoverageResponse
       if (!res.ok || !data.ok) {
         throw new Error(data.reason || data.error || `HTTP ${res.status}`)
@@ -4422,6 +4441,34 @@ function App() {
 
         <div className="admin-status-divider" />
 
+        <div className="segment-hint">
+          Оставь поля пустыми — проверится РПЛ. Чтобы проверить другую лигу: впиши её ID (если
+          известен) или страну/название для поиска (например «Scotland» + «Premiership»).
+        </div>
+        <div className="admin-points-adjust-row">
+          <input
+            className="admin-text-input"
+            value={adminCoverageQueryLeagueId}
+            onChange={(e) => setAdminCoverageQueryLeagueId(e.target.value.replace(/[^0-9]/g, ''))}
+            placeholder="League ID (напр. 39)"
+            inputMode="numeric"
+          />
+        </div>
+        <div className="admin-points-adjust-row">
+          <input
+            className="admin-text-input"
+            value={adminCoverageQueryCountry}
+            onChange={(e) => setAdminCoverageQueryCountry(e.target.value)}
+            placeholder="Страна (напр. Scotland)"
+          />
+          <input
+            className="admin-text-input"
+            value={adminCoverageQueryName}
+            onChange={(e) => setAdminCoverageQueryName(e.target.value)}
+            placeholder="Название (напр. Premiership)"
+          />
+        </div>
+
         <button
           type="button"
           className="admin-reset-btn admin-reset-btn-wide"
@@ -4469,6 +4516,39 @@ function App() {
                 </div>
               )
             })}
+
+            {(adminRplCoverage.leagues || []).map((league) => (
+              <div key={`league-${league.league_id}-${league.league_name}`}>
+                <div className="admin-status-divider" />
+                <div className="admin-status-row">
+                  <span>Лига</span>
+                  <b>
+                    {league.league_name || '—'} ({league.country || '—'}) · ID {league.league_id ?? '—'}
+                  </b>
+                </div>
+                {league.seasons.map((s) => {
+                  const labels: string[] = []
+                  if (s.coverage.odds) labels.push('кэфы')
+                  if (s.coverage.predictions) labels.push('прогнозы API')
+                  if (s.coverage.standings) labels.push('таблица')
+                  if (s.coverage.fixtures_statistics_fixtures) labels.push('статистика матча')
+                  if (s.coverage.fixtures_statistics_players) labels.push('статистика игроков')
+                  if (s.coverage.fixtures_events) labels.push('события')
+                  if (s.coverage.fixtures_lineups) labels.push('составы')
+                  if (s.coverage.injuries) labels.push('травмы')
+                  if (s.coverage.top_scorers) labels.push('бомбардиры')
+                  return (
+                    <div className="admin-status-row" key={`cov-${league.league_id}-${s.year}`}>
+                      <span>
+                        {s.year}
+                        {s.current ? ' (текущий)' : ''}
+                      </span>
+                      <b>{labels.join(', ') || 'нет данных'}</b>
+                    </div>
+                  )
+                })}
+              </div>
+            ))}
           </div>
         ) : null}
 
