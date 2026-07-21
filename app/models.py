@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Index, Integer, String, UniqueConstraint, ForeignKey, func, text
+from sqlalchemy import BigInteger, DateTime, Index, Integer, String, Text, UniqueConstraint, ForeignKey, func, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -19,6 +19,11 @@ class User(Base):
     full_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     display_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     photo_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # Кастомная аватарка, загруженная самим участником из Профиля — хранится
+    # прямо в БД как data URL (data:image/...;base64,...), без внешнего
+    # хранилища файлов (на Render диск не персистентный между деплоями).
+    # Если пусто — используется photo_url (фото из Telegram).
+    custom_avatar_data: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime,

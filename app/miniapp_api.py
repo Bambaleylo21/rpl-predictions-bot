@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import json
@@ -3246,8 +3247,10 @@ async def profile(request: web.Request) -> web.Response:
                         "viewed_tg_user_id": int(target_tg_user_id),
                         "is_self_profile": int(target_tg_user_id) == int(tg_user_id),
                         "display_name": user.get("first_name") or user.get("username") or f"id:{target_tg_user_id}",
-                        "photo_url": user_row.photo_url
+                        "photo_url": user_row.custom_avatar_data
+                        or user_row.photo_url
                         or (user.get("photo_url") if int(target_tg_user_id) == int(tg_user_id) else None),
+                        "has_custom_avatar": bool(user_row.custom_avatar_data),
                         "message": f"Ты ещё не вступил в турнир «{tournament.name}».",
                     }
                 )
@@ -3753,8 +3756,10 @@ async def profile(request: web.Request) -> web.Response:
                     "is_self_profile": int(target_tg_user_id) == int(tg_user_id),
                     "display_name": display_name,
                     "username": user_row.username,
-                    "photo_url": user_row.photo_url
+                    "photo_url": user_row.custom_avatar_data
+                    or user_row.photo_url
                     or (user.get("photo_url") if int(target_tg_user_id) == int(tg_user_id) else None),
+                    "has_custom_avatar": bool(user_row.custom_avatar_data),
                     "predictions_count": predictions_count,
                     "total_points": int(stats_row.total_points or 0) + int(user_tournament_row.bonus_points or 0),
                     "exact_hits": exact_hits,
@@ -3800,6 +3805,143 @@ async def profile(request: web.Request) -> web.Response:
             },
             status=500,
         )
+
+
+# Максимальный размер кастомной аватарки после декодирования base64 — держим
+# небольшим, т.к. хранится прямо в БД (нет внешнего файлового хранилища).
+# Фронтенд перед отправкой уменьшает фото через canvas, так что обычно это
+# в разы меньше лимита; серверная проверка — просто защита от больших payload.
+_AVATAR_MAX_DECODED_BYTES = 350 * 1024
+
+
+def _validate_display_name(raw: str) -> tuple[str | None, str | None]:
+    """Общая валидация ника участника (та же логика, что и при вступлении
+    в турнир): 2-24 символа после схлопывания лишних пробелов."""
+    normalized = " ".join(str(raw or "").strip().split())
+    if not (2 <= len(normalized) <= 24):
+        return None, "Имя для таблицы должно быть длиной 2-24 символа."
+    return normalized, None
+
+
+async def profile_avatar_set(request: web.Request) -> web.Response:
+    """Загрузка/удаление кастомной аватарки профиля (см. User.custom_avatar_data).
+    Своя, а не из Telegram — хранится прямо в БД как data URL, без внешнего
+    файлового хранилища (диск Render не персистентный между деплоями)."""
+    try:
+        auth_result = _extract_verified_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = user.get("id") if isinstance(user, dict) else None
+        if not tg_user_id:
+            return web.json_response({"ok": False, "error": "user_not_found_in_init_data"}, status=400)
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+
+        avatar_data_raw = body.get("avatar_data")
+
+        async with SessionLocal() as session:
+            await _upsert_user_from_webapp(session, user if isinstance(user, dict) else {})
+            user_row = (
+                await session.execute(select(User).where(User.tg_user_id == int(tg_user_id)))
+            ).scalar_one_or_none()
+            if user_row is None:
+                return web.json_response({"ok": False, "error": "user_not_found"}, status=404)
+
+            if avatar_data_raw is None or avatar_data_raw == "":
+                # Сброс на фото из Telegram.
+                user_row.custom_avatar_data = None
+                await session.commit()
+                return web.json_response(
+                    {
+                        "ok": True,
+                        "photo_url": user_row.photo_url or user.get("photo_url"),
+                        "has_custom_avatar": False,
+                    }
+                )
+
+            avatar_data = str(avatar_data_raw)
+            if not avatar_data.startswith("data:image/") or ";base64," not in avatar_data:
+                return web.json_response(
+                    {"ok": False, "error": "invalid_avatar_format", "reason": "Ожидается изображение (data URL)."},
+                    status=400,
+                )
+            b64_part = avatar_data.split(";base64,", 1)[1]
+            try:
+                decoded = base64.b64decode(b64_part, validate=True)
+            except Exception:
+                return web.json_response(
+                    {"ok": False, "error": "invalid_avatar_data", "reason": "Не удалось декодировать изображение."},
+                    status=400,
+                )
+            if len(decoded) > _AVATAR_MAX_DECODED_BYTES:
+                return web.json_response(
+                    {
+                        "ok": False,
+                        "error": "avatar_too_large",
+                        "reason": f"Изображение слишком большое (максимум {_AVATAR_MAX_DECODED_BYTES // 1024} КБ).",
+                    },
+                    status=400,
+                )
+
+            user_row.custom_avatar_data = avatar_data
+            await session.commit()
+            return web.json_response({"ok": True, "photo_url": avatar_data, "has_custom_avatar": True})
+    except Exception as e:
+        logger.exception("miniapp profile_avatar_set error")
+        return web.json_response({"ok": False, "error": "avatar_set_failed", "reason": str(e)}, status=500)
+
+
+async def profile_display_name_set(request: web.Request) -> web.Response:
+    """Смена ника из Профиля — обновляет и общий User.display_name, и ник во
+    всех уже присоединённых турнирах (UserTournament.display_name), чтобы имя
+    сразу поменялось везде (таблица, дуэли и т.д.), а не только для новых."""
+    try:
+        auth_result = _extract_verified_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = user.get("id") if isinstance(user, dict) else None
+        if not tg_user_id:
+            return web.json_response({"ok": False, "error": "user_not_found_in_init_data"}, status=400)
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+
+        normalized_name, error_reason = _validate_display_name(body.get("display_name"))
+        if normalized_name is None:
+            return web.json_response(
+                {"ok": False, "error": "invalid_display_name", "reason": error_reason}, status=400
+            )
+
+        async with SessionLocal() as session:
+            await _upsert_user_from_webapp(session, user if isinstance(user, dict) else {})
+            user_row = (
+                await session.execute(select(User).where(User.tg_user_id == int(tg_user_id)))
+            ).scalar_one_or_none()
+            if user_row is None:
+                return web.json_response({"ok": False, "error": "user_not_found"}, status=404)
+
+            user_row.display_name = normalized_name
+
+            user_tournament_rows = (
+                await session.execute(
+                    select(UserTournament).where(UserTournament.tg_user_id == int(tg_user_id))
+                )
+            ).scalars().all()
+            for row in user_tournament_rows:
+                row.display_name = normalized_name
+
+            await session.commit()
+            return web.json_response({"ok": True, "display_name": normalized_name})
+    except Exception as e:
+        logger.exception("miniapp profile_display_name_set error")
+        return web.json_response({"ok": False, "error": "display_name_set_failed", "reason": str(e)}, status=500)
 
 
 def _point_category_emoji(category: str | None, points: int | None) -> str:
@@ -6988,6 +7130,8 @@ def build_app() -> web.Application:
     app.router.add_get("/api/miniapp/notifications/current", notifications_current)
     app.router.add_post("/api/miniapp/notifications/set", notifications_set)
     app.router.add_get("/api/miniapp/profile", profile)
+    app.router.add_post("/api/miniapp/profile/avatar", profile_avatar_set)
+    app.router.add_post("/api/miniapp/profile/display_name", profile_display_name_set)
     app.router.add_get("/api/miniapp/predictions/current", predictions_current)
     app.router.add_get("/api/miniapp/table/current", table_current)
     app.router.add_get("/api/miniapp/matches/stages", match_stages_current)

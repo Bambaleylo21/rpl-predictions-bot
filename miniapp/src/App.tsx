@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ChangeEvent } from 'react'
 import './App.css'
 import WebApp from '@twa-dev/sdk'
 import wcActiveIcon from './assets/tournaments/wc-active.png'
@@ -68,6 +69,7 @@ type ProfileResponse = {
   display_name?: string
   username?: string | null
   photo_url?: string | null
+  has_custom_avatar?: boolean
   predictions_count?: number
   total_points?: number
   exact_hits?: number
@@ -1364,6 +1366,13 @@ function App() {
   const [apiError, setApiError] = useState<string | null>(null)
   const [profileData, setProfileData] = useState<ProfileResponse | null>(null)
   const [profileError, setProfileError] = useState<string | null>(null)
+  const [avatarUploading, setAvatarUploading] = useState<boolean>(false)
+  const [avatarNotice, setAvatarNotice] = useState<string | null>(null)
+  const avatarFileInputRef = useRef<HTMLInputElement | null>(null)
+  const [nameEditOpen, setNameEditOpen] = useState<boolean>(false)
+  const [nameEditValue, setNameEditValue] = useState<string>('')
+  const [nameSaving, setNameSaving] = useState<boolean>(false)
+  const [nameEditError, setNameEditError] = useState<string | null>(null)
   const [predictionsData, setPredictionsData] = useState<PredictionsResponse | null>(null)
   const [predictionsError, setPredictionsError] = useState<string | null>(null)
   const [predictData, setPredictData] = useState<PredictCurrentResponse | null>(null)
@@ -1891,6 +1900,125 @@ function App() {
         setProfileError(String(err))
       })
   }, [selectedTournamentCode, profileTargetUserId, refreshTick])
+
+  // Уменьшаем выбранное фото через canvas перед отправкой (макс. сторона
+  // 512px, JPEG ~0.82) — так payload остаётся небольшим, а не оригинал в
+  // несколько мегабайт с телефона. Хранится потом прямо в БД (см. бэкенд).
+  const resizeImageFileToDataUrl = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onerror = () => reject(new Error('read_failed'))
+      reader.onload = () => {
+        const img = new Image()
+        img.onerror = () => reject(new Error('image_load_failed'))
+        img.onload = () => {
+          const maxSide = 512
+          let { width, height } = img
+          if (width > maxSide || height > maxSide) {
+            if (width >= height) {
+              height = Math.round((height * maxSide) / width)
+              width = maxSide
+            } else {
+              width = Math.round((width * maxSide) / height)
+              height = maxSide
+            }
+          }
+          const canvas = document.createElement('canvas')
+          canvas.width = width
+          canvas.height = height
+          const ctx = canvas.getContext('2d')
+          if (!ctx) {
+            reject(new Error('canvas_context_failed'))
+            return
+          }
+          ctx.drawImage(img, 0, 0, width, height)
+          resolve(canvas.toDataURL('image/jpeg', 0.82))
+        }
+        img.src = String(reader.result)
+      }
+      reader.readAsDataURL(file)
+    })
+  }
+
+  const uploadAvatarData = async (avatarData: string | null) => {
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    setAvatarUploading(true)
+    setAvatarNotice(null)
+    try {
+      const res = await fetch(`${apiBase}/api/miniapp/profile/avatar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': initData },
+        body: JSON.stringify({ avatar_data: avatarData }),
+      })
+      const data = (await res.json()) as { ok: boolean; error?: string; reason?: string; photo_url?: string | null }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      haptic.success()
+      setRefreshTick((v) => v + 1)
+    } catch (err) {
+      setAvatarNotice(`Не удалось обновить аватарку: ${String(err)}`)
+    } finally {
+      setAvatarUploading(false)
+    }
+  }
+
+  const handleAvatarFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      setAvatarNotice('Выбери файл изображения.')
+      return
+    }
+    try {
+      const dataUrl = await resizeImageFileToDataUrl(file)
+      await uploadAvatarData(dataUrl)
+    } catch (err) {
+      setAvatarNotice(`Не удалось обработать изображение: ${String(err)}`)
+    }
+  }
+
+  const removeCustomAvatar = async () => {
+    await uploadAvatarData(null)
+  }
+
+  const openNameEditor = () => {
+    setNameEditValue(profileData?.display_name || '')
+    setNameEditError(null)
+    setNameEditOpen(true)
+  }
+
+  const saveDisplayName = async () => {
+    const normalized = nameEditValue.trim().replace(/\s+/g, ' ')
+    if (normalized.length < 2 || normalized.length > 24) {
+      setNameEditError('Имя должно быть длиной 2-24 символа.')
+      return
+    }
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    setNameSaving(true)
+    setNameEditError(null)
+    try {
+      const res = await fetch(`${apiBase}/api/miniapp/profile/display_name`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': initData },
+        body: JSON.stringify({ display_name: normalized }),
+      })
+      const data = (await res.json()) as { ok: boolean; error?: string; reason?: string }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      haptic.success()
+      setNameEditOpen(false)
+      setRefreshTick((v) => v + 1)
+    } catch (err) {
+      setNameEditError(String(err))
+    } finally {
+      setNameSaving(false)
+    }
+  }
 
   useEffect(() => {
     const canManagePrefs = Boolean(profileData?.joined && profileData?.is_self_profile !== false)
@@ -5710,25 +5838,105 @@ function App() {
                       const avatarSrc =
                         profileData.photo_url ||
                         (profileData.is_self_profile !== false ? tgPhotoUrl : null)
-                      return avatarSrc ? (
-                      <img
-                        className={`profile-avatar ${profileData.place === 1 ? 'is-top-1' : ''}`}
-                        src={avatarSrc}
-                        alt="avatar"
-                      />
-                    ) : (
-                      <div className={`profile-avatar profile-avatar-fallback ${profileData.place === 1 ? 'is-top-1' : ''}`}>
-                        {(() => {
-                          const name = (profileData.display_name || tgUsername || 'U').trim()
-                          return name.slice(0, 2).toUpperCase()
-                        })()}
-                      </div>
-                    )})()}
+                      const isSelf = profileData.is_self_profile !== false
+                      return (
+                        <div className="profile-avatar-wrap">
+                          {avatarSrc ? (
+                            <img
+                              className={`profile-avatar ${profileData.place === 1 ? 'is-top-1' : ''}`}
+                              src={avatarSrc}
+                              alt="avatar"
+                            />
+                          ) : (
+                            <div className={`profile-avatar profile-avatar-fallback ${profileData.place === 1 ? 'is-top-1' : ''}`}>
+                              {(() => {
+                                const name = (profileData.display_name || tgUsername || 'U').trim()
+                                return name.slice(0, 2).toUpperCase()
+                              })()}
+                            </div>
+                          )}
+                          {isSelf ? (
+                            <>
+                              <input
+                                type="file"
+                                accept="image/*"
+                                ref={avatarFileInputRef}
+                                onChange={handleAvatarFileChange}
+                                style={{ display: 'none' }}
+                              />
+                              <button
+                                type="button"
+                                className="profile-avatar-edit-btn"
+                                onClick={() => avatarFileInputRef.current?.click()}
+                                disabled={avatarUploading}
+                                aria-label="Изменить аватарку"
+                              >
+                                {avatarUploading ? '…' : '✎'}
+                              </button>
+                              {profileData.has_custom_avatar ? (
+                                <button
+                                  type="button"
+                                  className="profile-avatar-remove-btn"
+                                  onClick={removeCustomAvatar}
+                                  disabled={avatarUploading}
+                                  aria-label="Убрать аватарку"
+                                >
+                                  ×
+                                </button>
+                              ) : null}
+                            </>
+                          ) : null}
+                        </div>
+                      )
+                    })()}
                     <div className="profile-hero-main">
                       <div className="profile-hero-meta">
-                        <div className="profile-name">
-                          {profileData.display_name || (tgUsername ? `@${tgUsername}` : `ID ${tgUserId ?? '—'}`)}
-                        </div>
+                        {nameEditOpen ? (
+                          <div className="profile-name-edit-row">
+                            <input
+                              className="profile-name-edit-input"
+                              value={nameEditValue}
+                              onChange={(e) => setNameEditValue(e.target.value)}
+                              maxLength={24}
+                              placeholder="Имя для таблицы"
+                            />
+                            <button
+                              type="button"
+                              className="save-btn profile-name-edit-save-btn"
+                              onClick={saveDisplayName}
+                              disabled={nameSaving}
+                            >
+                              {nameSaving ? '...' : 'Сохранить'}
+                            </button>
+                            <button
+                              type="button"
+                              className="profile-name-edit-cancel-btn"
+                              onClick={() => {
+                                setNameEditOpen(false)
+                                setNameEditError(null)
+                              }}
+                              disabled={nameSaving}
+                            >
+                              Отмена
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="profile-name">
+                            {profileData.display_name || (tgUsername ? `@${tgUsername}` : `ID ${tgUserId ?? '—'}`)}
+                            {profileData.is_self_profile !== false ? (
+                              <button
+                                type="button"
+                                className="profile-name-edit-btn"
+                                onClick={openNameEditor}
+                                aria-label="Изменить имя"
+                              >
+                                ✎
+                              </button>
+                            ) : null}
+                          </div>
+                        )}
+                        {nameEditError ? <div className="profile-name-edit-error">{nameEditError}</div> : null}
+                        {avatarNotice ? <div className="profile-name-edit-error">{avatarNotice}</div> : null}
                         {profileData.tournament_code === 'WC2026' ? (
                           <div className="profile-subline">{profileData.tournament_name || 'Турнир'}</div>
                         ) : (
