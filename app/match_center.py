@@ -56,6 +56,21 @@ async def _api_get(path: str, params: dict[str, str], cache_key: str, ttl_second
     return data
 
 
+def _dedupe_dicts(items: list[dict[str, Any]], key_fields: tuple[str, ...]) -> list[dict[str, Any]]:
+    """API-Football иногда отдаёт по некоторым эндпоинтам (например /injuries)
+    один и тот же элемент несколько раз подряд в ответе — убираем дубликаты
+    по набору полей, сохраняя порядок первого появления."""
+    seen: set[tuple[Any, ...]] = set()
+    out: list[dict[str, Any]] = []
+    for item in items:
+        key = tuple(item.get(f) for f in key_fields)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+    return out
+
+
 async def fetch_standings(league_id: int, season: int) -> list[dict[str, Any]]:
     """Официальная турнирная таблица РПЛ. Меняется редко — кэш на 3 часа."""
     data = await _api_get(
@@ -391,6 +406,9 @@ async def fetch_injuries(fixture_id: int) -> list[dict[str, Any]]:
                 "reason": player.get("reason"),
             }
         )
+    # API-Football иногда отдаёт по /injuries один и тот же элемент дважды
+    # подряд в ответе (замечено в проде) — убираем точные дубликаты.
+    out = _dedupe_dicts(out, ("player_name", "team_name", "type", "reason"))
     return out
 
 
@@ -426,6 +444,10 @@ async def fetch_fixture_events(fixture_id: int, ttl_seconds: int = 10 * 60) -> l
                 "detail": item.get("detail"),
             }
         )
+    # На случай таких же дублей, как в /injuries — важно не только для
+    # отображения, но и для подсчёта голов в app/goal_alerts.py (иначе один
+    # и тот же гол может задвоиться и разослать лишний пуш).
+    out = _dedupe_dicts(out, ("minute", "extra", "team_name", "player_name", "type", "detail"))
     return out
 
 

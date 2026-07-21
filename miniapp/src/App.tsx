@@ -7499,9 +7499,7 @@ function App() {
                     <div className="card match-center-card">
                       <div className="match-center-card-title">Уведомления о голах</div>
                       <div className="match-center-dim match-center-goal-alert-text">
-                        Как только в этом матче забьют гол, пришлём сообщение сюда, в чат с ботом — с минутой и
-                        текущим счётом. Работает только для голов, забитых уже после включения — то, что было
-                        забито раньше, не присылаем.
+                        Пуш в Telegram, когда в матче забьют.
                       </div>
                       <button
                         type="button"
