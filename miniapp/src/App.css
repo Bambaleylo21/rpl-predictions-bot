@@ -4933,6 +4933,15 @@ select:focus-visible {
   background: var(--bg-0);
   overflow-y: auto;
   animation: sheet-rise 0.18s ease-out;
+  /* На вебе/десктопе Telegram при скролле этого fixed-оверлея иногда не
+     пересчитывается композитный слой, и многослойный фон .app-shell
+     (точечная сетка + текстура) "просвечивает"/остаётся примороженным
+     поверх контента. Принудительно выносим оверлей на свой слой и
+     изолируем стекинг-контекст — чисто рендер-подсказка, визуально ничего
+     не меняет. */
+  transform: translateZ(0);
+  will-change: transform;
+  isolation: isolate;
 }
 
 .match-center-header {
@@ -4945,6 +4954,8 @@ select:focus-visible {
   padding: 14px 10px;
   background: var(--bg-0);
   border-bottom: 1px solid var(--line-3);
+  transform: translateZ(0);
+  will-change: transform;
 }
 
 .match-center-header-title {
@@ -5099,11 +5110,10 @@ select:focus-visible {
 
 .goal-alert-switch-row {
   width: 100%;
-  border: 1px solid var(--line-2);
-  border-radius: 12px;
-  background: #050505;
+  border: none;
+  background: transparent;
   color: var(--text-main);
-  padding: 10px 12px;
+  padding: 4px 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
