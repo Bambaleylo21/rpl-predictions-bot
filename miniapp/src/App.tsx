@@ -5409,12 +5409,9 @@ function App() {
                       {predictGroups.length === 0 ? (
                         <div className="card-text">Открытых матчей нет.</div>
                       ) : (
-                        predictGroups.map(([dateKey, matches]) => (
-                          <div key={dateKey} className="day-group day-group-inset">
-                            {selectedTournamentCode === 'RPL' ? (
-                              <div className="day-group-date-header">{dateKey}</div>
-                            ) : null}
-                            {matches.map((m, matchIndex) => (
+                        predictGroups.map(([dateKey, matches]) => {
+                          const isRplGroup = selectedTournamentCode === 'RPL'
+                          const matchesContent = matches.map((m, matchIndex) => (
                               <div className="compact-match" key={m.match_id}>
                                 {(() => {
                                   const showDateBadge = matchIndex === 0 && selectedTournamentCode !== 'RPL'
@@ -5577,9 +5574,18 @@ function App() {
                                   )
                                 })()}
                               </div>
-                            ))}
-                          </div>
-                        ))
+                            ))
+                          return isRplGroup ? (
+                            <div className="day-group-with-date" key={dateKey}>
+                              <div className="day-group-date-header">{dateKey}</div>
+                              <div className="day-group day-group-inset">{matchesContent}</div>
+                            </div>
+                          ) : (
+                            <div key={dateKey} className="day-group day-group-inset">
+                              {matchesContent}
+                            </div>
+                          )
+                        })
                       )}
                       <button
                         className={`save-btn save-all-predictions-btn ${

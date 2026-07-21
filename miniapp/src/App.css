@@ -1109,6 +1109,12 @@ body {
   grid-template-columns: 58px minmax(0, 1fr) 58px minmax(0, 1fr) 78px;
 }
 
+/* Заголовок даты вынесен из окантованной карточки наружу — floating-пилюля
+   над блоком карточек этого дня, а не первый дочерний элемент внутри рамки. */
+.day-group-with-date + .day-group-with-date {
+  margin-top: var(--vr-lg);
+}
+
 .day-group-date-header {
   display: inline-flex;
   align-items: center;
@@ -1122,20 +1128,16 @@ body {
   margin: 0 0 8px;
 }
 
+/* Просто текстовая метка времени слева от гербов — без своей рамки/подложки,
+   как обычный .kickoff-small, только по вертикали в один ряд с гербами. */
 .kickoff-inline-cell {
   display: flex;
-  flex-direction: row;
-  flex-wrap: wrap;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--line-2);
-  border-radius: 10px;
-  background: rgba(230, 230, 230, 0.06);
   color: var(--text-dim);
   font-size: 11px;
   font-weight: 600;
   line-height: 1.25;
-  padding: 6px 2px;
   text-align: center;
   white-space: nowrap;
   cursor: pointer;
@@ -1143,22 +1145,6 @@ body {
 
 .kickoff-inline-cell .match-center-chevron {
   font-size: 11px;
-}
-
-.match-card-bottom-rpl {
-  grid-template-columns: 58px minmax(0, 1fr) 58px minmax(0, 1fr) 78px;
-}
-
-.match-card-bottom-rpl > span:first-child {
-  grid-column: 3;
-}
-
-.match-card-bottom-rpl > span:last-child {
-  grid-column: 5;
-}
-
-.match-card-bottom-rpl > span:only-child {
-  grid-column: 3;
 }
 
 .community-small {
@@ -1194,6 +1180,26 @@ body {
 .match-card-bottom > span:only-child {
   grid-column: 2;
   text-align: center;
+}
+
+/* РПЛ: у основной строки на одну колонку больше (время слева от гербов),
+   поэтому у строки процентов колонки тоже сдвинуты — иначе она попадает под
+   базовые .match-card-bottom правила выше (те же классы, тот же порядок
+   каскада) и съезжает влево на одну колонку. */
+.match-card-bottom-rpl {
+  grid-template-columns: 58px minmax(0, 1fr) 58px minmax(0, 1fr) 78px;
+}
+
+.match-card-bottom-rpl > span:first-child {
+  grid-column: 3;
+}
+
+.match-card-bottom-rpl > span:last-child {
+  grid-column: 5;
+}
+
+.match-card-bottom-rpl > span:only-child {
+  grid-column: 3;
 }
 
 .match-predictions-btn {
