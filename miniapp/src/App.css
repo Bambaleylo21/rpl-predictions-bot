@@ -1118,13 +1118,10 @@ body {
 .day-group-date-header {
   display: inline-flex;
   align-items: center;
-  border: 1px solid var(--line-2);
-  border-radius: 999px;
-  background: rgba(230, 230, 230, 0.06);
-  color: var(--text-main);
-  font-size: 13px;
-  font-weight: 800;
-  padding: 5px 11px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 0;
   margin: 0 0 8px;
 }
 
