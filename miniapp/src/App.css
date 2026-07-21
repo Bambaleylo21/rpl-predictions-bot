@@ -5367,22 +5367,53 @@ select:focus-visible {
   background: rgba(230, 230, 230, 0.45);
 }
 
-.match-center-odds-row {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
+.match-center-ai-bar {
+  display: flex;
+  height: 34px;
+  border-radius: var(--radius-control);
+  overflow: hidden;
+  background: rgba(230, 230, 230, 0.08);
 }
 
-.match-center-odds-cell {
+.match-center-ai-seg {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 4px;
-  background: rgba(230, 230, 230, 0.06);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-control);
-  padding: 8px 4px;
-  font-size: 14px;
+  justify-content: center;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffffff;
+  white-space: nowrap;
+  transition: width 0.2s ease-out;
+}
+
+.match-center-ai-seg-draw {
+  background: rgba(230, 230, 230, 0.16);
+  color: var(--text-dim);
+  font-weight: 500;
+  font-size: 12px;
+}
+
+.match-center-ai-bar-labels {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.match-center-ai-bar-labels .match-center-dim {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.match-center-ai-bar-labels .match-center-dim:first-child {
+  text-align: left;
+}
+
+.match-center-ai-bar-labels .match-center-dim:last-child {
+  text-align: right;
 }
 
 .match-center-injury-row {

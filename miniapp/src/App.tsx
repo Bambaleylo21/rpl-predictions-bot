@@ -7719,23 +7719,56 @@ function App() {
                       (matchCenterData.ai_estimate.home_pct != null ||
                         matchCenterData.ai_estimate.draw_pct != null ||
                         matchCenterData.ai_estimate.away_pct != null) ? (
-                        <>
-                          <div className="match-center-odds-row">
-                            <div className="match-center-odds-cell">
-                              <span className="match-center-dim">П1</span>
-                              <b>{matchCenterData.ai_estimate.home_pct != null ? `${matchCenterData.ai_estimate.home_pct}%` : '—'}</b>
-                            </div>
-                            <div className="match-center-odds-cell">
-                              <span className="match-center-dim">Х</span>
-                              <b>{matchCenterData.ai_estimate.draw_pct != null ? `${matchCenterData.ai_estimate.draw_pct}%` : '—'}</b>
-                            </div>
-                            <div className="match-center-odds-cell">
-                              <span className="match-center-dim">П2</span>
-                              <b>{matchCenterData.ai_estimate.away_pct != null ? `${matchCenterData.ai_estimate.away_pct}%` : '—'}</b>
-                            </div>
-                          </div>
-                          <div className="segment-hint">Автоматическая статистическая оценка вероятного исхода</div>
-                        </>
+                        (() => {
+                          const homeColor = teamColor(matchCenterData.home_team || '')
+                          const awayColor = teamColor(matchCenterData.away_team || '')
+                          const homeRaw = matchCenterData.ai_estimate?.home_pct ?? 0
+                          const drawRaw = matchCenterData.ai_estimate?.draw_pct ?? 0
+                          const awayRaw = matchCenterData.ai_estimate?.away_pct ?? 0
+                          const sum = homeRaw + drawRaw + awayRaw
+                          const homePct = sum > 0 ? (homeRaw / sum) * 100 : 0
+                          const drawPct = sum > 0 ? (drawRaw / sum) * 100 : 0
+                          const awayPct = sum > 0 ? (awayRaw / sum) * 100 : 0
+                          const showInline = (pct: number) => pct >= 15
+                          return (
+                            <>
+                              <div className="match-center-ai-bar">
+                                <div
+                                  className="match-center-ai-seg"
+                                  style={{ width: `${homePct}%`, background: homeColor }}
+                                >
+                                  {showInline(homePct) ? `${matchCenterData.ai_estimate?.home_pct ?? 0}%` : null}
+                                </div>
+                                <div
+                                  className="match-center-ai-seg match-center-ai-seg-draw"
+                                  style={{ width: `${drawPct}%` }}
+                                >
+                                  {showInline(drawPct) ? `${matchCenterData.ai_estimate?.draw_pct ?? 0}%` : null}
+                                </div>
+                                <div
+                                  className="match-center-ai-seg"
+                                  style={{ width: `${awayPct}%`, background: awayColor }}
+                                >
+                                  {showInline(awayPct) ? `${matchCenterData.ai_estimate?.away_pct ?? 0}%` : null}
+                                </div>
+                              </div>
+                              <div className="match-center-ai-bar-labels">
+                                <span className="match-center-dim">
+                                  {matchCenterData.home_team}
+                                  {!showInline(homePct) ? ` · ${matchCenterData.ai_estimate?.home_pct ?? 0}%` : ''}
+                                </span>
+                                <span className="match-center-dim">
+                                  Ничья{!showInline(drawPct) ? ` · ${matchCenterData.ai_estimate?.draw_pct ?? 0}%` : ''}
+                                </span>
+                                <span className="match-center-dim">
+                                  {matchCenterData.away_team}
+                                  {!showInline(awayPct) ? ` · ${matchCenterData.ai_estimate?.away_pct ?? 0}%` : ''}
+                                </span>
+                              </div>
+                              <div className="segment-hint">Автоматическая статистическая оценка вероятного исхода</div>
+                            </>
+                          )
+                        })()
                       ) : (
                         <div className="match-center-dim match-center-empty">Оценка пока недоступна</div>
                       )}
