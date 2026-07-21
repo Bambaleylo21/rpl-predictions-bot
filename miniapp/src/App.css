@@ -1101,6 +1101,66 @@ body {
   grid-template-columns: minmax(0, 1fr) 58px minmax(0, 1fr) 78px;
 }
 
+/* РПЛ-версия карточки матча: дата вынесена над группой карточек (см.
+   .day-group-date-header), а время матча переехало в начало основной строки,
+   слева от гербов — вместо отдельной верхней строки .match-card-top.
+   Для ЧМ 2026 всё остаётся как было (.compact-main-predict без изменений). */
+.compact-main-predict-rpl {
+  grid-template-columns: 58px minmax(0, 1fr) 58px minmax(0, 1fr) 78px;
+}
+
+.day-group-date-header {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: rgba(230, 230, 230, 0.06);
+  color: var(--text-main);
+  font-size: 13px;
+  font-weight: 800;
+  padding: 5px 11px;
+  margin: 0 0 8px;
+}
+
+.kickoff-inline-cell {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: rgba(230, 230, 230, 0.06);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.25;
+  padding: 6px 2px;
+  text-align: center;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.kickoff-inline-cell .match-center-chevron {
+  font-size: 11px;
+}
+
+.match-card-bottom-rpl {
+  grid-template-columns: 58px minmax(0, 1fr) 58px minmax(0, 1fr) 78px;
+}
+
+.match-card-bottom-rpl > span:first-child {
+  grid-column: 3;
+}
+
+.match-card-bottom-rpl > span:last-child {
+  grid-column: 5;
+}
+
+.match-card-bottom-rpl > span:only-child {
+  grid-column: 3;
+}
+
 .community-small {
   color: var(--text-dim);
   font-size: 10px;

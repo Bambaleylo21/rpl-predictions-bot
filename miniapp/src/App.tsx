@@ -5411,10 +5411,13 @@ function App() {
                       ) : (
                         predictGroups.map(([dateKey, matches]) => (
                           <div key={dateKey} className="day-group day-group-inset">
+                            {selectedTournamentCode === 'RPL' ? (
+                              <div className="day-group-date-header">{dateKey}</div>
+                            ) : null}
                             {matches.map((m, matchIndex) => (
                               <div className="compact-match" key={m.match_id}>
                                 {(() => {
-                                  const showDateBadge = matchIndex === 0
+                                  const showDateBadge = matchIndex === 0 && selectedTournamentCode !== 'RPL'
                                   if (m.is_placeholder) {
                                     return (
                                       <>
@@ -5465,30 +5468,36 @@ function App() {
                                         ? 'is-saved'
                                         : 'is-empty'
                                   const canOpenMatchCenter = selectedTournamentCode === 'RPL'
+                                  const kickoffTime = (m.kickoff || '').split(' ')[1] || ''
                                   return (
                                     <>
+                                      {canOpenMatchCenter ? null : (
+                                        <div className="match-card-top">
+                                          {showDateBadge ? <span className="day-title">{dateKey}</span> : <span />}
+                                          {m.group_label ? (
+                                              <span className="group-small">[{m.group_label}]</span>
+                                            ) : (
+                                              <span className="group-small">—</span>
+                                            )}
+                                          <span className="kickoff-small">{kickoffTime} МСК</span>
+                                        </div>
+                                      )}
                                       <div
-                                        className={`match-card-top ${canOpenMatchCenter ? 'match-card-top-tappable' : ''}`}
-                                        onClick={canOpenMatchCenter ? () => openMatchCenter(m.match_id) : undefined}
-                                        role={canOpenMatchCenter ? 'button' : undefined}
+                                        className={`compact-main ${canOpenMatchCenter ? 'compact-main-predict-rpl' : 'compact-main-predict'}`}
                                       >
-                                        {showDateBadge ? <span className="day-title">{dateKey}</span> : <span />}
-                                        {m.group_label ? (
-                                            <span className="group-small">[{m.group_label}]</span>
-                                          ) : selectedTournamentCode === 'RPL' ? null : (
-                                            <span className="group-small">—</span>
-                                          )}
-                                        <span className="kickoff-small">
-                                          {(m.kickoff || '').split(' ')[1] || ''} МСК
-                                          {canOpenMatchCenter ? (
+                                        {canOpenMatchCenter ? (
+                                          <span
+                                            className="kickoff-inline-cell match-card-top-tappable"
+                                            onClick={() => openMatchCenter(m.match_id)}
+                                            role="button"
+                                          >
+                                            {kickoffTime} МСК
                                             <span className="match-center-chevron" aria-hidden="true">
                                               {' '}
                                               ›
                                             </span>
-                                          ) : null}
-                                        </span>
-                                      </div>
-                                      <div className="compact-main compact-main-predict">
+                                          </span>
+                                        ) : null}
                                         <span
                                           className={
                                             canOpenMatchCenter
@@ -5542,7 +5551,7 @@ function App() {
                                         </button>
                                       </div>
                                       {crowdText(m) || (isLocked && !canOpenMatchCenter) ? (
-                                        <div className="match-card-bottom">
+                                        <div className={`match-card-bottom ${canOpenMatchCenter ? 'match-card-bottom-rpl' : ''}`}>
                                           {crowdText(m) ? (
                                             <span className="community-triplet">
                                               {crowdPercentParts(m).map((part, index) => (
