@@ -6,7 +6,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from app.models import Setting
 
-NOTIFY_TYPES = ("reminders", "duels", "achievements")
+NOTIFY_TYPES = ("reminders", "duels", "achievements", "goals")
 NOTIFY_ALL = "all"
 
 

@@ -345,6 +345,7 @@ type MatchCenterResponse = {
     home?: MatchCenterTeamStats
     away?: MatchCenterTeamStats
   } | null
+  goal_alert_subscribed?: boolean
 }
 
 type TableResponse = {
@@ -1390,6 +1391,9 @@ function App() {
   const [matchCenterError, setMatchCenterError] = useState<string | null>(null)
   const [matchCenterCrowd, setMatchCenterCrowd] = useState<MatchPredictionsResponse | null>(null)
   const [matchCenterCrowdError, setMatchCenterCrowdError] = useState<string | null>(null)
+  const [goalAlertSubscribed, setGoalAlertSubscribed] = useState<boolean>(false)
+  const [goalAlertBusy, setGoalAlertBusy] = useState<boolean>(false)
+  const [goalAlertNotice, setGoalAlertNotice] = useState<string | null>(null)
   const [matchCenterCrowdNotStarted, setMatchCenterCrowdNotStarted] = useState<boolean>(false)
   const [matchPredictionsError, setMatchPredictionsError] = useState<string | null>(null)
   const [tableData, setTableData] = useState<TableResponse | null>(null)
@@ -1664,6 +1668,15 @@ function App() {
       if (Number.isFinite(duelId) && duelId > 0) {
         setDuelFocusId(Math.trunc(duelId))
         setScreen('duels')
+      }
+
+      // Пуш из голевых уведомлений ("Зайти в матч-центр") — открываем нужный
+      // матч прямо поверх экрана матчей, без промежуточных шагов.
+      const matchCenterRaw = getParam('match_id')
+      const matchCenterIdParam = Number(matchCenterRaw)
+      if (Number.isFinite(matchCenterIdParam) && matchCenterIdParam > 0) {
+        setScreen('predict')
+        setMatchCenterId(Math.trunc(matchCenterIdParam))
       }
     } catch {
       // no-op
@@ -2540,8 +2553,38 @@ function App() {
         throw new Error(data.reason || data.error || `HTTP ${res.status}`)
       }
       setMatchCenterData(data)
+      setGoalAlertSubscribed(Boolean(data.goal_alert_subscribed))
+      setGoalAlertNotice(null)
     } catch (err) {
       setMatchCenterError(String(err))
+    }
+  }
+
+  const toggleGoalAlert = async (enabled: boolean) => {
+    if (matchCenterId == null) return
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    setGoalAlertBusy(true)
+    setGoalAlertNotice(null)
+    const prev = goalAlertSubscribed
+    setGoalAlertSubscribed(enabled)
+    try {
+      const res = await fetch(`${apiBase}/api/miniapp/match/goal_alert`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Telegram-Init-Data': initData },
+        body: JSON.stringify({ match_id: matchCenterId, enabled }),
+      })
+      const data = (await res.json()) as { ok: boolean; error?: string; reason?: string; goal_alert_subscribed?: boolean }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      setGoalAlertSubscribed(Boolean(data.goal_alert_subscribed))
+      haptic.success()
+    } catch (err) {
+      setGoalAlertSubscribed(prev)
+      setGoalAlertNotice(`Не удалось изменить уведомления: ${String(err)}`)
+    } finally {
+      setGoalAlertBusy(false)
     }
   }
 
@@ -7451,6 +7494,25 @@ function App() {
                       ) : (
                         <div className="match-center-dim match-center-empty">Пока нет рассчитанных матчей с твоим прогнозом</div>
                       )}
+                    </div>
+
+                    <div className="card match-center-card">
+                      <div className="match-center-card-title">Уведомления о голах</div>
+                      <div className="match-center-dim match-center-goal-alert-text">
+                        Как только в этом матче забьют гол, пришлём сообщение сюда, в чат с ботом — с минутой и
+                        текущим счётом. Работает только для голов, забитых уже после включения — то, что было
+                        забито раньше, не присылаем.
+                      </div>
+                      <button
+                        type="button"
+                        className={`notif-switch-row match-center-goal-alert-switch ${goalAlertSubscribed ? 'is-on' : 'is-off'} ${goalAlertBusy ? 'is-disabled' : ''}`}
+                        onClick={() => toggleGoalAlert(!goalAlertSubscribed)}
+                        disabled={goalAlertBusy}
+                      >
+                        <span>Уведомлять о голах</span>
+                        <span className="notif-switch-pill">{goalAlertSubscribed ? 'Вкл' : 'Выкл'}</span>
+                      </button>
+                      {goalAlertNotice ? <div className="match-center-dim match-center-goal-alert-error">{goalAlertNotice}</div> : null}
                     </div>
 
                     </>

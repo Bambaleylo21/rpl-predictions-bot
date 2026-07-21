@@ -5092,6 +5092,20 @@ select:focus-visible {
   margin-bottom: 8px;
 }
 
+.match-center-goal-alert-text {
+  margin-bottom: 10px;
+  line-height: 1.4;
+}
+
+.match-center-goal-alert-switch {
+  width: 100%;
+}
+
+.match-center-goal-alert-error {
+  margin-top: 6px;
+  color: #e0433a;
+}
+
 .match-center-row {
   display: flex;
   justify-content: space-between;

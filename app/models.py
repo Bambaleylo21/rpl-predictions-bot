@@ -80,6 +80,34 @@ class UserTournament(Base):
     )
 
 
+class GoalAlertSubscription(Base):
+    """Подписка участника на push-уведомления о голах конкретного матча
+    (тумблер "Уведомлять о голах" во вкладке "Детали" матч-центра).
+
+    baseline_goal_count — сколько голов уже было забито в матче на момент
+    включения подписки: фоновый цикл (app/goal_alerts.py) присылает пуш только
+    по голам с порядковым номером БОЛЬШЕ этого значения, поэтому уже забитые
+    до подписки голы задним числом не шлются."""
+
+    __tablename__ = "goal_alert_subscriptions"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    tg_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
+    match_id: Mapped[int] = mapped_column(ForeignKey("matches.id", ondelete="CASCADE"), nullable=False, index=True)
+    baseline_goal_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tg_user_id", "match_id", name="uq_goal_alert_subscriptions_user_match"),
+    )
+
+
 class Match(Base):
     __tablename__ = "matches"
 

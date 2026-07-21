@@ -144,6 +144,11 @@ async def _apply_postgres_schema_fixes(conn) -> None:
         "CREATE TABLE IF NOT EXISTS duel_elo (id SERIAL PRIMARY KEY, tournament_id INTEGER NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE, tg_user_id BIGINT NOT NULL, rating INTEGER NOT NULL DEFAULT 1000, duels_total INTEGER NOT NULL DEFAULT 0, wins INTEGER NOT NULL DEFAULT 0, losses INTEGER NOT NULL DEFAULT 0, draws INTEGER NOT NULL DEFAULT 0, created_at TIMESTAMP NOT NULL DEFAULT NOW(), updated_at TIMESTAMP NOT NULL DEFAULT NOW(), CONSTRAINT uq_duel_elo_tournament_user UNIQUE (tournament_id, tg_user_id))",
         "CREATE INDEX IF NOT EXISTS ix_duel_elo_tournament_id ON duel_elo (tournament_id)",
         "CREATE INDEX IF NOT EXISTS ix_duel_elo_tg_user_id ON duel_elo (tg_user_id)",
+
+        # goal_alert_subscriptions (на всякий — не валимся, даже если create_all уже сделает)
+        "CREATE TABLE IF NOT EXISTS goal_alert_subscriptions (id SERIAL PRIMARY KEY, tg_user_id BIGINT NOT NULL, match_id INTEGER NOT NULL REFERENCES matches(id) ON DELETE CASCADE, baseline_goal_count INTEGER NOT NULL DEFAULT 0, created_at TIMESTAMP NOT NULL DEFAULT NOW(), CONSTRAINT uq_goal_alert_subscriptions_user_match UNIQUE (tg_user_id, match_id))",
+        "CREATE INDEX IF NOT EXISTS ix_goal_alert_subscriptions_tg_user_id ON goal_alert_subscriptions (tg_user_id)",
+        "CREATE INDEX IF NOT EXISTS ix_goal_alert_subscriptions_match_id ON goal_alert_subscriptions (match_id)",
     ]
 
     for sql in statements:
@@ -230,6 +235,11 @@ async def _apply_sqlite_schema_fixes(conn) -> None:
         # predictions.updated_at
         "ALTER TABLE predictions ADD COLUMN updated_at TIMESTAMP",
         "UPDATE predictions SET updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)",
+
+        # goal_alert_subscriptions
+        "CREATE TABLE IF NOT EXISTS goal_alert_subscriptions (id INTEGER PRIMARY KEY AUTOINCREMENT, tg_user_id BIGINT NOT NULL, match_id INTEGER NOT NULL, baseline_goal_count INTEGER NOT NULL DEFAULT 0, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT uq_goal_alert_subscriptions_user_match UNIQUE (tg_user_id, match_id))",
+        "CREATE INDEX IF NOT EXISTS ix_goal_alert_subscriptions_tg_user_id ON goal_alert_subscriptions (tg_user_id)",
+        "CREATE INDEX IF NOT EXISTS ix_goal_alert_subscriptions_match_id ON goal_alert_subscriptions (match_id)",
     ]
 
     for sql in statements:

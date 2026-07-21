@@ -43,7 +43,7 @@ from app.duels import (
     respond_duel,
 )
 from app.league_table import build_active_stage_league_table
-from app.models import Duel, DuelElo, HistoricalResult, League, LeagueParticipant, LongtermPrediction, Match, Point, Prediction, Setting, Stage, Tournament, User, UserTournament
+from app.models import Duel, DuelElo, GoalAlertSubscription, HistoricalResult, League, LeagueParticipant, LongtermPrediction, Match, Point, Prediction, Setting, Stage, Tournament, User, UserTournament
 from app.notify_prefs import get_user_notification_prefs, set_user_notification_pref, should_send_notification
 from app.scoring import calculate_points, get_stage_points_multiplier
 
@@ -5550,6 +5550,16 @@ async def match_center_current(request: web.Request) -> web.Response:
             key=lambda r: (r.get("rank") if r.get("rank") is not None else 999),
         )
 
+        async with SessionLocal() as goal_alert_session:
+            goal_alert_subscribed = (
+                await goal_alert_session.execute(
+                    select(GoalAlertSubscription.id).where(
+                        GoalAlertSubscription.tg_user_id == int(tg_user_id),
+                        GoalAlertSubscription.match_id == int(match_id),
+                    )
+                )
+            ).first() is not None
+
         return web.json_response(
             {
                 "ok": True,
@@ -5577,12 +5587,89 @@ async def match_center_current(request: web.Request) -> web.Response:
                 "injuries": injuries_out,
                 "events": events_out,
                 "statistics": statistics_out,
+                "goal_alert_subscribed": goal_alert_subscribed,
             }
         )
     except Exception as e:
         logger.exception("miniapp match_center_current error")
         return web.json_response(
             {"ok": False, "error": "match_center_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
+async def goal_alert_set(request: web.Request) -> web.Response:
+    """Тумблер "Уведомлять о голах" во вкладке "Детали" матч-центра.
+
+    При включении фиксируем baseline_goal_count — сколько голов уже забито
+    в матче на этот момент (через тот же fetch_fixture_events/кэш, что и сам
+    матч-центр) — фоновый цикл (app/goal_alerts.py) присылает пуш только по
+    голам с номером больше этого значения, поэтому уже забитые голы задним
+    числом не шлются. При выключении подписка просто удаляется."""
+    try:
+        auth_result = _extract_verified_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = user.get("id") if isinstance(user, dict) else None
+        if not tg_user_id:
+            return web.json_response({"ok": False, "error": "user_not_found_in_init_data"}, status=400)
+
+        body = await request.json()
+        match_id_raw = body.get("match_id")
+        try:
+            match_id = int(match_id_raw)
+        except Exception:
+            match_id = 0
+        if match_id <= 0:
+            return web.json_response({"ok": False, "error": "invalid_match_id"}, status=400)
+        enabled = bool(body.get("enabled"))
+
+        async with SessionLocal() as session:
+            match = (await session.execute(select(Match).where(Match.id == int(match_id)))).scalar_one_or_none()
+            if match is None:
+                return web.json_response({"ok": False, "error": "match_not_found"}, status=404)
+
+            existing = (
+                await session.execute(
+                    select(GoalAlertSubscription).where(
+                        GoalAlertSubscription.tg_user_id == int(tg_user_id),
+                        GoalAlertSubscription.match_id == int(match_id),
+                    )
+                )
+            ).scalar_one_or_none()
+
+            if not enabled:
+                if existing is not None:
+                    await session.delete(existing)
+                    await session.commit()
+                return web.json_response({"ok": True, "goal_alert_subscribed": False})
+
+            if existing is not None:
+                # Уже подписан — идемпотентно, ничего не меняем (baseline остаётся прежним).
+                return web.json_response({"ok": True, "goal_alert_subscribed": True})
+
+            baseline_goal_count = 0
+            if match.api_fixture_id:
+                from app.goal_alerts import LIVE_TTL_SECONDS, sorted_goal_events
+                from app.match_center import fetch_fixture_events
+
+                events = await fetch_fixture_events(int(match.api_fixture_id), ttl_seconds=LIVE_TTL_SECONDS)
+                baseline_goal_count = len(sorted_goal_events(events))
+
+            session.add(
+                GoalAlertSubscription(
+                    tg_user_id=int(tg_user_id),
+                    match_id=int(match_id),
+                    baseline_goal_count=int(baseline_goal_count),
+                )
+            )
+            await session.commit()
+            return web.json_response({"ok": True, "goal_alert_subscribed": True})
+    except Exception as e:
+        logger.exception("miniapp goal_alert_set error")
+        return web.json_response(
+            {"ok": False, "error": "goal_alert_set_failed", "reason": str(e), "signature_checked": True},
             status=500,
         )
 
@@ -7138,6 +7225,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/miniapp/predict/current", predict_current)
     app.router.add_get("/api/miniapp/match/predictions", match_predictions_current)
     app.router.add_get("/api/miniapp/match/center", match_center_current)
+    app.router.add_post("/api/miniapp/match/goal_alert", goal_alert_set)
     app.router.add_post("/api/miniapp/predict/set", predict_set)
     app.router.add_post("/api/miniapp/predict/auto_odds", predict_auto_odds)
     app.router.add_get("/api/miniapp/longterm/current", longterm_current)
