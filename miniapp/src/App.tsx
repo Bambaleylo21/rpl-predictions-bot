@@ -7497,18 +7497,17 @@ function App() {
                     </div>
 
                     <div className="card match-center-card">
-                      <div className="match-center-card-title">Уведомления о голах</div>
-                      <div className="match-center-dim match-center-goal-alert-text">
-                        Пуш в Telegram, когда в матче забьют.
-                      </div>
                       <button
                         type="button"
-                        className={`notif-switch-row match-center-goal-alert-switch ${goalAlertSubscribed ? 'is-on' : 'is-off'} ${goalAlertBusy ? 'is-disabled' : ''}`}
+                        className={`goal-alert-switch-row ${goalAlertSubscribed ? 'is-on' : 'is-off'} ${goalAlertBusy ? 'is-disabled' : ''}`}
                         onClick={() => toggleGoalAlert(!goalAlertSubscribed)}
                         disabled={goalAlertBusy}
                       >
-                        <span>Уведомлять о голах</span>
-                        <span className="notif-switch-pill">{goalAlertSubscribed ? 'Вкл' : 'Выкл'}</span>
+                        <span className="goal-alert-switch-text">
+                          <span className="goal-alert-switch-title">Уведомлять о голах</span>
+                          <span className="goal-alert-switch-desc">Пуш в Telegram, когда в матче забьют</span>
+                        </span>
+                        <span className="goal-alert-switch-pill">{goalAlertSubscribed ? 'ВКЛ' : 'ВЫКЛ'}</span>
                       </button>
                       {goalAlertNotice ? <div className="match-center-dim match-center-goal-alert-error">{goalAlertNotice}</div> : null}
                     </div>
