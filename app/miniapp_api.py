@@ -3814,6 +3814,52 @@ async def profile(request: web.Request) -> web.Response:
 _AVATAR_MAX_DECODED_BYTES = 350 * 1024
 
 
+async def avatar_image(request: web.Request) -> web.StreamResponse:
+    """Отдаёт маленький аватар участника по tg_user_id — используется для
+    круглых аватарок в таблице (не только в своём профиле). Без авторизации:
+    фото профиля участника видно другим участникам того же турнира и так
+    (имя, статистика), это не приватные данные.
+
+    Приоритет: своя загруженная аватарка (custom_avatar_data, хранится в БД
+    как data URL) -> фото из Telegram (photo_url, обычная ссылка на CDN,
+    отдаём редиректом, не проксируем) -> 404, если ни того ни другого нет."""
+    try:
+        try:
+            tg_user_id = int(request.match_info.get("tg_user_id", ""))
+        except Exception:
+            return web.Response(status=404)
+
+        async with SessionLocal() as session:
+            user_row = (
+                await session.execute(select(User).where(User.tg_user_id == tg_user_id))
+            ).scalar_one_or_none()
+            if user_row is None:
+                return web.Response(status=404)
+
+            avatar_data = user_row.custom_avatar_data
+            if avatar_data and avatar_data.startswith("data:image/") and ";base64," in avatar_data:
+                header, b64_part = avatar_data.split(";base64,", 1)
+                mime = header[len("data:"):] or "image/jpeg"
+                try:
+                    raw = base64.b64decode(b64_part, validate=True)
+                except Exception:
+                    raw = None
+                if raw:
+                    return web.Response(
+                        body=raw,
+                        content_type=mime,
+                        headers={"Cache-Control": "public, max-age=300"},
+                    )
+
+            if user_row.photo_url:
+                return web.HTTPFound(location=user_row.photo_url)
+
+            return web.Response(status=404)
+    except Exception:
+        logger.exception("miniapp avatar_image error")
+        return web.Response(status=500)
+
+
 def _validate_display_name(raw: str) -> tuple[str | None, str | None]:
     """Общая валидация ника участника (та же логика, что и при вступлении
     в турнир): 2-24 символа после схлопывания лишних пробелов."""
@@ -7217,6 +7263,7 @@ def build_app() -> web.Application:
     app.router.add_get("/api/miniapp/notifications/current", notifications_current)
     app.router.add_post("/api/miniapp/notifications/set", notifications_set)
     app.router.add_get("/api/miniapp/profile", profile)
+    app.router.add_get("/api/miniapp/avatar/{tg_user_id}", avatar_image)
     app.router.add_post("/api/miniapp/profile/avatar", profile_avatar_set)
     app.router.add_post("/api/miniapp/profile/display_name", profile_display_name_set)
     app.router.add_get("/api/miniapp/predictions/current", predictions_current)

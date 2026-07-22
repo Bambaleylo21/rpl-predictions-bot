@@ -347,20 +347,45 @@ body {
 
 .table-grid {
   display: grid;
-  grid-template-columns: 22px minmax(84px, 1fr) 44px repeat(5, 28px);
+  grid-template-columns: 22px 20px minmax(84px, 1fr) 44px repeat(5, 28px);
   align-items: center;
   column-gap: 3px;
 }
 
 .table-grid-rpl {
-  grid-template-columns: 22px minmax(84px, 1fr) 44px repeat(4, 28px);
+  grid-template-columns: 22px 20px minmax(84px, 1fr) 44px repeat(4, 28px);
 }
 
 .table-grid-longterm {
   display: grid;
-  grid-template-columns: 22px minmax(96px, 1fr) minmax(86px, 1fr) minmax(92px, 1fr) 30px;
+  grid-template-columns: 22px 20px minmax(96px, 1fr) minmax(86px, 1fr) minmax(92px, 1fr) 30px;
   align-items: center;
   column-gap: 5px;
+}
+
+.col-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.table-avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  object-fit: cover;
+  display: block;
+  flex-shrink: 0;
+}
+
+.table-avatar-fallback {
+  display: flex;
+  background: rgba(230, 230, 230, 0.14);
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 600;
+  align-items: center;
+  justify-content: center;
 }
 
 .table-grid-head {

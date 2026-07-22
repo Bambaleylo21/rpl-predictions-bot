@@ -1026,6 +1026,28 @@ const TeamCrest = ({ name, alt }: { name: string; alt?: boolean }) => {
   return <div className={`match-center-crest ${alt ? 'match-center-crest-alt' : ''}`}>{name.slice(0, 3).toUpperCase()}</div>
 }
 
+const MINIAPP_API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+
+// Маленький круглый аватар участника в таблице — рядом с именем, но не влияет
+// на высоту строки. Своя аватарка/фото из Telegram отдаёт бэкенд по tg_user_id
+// (см. /api/miniapp/avatar/:id); если фото нет или не загрузилось — инициал.
+const TableAvatar = ({ tgUserId, name }: { tgUserId?: number | null; name: string }) => {
+  const [failed, setFailed] = useState(false)
+  if (!tgUserId || failed) {
+    const initial = (name || '').trim().charAt(0).toUpperCase() || '?'
+    return <div className="table-avatar table-avatar-fallback">{initial}</div>
+  }
+  return (
+    <img
+      className="table-avatar"
+      src={`${MINIAPP_API_BASE}/api/miniapp/avatar/${tgUserId}`}
+      alt=""
+      loading="lazy"
+      onError={() => setFailed(true)}
+    />
+  )
+}
+
 // Форма команды — последние 5 матчей (любые турниры), самый свежий справа.
 // Порядок массива уже приходит от бэкенда от старого к новому, поэтому просто
 // рендерим по порядку слева направо.
@@ -4010,6 +4032,7 @@ function App() {
 
         <div className="table-grid table-grid-rpl table-grid-head">
           <div className="col-place">#</div>
+          <div className="col-avatar"></div>
           <div className="col-name">Имя</div>
           <div className="col-num">Очк</div>
           <div className="col-num">🎯</div>
@@ -4029,6 +4052,9 @@ function App() {
                 key={`${league.league_code}-${r.place}-${r.name}`}
               >
                 <div className="col-place">{r.place}</div>
+                <div className="col-avatar">
+                  <TableAvatar tgUserId={r.tg_user_id} name={r.name} />
+                </div>
                 <div className="col-name col-name-text">
                   {r.tg_user_id ? (
                     <button
@@ -6708,6 +6734,7 @@ function App() {
                 <div className="card table-card">
                   <div className="table-grid-longterm table-grid-head">
                     <div className="col-place">#</div>
+                    <div className="col-avatar"></div>
                     <div className="col-name">Имя</div>
                     <div className="col-name">🏆</div>
                     <div className="col-name">⚽</div>
@@ -6720,6 +6747,9 @@ function App() {
                         key={`${r.place}-${r.name}`}
                       >
                         <div className="col-place">{r.place}</div>
+                        <div className="col-avatar">
+                          <TableAvatar tgUserId={r.tg_user_id} name={r.name} />
+                        </div>
                         <div className="col-name col-name-text">
                           {r.tg_user_id ? (
                             <button
@@ -6748,6 +6778,7 @@ function App() {
                 <div className="card table-card">
                   <div className="table-grid table-grid-head">
                     <div className="col-place">#</div>
+                    <div className="col-avatar"></div>
                     <div className="col-name">Имя</div>
                     <button className="col-sort-btn col-num" onClick={() => handleSortHeader('total')}>
                       Очк
@@ -6777,6 +6808,9 @@ function App() {
                         key={`${r.place}-${r.name}`}
                       >
                         <div className="col-place">{r.place}</div>
+                        <div className="col-avatar">
+                          <TableAvatar tgUserId={r.tg_user_id} name={r.name} />
+                        </div>
                         <div className="col-name col-name-text">
                           {r.tg_user_id ? (
                             <button
