@@ -1369,6 +1369,54 @@ body {
   white-space: nowrap;
 }
 
+/* Компактная карточка завершённого матча (только РПЛ) — всё в одну строку:
+   гербы+счёт, "мой прогноз", результат, шеврон. Раньше "мой прогноз" уходил
+   на вторую строку под гербами — здесь просто переставляем те же элементы
+   через grid-column/order, без дублирования разметки. */
+.closed-match-rpl .closed-match-main {
+  grid-template-columns: auto 26px auto minmax(0, 1fr) auto;
+  column-gap: 6px;
+}
+
+.closed-match-rpl .match-list-logo-wrap {
+  width: 22px;
+  height: 22px;
+}
+
+.closed-match-rpl .match-list-logo-fallback {
+  font-size: 8px;
+}
+
+.closed-match-rpl .closed-result-score {
+  font-size: 13px;
+}
+
+.closed-match-rpl .closed-own-prediction {
+  grid-column: auto;
+  order: 4;
+  margin-top: 0;
+  padding-left: 4px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.closed-match-rpl .closed-action-stack {
+  order: 5;
+  grid-column: auto;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding-right: 0;
+}
+
+.closed-match-rpl .closed-chevron {
+  font-size: 13px;
+}
+
 .match-predictions-link {
   border: 1px solid rgba(230, 230, 230, 0.28);
   border-radius: 999px;
@@ -4192,15 +4240,16 @@ body {
   padding: 6px 0;
 }
 
-.match-predictions-sheet.is-closed .match-prediction-row {
-  grid-template-columns: 26px minmax(0, 1fr) 38px 42px;
+/* Закрытый тур: место + изменение места + имя + прогноз + результат —
+   на элементе самой строки, а не через class на дальнем предке (тот
+   предок есть только у всплывающего листа ЧМ, но не у карточки
+   "Прогнозы соперников" в матч-центре РПЛ — из-за этого там раньше
+   всегда работала только базовая 2-колоночная раскладка). */
+.match-prediction-row.is-closed {
+  grid-template-columns: 18px 22px minmax(0, 1fr) 38px 42px;
 }
 
 .match-prediction-row + .match-prediction-row {
-  margin-top: 0;
-}
-
-.match-predictions-sheet.is-closed .match-prediction-row + .match-prediction-row {
   margin-top: 0;
 }
 
@@ -4212,25 +4261,33 @@ body {
   opacity: 0.68;
 }
 
-.match-prediction-position {
+.match-prediction-place {
   justify-self: start;
   color: var(--text-dim);
   font-size: 10px;
   font-weight: 900;
   line-height: 1;
-  min-width: 24px;
   white-space: nowrap;
 }
 
-.match-prediction-position.is-up {
+.match-prediction-delta {
+  justify-self: start;
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.match-prediction-delta.is-up {
   color: #5fd18a;
 }
 
-.match-prediction-position.is-down {
+.match-prediction-delta.is-down {
   color: #ff6f6f;
 }
 
-.match-prediction-position.is-same {
+.match-prediction-delta.is-same {
   color: rgba(230, 230, 230, 0.58);
 }
 

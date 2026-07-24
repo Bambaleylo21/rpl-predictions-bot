@@ -1116,6 +1116,8 @@ const crowdPercentParts = (item: {
   return [`${h}%`, `${d}%`, `${a}%`]
 }
 
+// Отдельно от места (place_after) — только само изменение места после этого
+// тура: стрелка вверх/вниз с числом, либо точка, если место не изменилось.
 const positionChangeLabel = (row: {
   place_after?: number | null
   place_delta?: number | null
@@ -1123,8 +1125,7 @@ const positionChangeLabel = (row: {
   const delta = Number(row.place_delta ?? 0)
   if (delta > 0) return { label: `↑${delta}`, tone: 'up' }
   if (delta < 0) return { label: `↓${Math.abs(delta)}`, tone: 'down' }
-  const placeAfter = Number(row.place_after || 0)
-  return placeAfter > 0 ? { label: `•${placeAfter}`, tone: 'same' } : null
+  return { label: '•', tone: 'same' }
 }
 
 const matchEventLabel = (e: { type?: string | null; detail?: string | null }): string => {
@@ -5816,7 +5817,7 @@ function App() {
                             const canOpenMatchCenter = selectedTournamentCode === 'RPL'
                             return (
                               <div
-                                className={`compact-match closed-match ${canOpenMatchCenter ? 'match-card-top-tappable' : ''}`}
+                                className={`compact-match closed-match ${canOpenMatchCenter ? 'match-card-top-tappable closed-match-rpl' : ''}`}
                                 key={m.match_id}
                                 onClick={canOpenMatchCenter ? () => openMatchCenter(m.match_id) : undefined}
                                 role={canOpenMatchCenter ? 'button' : undefined}
@@ -7246,23 +7247,27 @@ function App() {
               <div className="match-predictions-list">
                 {(matchPredictionsSheet.items || []).length ? (
                   (matchPredictionsSheet.items || []).map((row) => {
-                    const pos = matchPredictionsSheet.status === 'closed' ? positionChangeLabel(row) : null
+                    const isClosedSheet = matchPredictionsSheet.status === 'closed'
+                    const pos = isClosedSheet ? positionChangeLabel(row) : null
                     return (
                       <div
-                        className={`match-prediction-row ${row.is_me ? 'is-me' : ''} ${row.prediction ? '' : 'is-missed'}`}
+                        className={`match-prediction-row ${isClosedSheet ? 'is-closed' : ''} ${row.is_me ? 'is-me' : ''} ${row.prediction ? '' : 'is-missed'}`}
                         key={`match-prediction-${matchPredictionsSheet.match_id}-${row.tg_user_id}`}
                       >
-                        {matchPredictionsSheet.status === 'closed' ? (
-                          <div className={`match-prediction-position ${pos ? `is-${pos.tone}` : ''}`}>
-                            {pos?.label || '—'}
-                          </div>
+                        {isClosedSheet ? (
+                          <>
+                            <div className="match-prediction-place">{row.place_after ?? '—'}</div>
+                            <div className={`match-prediction-delta ${pos ? `is-${pos.tone}` : ''}`}>
+                              {pos?.label || '—'}
+                            </div>
+                          </>
                         ) : null}
                         <div className="match-prediction-name-line">
                           <span className="match-prediction-name">{row.name}</span>
                           {row.is_me ? <span className="match-prediction-me-badge">ты</span> : null}
                         </div>
                         <div className="match-prediction-score">{row.prediction || '—'}</div>
-                        {matchPredictionsSheet.status === 'closed' ? (
+                        {isClosedSheet ? (
                           <div className="match-prediction-result">
                             {row.prediction ? `${row.emoji || '❌'} ${Number(row.points ?? 0) > 0 ? '+' : ''}${row.points ?? 0}` : '—'}
                           </div>
@@ -7827,13 +7832,16 @@ function App() {
                             const pos = isClosed ? positionChangeLabel(row) : null
                             return (
                               <div
-                                className={`match-prediction-row ${row.is_me ? 'is-me' : ''} ${row.prediction ? '' : 'is-missed'}`}
+                                className={`match-prediction-row ${isClosed ? 'is-closed' : ''} ${row.is_me ? 'is-me' : ''} ${row.prediction ? '' : 'is-missed'}`}
                                 key={row.tg_user_id}
                               >
                                 {isClosed ? (
-                                  <div className={`match-prediction-position ${pos ? `is-${pos.tone}` : ''}`}>
-                                    {pos?.label || '—'}
-                                  </div>
+                                  <>
+                                    <div className="match-prediction-place">{row.place_after ?? '—'}</div>
+                                    <div className={`match-prediction-delta ${pos ? `is-${pos.tone}` : ''}`}>
+                                      {pos?.label || '—'}
+                                    </div>
+                                  </>
                                 ) : null}
                                 <div className="match-prediction-name-line">
                                   <span className="match-prediction-name">{row.name}</span>
