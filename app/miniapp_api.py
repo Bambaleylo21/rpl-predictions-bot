@@ -4528,6 +4528,11 @@ async def _build_match_position_changes(
         )
 
     async def _places_for_scope(scope_filter) -> dict[int, int]:
+        """Место каждого участника — отдельно внутри своей лиги (Высшая/
+        Низшая), а не общим списком по всему турниру. Для турниров без
+        разбивки на лиги (например ЧМ-2026) league_code у всех будет пустым —
+        тогда все попадают в одну общую группу и ранжируются как раньше,
+        сквозным списком."""
         points_subq = (
             select(
                 Point.tg_user_id.label("tg_user_id"),
@@ -4551,6 +4556,7 @@ async def _build_match_position_changes(
             select(
                 UserTournament.tg_user_id,
                 UserTournament.bonus_points,
+                League.code.label("league_code"),
                 func.coalesce(points_subq.c.total, 0).label("total"),
                 func.coalesce(points_subq.c.exact, 0).label("exact"),
                 func.coalesce(points_subq.c.diff, 0).label("diff"),
@@ -4558,12 +4564,19 @@ async def _build_match_position_changes(
             )
             .select_from(UserTournament)
             .outerjoin(points_subq, points_subq.c.tg_user_id == UserTournament.tg_user_id)
+            .outerjoin(
+                LeagueParticipant,
+                (LeagueParticipant.tg_user_id == UserTournament.tg_user_id) & (LeagueParticipant.is_active == 1),
+            )
+            .outerjoin(Stage, (Stage.id == LeagueParticipant.stage_id) & (Stage.is_active == 1))
+            .outerjoin(League, League.id == LeagueParticipant.league_id)
             .where(UserTournament.tournament_id == int(tournament_id))
         )
 
-        rows = []
-        for uid, bonus_points, total, exact, diff, outcome in rows_q.all():
-            rows.append(
+        by_group: dict[str, list[tuple[int, int, int, int, int]]] = {}
+        for uid, bonus_points, league_code, total, exact, diff, outcome in rows_q.all():
+            group_key = str(league_code) if league_code else "_NONE_"
+            by_group.setdefault(group_key, []).append(
                 (
                     int(uid),
                     int(total or 0) + int(bonus_points or 0),
@@ -4572,8 +4585,13 @@ async def _build_match_position_changes(
                     int(outcome or 0),
                 )
             )
-        rows.sort(key=lambda item: (-item[1], -item[2], -item[3], -item[4], item[0]))
-        return {uid: place for place, (uid, *_rest) in enumerate(rows, start=1)}
+
+        places: dict[int, int] = {}
+        for group_rows in by_group.values():
+            group_rows.sort(key=lambda item: (-item[1], -item[2], -item[3], -item[4], item[0]))
+            for place, (uid, *_rest) in enumerate(group_rows, start=1):
+                places[uid] = place
+        return places
 
     before_places = await _places_for_scope(_scope_before(match))
     after_places = await _places_for_scope(_scope_after(match))
