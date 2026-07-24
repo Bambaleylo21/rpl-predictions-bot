@@ -132,6 +132,14 @@ async def sync_rpl_once(bot, session_factory=SessionLocal) -> dict:
                     from app.miniapp_api import send_new_achievement_pushes
 
                     await send_new_achievement_pushes(bot, session, tournament_id=int(tournament.id))
+
+                    # Финальный пуш подписчикам голевых уведомлений (см.
+                    # app/goal_alerts.py) — именно этот момент считаем концом
+                    # матча, отдельного запроса к API-Football на статус не
+                    # делаем, используем уже полученный fx.is_finished.
+                    from app.goal_alerts import send_final_whistle_pushes
+
+                    await send_final_whistle_pushes(bot, session, match)
                 await session.commit()
                 stats["results_applied"] += 1
 

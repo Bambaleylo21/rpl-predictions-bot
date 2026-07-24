@@ -139,6 +139,12 @@ class Match(Base):
     home_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     away_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    # Служебное состояние голевых уведомлений (см. app/goal_alerts.py) — JSON
+    # {"announced": [[team,minute,extra,player], ...], "cancelled": [...]}.
+    # Нужно, чтобы отличать голы, отменённые ВАРом, от новых, и не путать
+    # порядок при подсчёте текущего счёта в пуше. NULL, пока голов не было.
+    goal_alert_state: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # Источник матча:
     # - "manual" — добавлен админом /admin_add_match
     # - "apisport" — подтянут из API-Sport.ru

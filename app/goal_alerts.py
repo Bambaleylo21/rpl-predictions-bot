@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from datetime import datetime, timedelta
@@ -13,8 +14,10 @@ from sqlalchemy import or_, select
 from app.audience import is_blocked_send_error, mark_user_blocked
 from app.db import SessionLocal
 from app.display import display_round_name, display_team_name
-from app.models import GoalAlertSubscription, Match, Setting, Tournament
+from app.models import GoalAlertSubscription, Match, Tournament
 from app.notify_prefs import should_send_notification
+
+GoalSignature = tuple[str, int, int, str]
 
 logger = logging.getLogger(__name__)
 
@@ -42,28 +45,6 @@ def _now_msk_naive() -> datetime:
     return (datetime.utcnow() + timedelta(hours=3)).replace(tzinfo=None)
 
 
-def _notified_count_key(match_id: int) -> str:
-    return f"GOAL_ALERT_NOTIFIED_COUNT_{int(match_id)}"
-
-
-async def _get_setting_int(session, key: str, default: int = 0) -> int:
-    row = (await session.execute(select(Setting).where(Setting.key == key))).scalar_one_or_none()
-    if row is None:
-        return default
-    try:
-        return int(row.value)
-    except Exception:
-        return default
-
-
-async def _set_setting_int(session, key: str, value: int) -> None:
-    row = (await session.execute(select(Setting).where(Setting.key == key))).scalar_one_or_none()
-    if row is None:
-        session.add(Setting(key=key, value=str(int(value))))
-    else:
-        row.value = str(int(value))
-
-
 def _is_real_goal_event(event: dict[str, Any]) -> bool:
     """API-Football кладёт "Missed Penalty" под тем же type="Goal", что и
     настоящие голы — только по detail отличить непонятно проваленный пенальти
@@ -77,6 +58,77 @@ def sorted_goal_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     goals = [e for e in events if _is_real_goal_event(e)]
     goals.sort(key=lambda e: (int(e.get("minute") or 0), int(e.get("extra") or 0)))
     return goals
+
+
+def _is_var_goal_disallowed_event(event: dict[str, Any]) -> bool:
+    """ВАР отменяет гол отдельным событием type="Var" — API-Football не
+    убирает исходное событие type="Goal" из ленты задним числом, поэтому
+    без этой проверки отменённый гол выглядит как обычный забитый. detail
+    обычно вида "Goal Disallowed - Offside"/"Goal Cancelled" и т.п."""
+    event_type = str(event.get("type") or "").strip().lower()
+    if event_type != "var":
+        return False
+    detail = str(event.get("detail") or "").strip().lower()
+    return "goal" in detail and ("disallow" in detail or "cancel" in detail)
+
+
+def confirmed_goal_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Голы, которые всё ещё в силе — без учёта отменённых ВАРом. Событие
+    отмены сопоставляем с ближайшим по минуте голом той же команды (ВАР
+    обычно логируется в ту же минуту или в течение пары минут после гола)."""
+    goals = sorted_goal_events(events)
+    var_cancels = [e for e in events if _is_var_goal_disallowed_event(e)]
+    if not var_cancels:
+        return goals
+
+    cancelled_idx: set[int] = set()
+    for cancel in var_cancels:
+        cancel_team = str(cancel.get("team_name") or "")
+        cancel_minute = int(cancel.get("minute") or 0)
+        best_idx = None
+        best_diff = None
+        for idx, g in enumerate(goals):
+            if idx in cancelled_idx:
+                continue
+            if str(g.get("team_name") or "") != cancel_team:
+                continue
+            diff = abs(int(g.get("minute") or 0) - cancel_minute)
+            if diff <= 4 and (best_diff is None or diff < best_diff):
+                best_idx = idx
+                best_diff = diff
+        if best_idx is not None:
+            cancelled_idx.add(best_idx)
+
+    return [g for idx, g in enumerate(goals) if idx not in cancelled_idx]
+
+
+def _goal_signature(goal: dict[str, Any]) -> GoalSignature:
+    return (
+        str(goal.get("team_name") or ""),
+        int(goal.get("minute") or 0),
+        int(goal.get("extra") or 0),
+        str(goal.get("player_name") or ""),
+    )
+
+
+def _load_goal_state(match: Match) -> tuple[list[GoalSignature], set[GoalSignature]]:
+    raw = match.goal_alert_state
+    if not raw:
+        return [], set()
+    try:
+        data = json.loads(raw)
+        announced = [tuple(x) for x in (data.get("announced") or [])]
+        cancelled = {tuple(x) for x in (data.get("cancelled") or [])}
+        return announced, cancelled
+    except Exception:
+        logger.warning("[goal_alerts] failed to parse goal_alert_state for match_id=%s", match.id)
+        return [], set()
+
+
+def _save_goal_state(match: Match, announced: list[GoalSignature], cancelled: set[GoalSignature]) -> None:
+    match.goal_alert_state = json.dumps(
+        {"announced": [list(s) for s in announced], "cancelled": [list(s) for s in cancelled]}
+    )
 
 
 async def _safe_send(
@@ -127,10 +179,43 @@ def _build_goal_alert_text(
     )
 
 
+def _build_goal_cancelled_text(
+    *,
+    scoring_team_display: str,
+    home_display: str,
+    away_display: str,
+    home_score: int,
+    away_score: int,
+    round_name: str,
+) -> str:
+    return (
+        f"❌ Гол отменён после ВАР! {scoring_team_display} не забивает.\n\n"
+        f"РПЛ · {round_name}\n"
+        f"{home_display} {home_score}-{away_score} {away_display}"
+    )
+
+
+def _build_final_whistle_text(
+    *,
+    home_display: str,
+    away_display: str,
+    home_score: int,
+    away_score: int,
+    round_name: str,
+) -> str:
+    return (
+        f"🏁 Матч завершён!\n\n"
+        f"РПЛ · {round_name}\n"
+        f"{home_display} {home_score}-{away_score} {away_display}"
+    )
+
+
 async def process_live_match_goals(bot: Bot, session, match: Match) -> int:
-    """Проверяет один живой матч на новые голы и рассылает пуши подписчикам,
-    у которых baseline_goal_count меньше порядкового номера этого гола.
-    Возвращает количество отправленных пушей (для логов)."""
+    """Проверяет один живой матч на новые голы и на отмены голов ВАРом,
+    рассылает пуши подписчикам, у которых baseline_goal_count не больше
+    порядкового номера этого гола в общем списке когда-либо объявленных
+    голов матча (см. Match.goal_alert_state). Возвращает количество
+    отправленных пушей (для логов)."""
     if not match.api_fixture_id:
         return 0
 
@@ -145,57 +230,138 @@ async def process_live_match_goals(bot: Bot, session, match: Match) -> int:
     from app.match_center import fetch_fixture_events
 
     events = await fetch_fixture_events(int(match.api_fixture_id), ttl_seconds=LIVE_TTL_SECONDS)
-    goal_events = sorted_goal_events(events)
-    total_goals = len(goal_events)
+    confirmed_sigs = [_goal_signature(g) for g in confirmed_goal_events(events)]
+    confirmed_set = set(confirmed_sigs)
 
-    already_notified = await _get_setting_int(session, _notified_count_key(match.id), default=0)
-    if total_goals <= already_notified:
+    announced, cancelled = _load_goal_state(match)
+    announced_set = set(announced)
+
+    # Новые голы — сигнатуры из текущего подтверждённого списка, которых
+    # раньше не было среди уже объявленных.
+    new_sigs = [s for s in confirmed_sigs if s not in announced_set]
+    if new_sigs:
+        announced.extend(new_sigs)
+
+    # Отменённые голы — были объявлены, ещё не помечены отменёнными, но
+    # больше не входят в текущий подтверждённый список (ВАР отменил гол,
+    # либо само событие пропало из ленты API-Football).
+    newly_cancelled = [s for s in announced if s not in cancelled and s not in confirmed_set]
+
+    if not new_sigs and not newly_cancelled:
         return 0
 
     round_name = display_round_name("RPL", int(match.round_number or 0))
     home_display = display_team_name(match.home_team)
     away_display = display_team_name(match.away_team)
+    keyboard = _open_match_center_keyboard(int(match.id))
+    home_team_raw = str(match.home_team or "")
+    away_team_raw = str(match.away_team or "")
 
-    # Прогоняем голы по порядку, считая счёт по ходу, чтобы у каждого пуша
-    # была верная сиюминутная строка счёта (а не финальный счёт матча).
-    running_home = 0
-    running_away = 0
+    def _running_score(upto: GoalSignature | None, exclude: set[GoalSignature]) -> tuple[int, int]:
+        home = away = 0
+        for s in announced:
+            if s in exclude:
+                continue
+            if s[0] == home_team_raw:
+                home += 1
+            elif s[0] == away_team_raw:
+                away += 1
+            if upto is not None and s == upto:
+                break
+        return home, away
+
     sent_count = 0
-    for idx, goal in enumerate(goal_events):
-        scoring_team_raw = str(goal.get("team_name") or "")
-        if scoring_team_raw == str(match.home_team or ""):
-            running_home += 1
-        elif scoring_team_raw == str(match.away_team or ""):
-            running_away += 1
-        else:
-            # Неожиданное название команды (рассинхрон с данными матча) —
-            # пропускаем подсчёт счёта для этого события, но не падаем.
-            continue
 
-        if idx < already_notified:
-            continue
-
+    for sig in new_sigs:
+        position = announced.index(sig)
+        home_score, away_score = _running_score(sig, exclude=cancelled)
         text = _build_goal_alert_text(
-            minute=goal.get("minute"),
-            extra=goal.get("extra"),
-            scoring_team_display=display_team_name(scoring_team_raw),
+            minute=sig[1],
+            extra=sig[2],
+            scoring_team_display=display_team_name(sig[0]),
             home_display=home_display,
             away_display=away_display,
-            home_score=running_home,
-            away_score=running_away,
+            home_score=home_score,
+            away_score=away_score,
             round_name=round_name,
         )
-        keyboard = _open_match_center_keyboard(int(match.id))
-
         for sub in subs:
-            if int(sub.baseline_goal_count or 0) > idx:
+            if int(sub.baseline_goal_count or 0) > position:
                 continue
             if not await should_send_notification(session, int(sub.tg_user_id), "goals"):
                 continue
             await _safe_send(bot, session, chat_id=int(sub.tg_user_id), text=text, reply_markup=keyboard)
             sent_count += 1
 
-    await _set_setting_int(session, _notified_count_key(match.id), total_goals)
+    for sig in newly_cancelled:
+        cancelled.add(sig)
+
+    # Счёт для пушей об отмене считаем уже после того, как учтены все отмены
+    # этого цикла — чтобы при нескольких одновременных отменах каждый пуш
+    # показывал один и тот же, уже согласованный актуальный счёт.
+    for sig in newly_cancelled:
+        position = announced.index(sig)
+        home_score, away_score = _running_score(None, exclude=cancelled)
+        text = _build_goal_cancelled_text(
+            scoring_team_display=display_team_name(sig[0]),
+            home_display=home_display,
+            away_display=away_display,
+            home_score=home_score,
+            away_score=away_score,
+            round_name=round_name,
+        )
+        for sub in subs:
+            if int(sub.baseline_goal_count or 0) > position:
+                continue
+            if not await should_send_notification(session, int(sub.tg_user_id), "goals"):
+                continue
+            await _safe_send(bot, session, chat_id=int(sub.tg_user_id), text=text, reply_markup=keyboard)
+            sent_count += 1
+
+    _save_goal_state(match, announced, cancelled)
+    await session.commit()
+    return sent_count
+
+
+async def send_final_whistle_pushes(bot: Bot, session, match: Match) -> int:
+    """Финальный пуш подписчикам голевых уведомлений с итоговым счётом.
+    Вызывается из app/rpl_sync.py ровно в момент, когда матч помечается
+    завершённым по данным того же fetch_league_fixtures — отдельного
+    запроса к API-Football на статус матча не делает, бюджет не трогает.
+
+    После финального пуша подписки на этот матч больше не нужны (голов
+    в нём больше не будет) — удаляем их, заодно не давая таблице расти
+    бесконечно."""
+    subs = (
+        await session.execute(
+            select(GoalAlertSubscription).where(GoalAlertSubscription.match_id == int(match.id))
+        )
+    ).scalars().all()
+    if not subs:
+        return 0
+
+    round_name = display_round_name("RPL", int(match.round_number or 0))
+    home_display = display_team_name(match.home_team)
+    away_display = display_team_name(match.away_team)
+    text = _build_final_whistle_text(
+        home_display=home_display,
+        away_display=away_display,
+        home_score=int(match.home_score or 0),
+        away_score=int(match.away_score or 0),
+        round_name=round_name,
+    )
+    keyboard = _open_match_center_keyboard(int(match.id))
+
+    sent_count = 0
+    for sub in subs:
+        if not await should_send_notification(session, int(sub.tg_user_id), "goals"):
+            continue
+        await _safe_send(bot, session, chat_id=int(sub.tg_user_id), text=text, reply_markup=keyboard)
+        sent_count += 1
+
+    for sub in subs:
+        await session.delete(sub)
+    match.goal_alert_state = None
     await session.commit()
     return sent_count
 

@@ -98,6 +98,8 @@ async def _apply_postgres_schema_fixes(conn) -> None:
         # внешний id матча из API (для API-Sport.ru используем match id)
         "ALTER TABLE matches ADD COLUMN IF NOT EXISTS api_fixture_id BIGINT",
         "CREATE INDEX IF NOT EXISTS ix_matches_api_fixture_id ON matches (api_fixture_id)",
+        # состояние голевых уведомлений (см. app/goal_alerts.py, Match.goal_alert_state)
+        "ALTER TABLE matches ADD COLUMN IF NOT EXISTS goal_alert_state TEXT",
         "ALTER TABLE matches ADD COLUMN IF NOT EXISTS group_label VARCHAR(32)",
         "CREATE INDEX IF NOT EXISTS ix_matches_group_label ON matches (group_label)",
         "ALTER TABLE matches ADD COLUMN IF NOT EXISTS is_placeholder INTEGER NOT NULL DEFAULT 0",
@@ -200,6 +202,7 @@ async def _apply_sqlite_schema_fixes(conn) -> None:
         "ALTER TABLE matches ADD COLUMN tournament_id INTEGER",
         "ALTER TABLE matches ADD COLUMN group_label VARCHAR(32)",
         "ALTER TABLE matches ADD COLUMN is_placeholder INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE matches ADD COLUMN goal_alert_state TEXT",
         "ALTER TABLE users ADD COLUMN display_name VARCHAR(64)",
         "ALTER TABLE users ADD COLUMN photo_url VARCHAR(512)",
         "ALTER TABLE users ADD COLUMN custom_avatar_data TEXT",

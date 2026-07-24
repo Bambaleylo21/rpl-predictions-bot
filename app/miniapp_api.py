@@ -5697,11 +5697,13 @@ async def goal_alert_set(request: web.Request) -> web.Response:
 
             baseline_goal_count = 0
             if match.api_fixture_id:
-                from app.goal_alerts import LIVE_TTL_SECONDS, sorted_goal_events
+                from app.goal_alerts import LIVE_TTL_SECONDS, confirmed_goal_events
                 from app.match_center import fetch_fixture_events
 
                 events = await fetch_fixture_events(int(match.api_fixture_id), ttl_seconds=LIVE_TTL_SECONDS)
-                baseline_goal_count = len(sorted_goal_events(events))
+                # confirmed_goal_events (не sorted_goal_events) — чтобы гол,
+                # уже отменённый ВАРом на момент подписки, не завышал baseline.
+                baseline_goal_count = len(confirmed_goal_events(events))
 
             session.add(
                 GoalAlertSubscription(
