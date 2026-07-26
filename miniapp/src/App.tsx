@@ -7557,13 +7557,27 @@ function App() {
                             .sort((a, b) => (a.minute || 0) - (b.minute || 0))
                             .map((item, idx) => {
                               const isHome = item.team_name === matchCenterData.home_team
-                              const isTerse = ['card', 'subst'].includes(String(item.type || '').toLowerCase())
+                              const eventType = String(item.type || '').toLowerCase()
+                              const isSubst = eventType === 'subst'
+                              const isTerse = ['card', 'subst'].includes(eventType)
                               const eventText = (
                                 <span className="match-center-event-text-tl">
                                   {matchEventLabel(item)}
                                   {isTerse ? ' ' : ' — '}
                                   {item.player_name}
-                                  {item.assist_name ? ` (ассист: ${item.assist_name})` : ''}
+                                  {item.assist_name ? (
+                                    isSubst ? (
+                                      <>
+                                        {' → '}
+                                        <span className="match-center-event-dim">{item.assist_name}</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        {' '}
+                                        <span className="match-center-event-dim">({item.assist_name})</span>
+                                      </>
+                                    )
+                                  ) : null}
                                 </span>
                               )
                               return (
@@ -7758,11 +7772,6 @@ function App() {
                           const awayColor = teamColor(matchCenterData.away_team || '')
                           return (
                             <>
-                              <div className="match-center-stats-row match-center-stats-header">
-                                <span className="match-center-stats-value">{matchCenterData.home_team}</span>
-                                <span className="match-center-stats-label"> </span>
-                                <span className="match-center-stats-value">{matchCenterData.away_team}</span>
-                              </div>
                               {matchStatRow(
                                 'Владение мячом',
                                 matchCenterData.statistics.home?.possession,
