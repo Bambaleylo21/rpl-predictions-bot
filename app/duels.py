@@ -811,8 +811,13 @@ async def expire_stale_duels(session, tournament_id: int) -> list[dict[str, Any]
         duel.status = "expired"
         duel.resolved_at = now
         duel.responded_at = duel.responded_at or now
-        if accept_window_expired and not match_started_or_finished:
-            events.append({"duel_id": int(duel.id)})
+        # Причина сообщается в пуше по-разному: если матч уже начался — это
+        # приоритетная причина (даже если заодно истекло и трёхчасовое окно
+        # на ответ), иначе — обычное истечение окна на ответ по неактивности.
+        if match_started_or_finished:
+            events.append({"duel_id": int(duel.id), "reason": "match_started"})
+        elif accept_window_expired:
+            events.append({"duel_id": int(duel.id), "reason": "accept_window"})
     return events
 
 

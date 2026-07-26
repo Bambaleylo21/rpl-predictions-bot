@@ -288,16 +288,28 @@ async def send_duel_expired_pushes(bot: Bot, session, *, events: list[dict[str, 
         match: Match = ctx["match"]
         keyboard = _open_duels_keyboard("Открыть 1х1", duel_id=int(duel.id))
 
-        challenger_text = (
-            "⌛ Вызов 1х1 истёк\n"
-            f"Матч: {match.home_team} — {match.away_team}\n"
-            f"{ctx['opponent_name']} не успел принять вызов в течение 3 часов."
-        )
-        opponent_text = (
-            "⌛ Вызов 1х1 истёк\n"
-            f"Матч: {match.home_team} — {match.away_team}\n"
-            f"Вызов от {ctx['challenger_name']} больше неактуален."
-        )
+        if str(ev.get("reason") or "") == "match_started":
+            challenger_text = (
+                "⌛ Вызов 1х1 отменён\n"
+                f"Матч: {match.home_team} — {match.away_team}\n"
+                f"Матч уже начался, а {ctx['opponent_name']} не успел принять вызов — вызов автоматически отменён."
+            )
+            opponent_text = (
+                "⌛ Вызов 1х1 отменён\n"
+                f"Матч: {match.home_team} — {match.away_team}\n"
+                f"Матч уже начался, поэтому вызов от {ctx['challenger_name']} автоматически отменён."
+            )
+        else:
+            challenger_text = (
+                "⌛ Вызов 1х1 истёк\n"
+                f"Матч: {match.home_team} — {match.away_team}\n"
+                f"{ctx['opponent_name']} не успел принять вызов в течение 3 часов."
+            )
+            opponent_text = (
+                "⌛ Вызов 1х1 истёк\n"
+                f"Матч: {match.home_team} — {match.away_team}\n"
+                f"Вызов от {ctx['challenger_name']} больше неактуален."
+            )
 
         if await should_send_notification(session, int(duel.challenger_tg_user_id), "duels"):
             await _safe_send(
