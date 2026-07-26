@@ -7471,27 +7471,42 @@ function App() {
                     <div className="card match-center-card">
                       <div className="match-center-card-title">События матча</div>
                       {matchCenterData.events && matchCenterData.events.length > 0 ? (
-                        <div className="match-center-events">
-                          {[...matchCenterData.events]
-                            .sort((a, b) => (a.minute || 0) - (b.minute || 0))
-                            .map((item, idx) => (
-                              <div className="match-center-event-row" key={idx}>
-                                <span
-                                  className="match-center-event-bar"
-                                  style={{ background: teamColor(item.team_name || '') }}
-                                />
-                                <span className="match-center-event-minute">
-                                  {item.minute ?? ''}
-                                  {item.extra ? `+${item.extra}` : ''}'
-                                </span>
-                                <span className="match-center-event-text">
-                                  {matchEventLabel(item)} — {item.player_name}
-                                  {item.assist_name ? ` (ассист: ${item.assist_name})` : ''}
-                                  <span className="match-center-dim"> · {item.team_name}</span>
-                                </span>
-                              </div>
-                            ))}
-                        </div>
+                        <>
+                          <div className="match-center-events-header">
+                            <span>{matchCenterData.home_team}</span>
+                            <span>{matchCenterData.away_team}</span>
+                          </div>
+                          <div className="match-center-events-timeline">
+                            {[...matchCenterData.events]
+                              .sort((a, b) => (a.minute || 0) - (b.minute || 0))
+                              .map((item, idx) => {
+                                const isHome = item.team_name === matchCenterData.home_team
+                                const eventText = (
+                                  <span className="match-center-event-text-tl">
+                                    {matchEventLabel(item)} — {item.player_name}
+                                    {item.assist_name ? ` (ассист: ${item.assist_name})` : ''}
+                                  </span>
+                                )
+                                return (
+                                  <div className="match-center-event-row-tl" key={idx}>
+                                    <div className="match-center-event-side match-center-event-side-home">
+                                      {isHome ? eventText : null}
+                                    </div>
+                                    <span
+                                      className="match-center-event-minute-chip"
+                                      style={{ color: teamColor(item.team_name || '') }}
+                                    >
+                                      {item.minute ?? ''}
+                                      {item.extra ? `+${item.extra}` : ''}'
+                                    </span>
+                                    <div className="match-center-event-side match-center-event-side-away">
+                                      {!isHome ? eventText : null}
+                                    </div>
+                                  </div>
+                                )
+                              })}
+                          </div>
+                        </>
                       ) : (
                         <div className="match-center-dim match-center-empty">Матч ещё не начался или событий пока нет</div>
                       )}
