@@ -231,7 +231,25 @@ async def fetch_lineups(fixture_id: int) -> dict[str, Any] | None:
             # id нужен, чтобы потом сматчить игрока с его сезонной статистикой
             # (см. fetch_team_player_stats) — по имени это делать ненадёжно
             # из-за возможных расхождений в написании между эндпоинтами.
+            # grid ("линия:позиция в линии", например "2:3") — точное место
+            # на поле по данным API-Football, нужно для расстановки по схеме
+            # вместо простого списка. У вратаря обычно "1:1".
             starters.append(
+                {
+                    "id": player.get("id"),
+                    "name": pname,
+                    "number": player.get("number"),
+                    "pos": player.get("pos"),
+                    "grid": player.get("grid"),
+                }
+            )
+        substitutes: list[dict[str, Any]] = []
+        for p in side.get("substitutes") or []:
+            player = p.get("player") or {}
+            pname = str(player.get("name") or "").strip()
+            if not pname:
+                continue
+            substitutes.append(
                 {
                     "id": player.get("id"),
                     "name": pname,
@@ -239,7 +257,7 @@ async def fetch_lineups(fixture_id: int) -> dict[str, Any] | None:
                     "pos": player.get("pos"),
                 }
             )
-        out[name] = {"formation": formation, "starters": starters}
+        out[name] = {"formation": formation, "starters": starters, "substitutes": substitutes}
     return out or None
 
 

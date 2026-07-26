@@ -264,11 +264,13 @@ type MatchCenterLineupPlayer = {
   goals?: number | null
   assists?: number | null
   rating?: number | null
+  grid?: string | null
 }
 
 type MatchCenterLineup = {
   formation?: string | null
   starters?: MatchCenterLineupPlayer[]
+  substitutes?: MatchCenterLineupPlayer[]
 }
 
 type MatchCenterFormItem = {
@@ -1063,6 +1065,85 @@ const TeamFormDots = ({ items }: { items?: MatchCenterFormItem[] }) => {
           }`}
         />
       ))}
+    </div>
+  )
+}
+
+// Для подписи под кружком на поле — полное имя не влезает, берём последнее
+// слово (фамилию); если имя из одного слова, показываем как есть.
+const pitchLastName = (name: string): string => {
+  const parts = name.trim().split(/\s+/)
+  return parts.length > 1 ? parts[parts.length - 1] : name
+}
+
+const pitchGridRow = (grid?: string | null): number => {
+  const row = parseInt((grid || '').split(':')[0] || '', 10)
+  return Number.isFinite(row) ? row : 0
+}
+
+const pitchGridCol = (grid?: string | null): number => {
+  const col = parseInt((grid || '').split(':')[1] || '', 10)
+  return Number.isFinite(col) ? col : 0
+}
+
+// Состав одной команды на поле — по формации и полю grid ("линия:позиция",
+// см. app/match_center.py::fetch_lineups), плюс список запасных под полем.
+// Вратарь — та же самая нижняя строка (grid "1:x"), просто цвет кружка везде
+// один и тот же (цвет команды), как и для остальных игроков.
+const LineupPitch = ({ teamName, info }: { teamName: string; info: MatchCenterLineup }) => {
+  const starters = info.starters || []
+  const color = teamColor(teamName)
+
+  const rows = new Map<number, MatchCenterLineupPlayer[]>()
+  starters.forEach((p) => {
+    const rowKey = pitchGridRow(p.grid)
+    if (!rows.has(rowKey)) rows.set(rowKey, [])
+    rows.get(rowKey)!.push(p)
+  })
+  const rowKeys = [...rows.keys()].sort((a, b) => a - b)
+  rowKeys.forEach((key) => {
+    rows.get(key)!.sort((a, b) => pitchGridCol(a.grid) - pitchGridCol(b.grid))
+  })
+
+  const substitutes = info.substitutes || []
+
+  return (
+    <div className="lineup-pitch-wrap">
+      <div className="lineup-pitch-team-title">
+        {teamName}
+        {info.formation ? ` · ${info.formation}` : ''}
+      </div>
+      {rowKeys.length > 0 ? (
+        <div className="lineup-pitch">
+          {rowKeys.map((rowKey) => (
+            <div className="lineup-pitch-row" key={rowKey}>
+              {rows.get(rowKey)!.map((p, i) => (
+                <div className="lineup-pitch-player" key={i}>
+                  <span className="lineup-pitch-player-dot" style={{ background: color }}>
+                    {p.number ?? ''}
+                  </span>
+                  <span className="lineup-pitch-player-name">{pitchLastName(p.name)}</span>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="match-center-dim match-center-empty">Расстановка недоступна</div>
+      )}
+      {substitutes.length > 0 ? (
+        <div className="lineup-pitch-subs">
+          <div className="lineup-pitch-subs-title">Запасные</div>
+          <div className="lineup-pitch-subs-list">
+            {substitutes.map((p, i) => (
+              <div className="lineup-pitch-sub-row" key={i}>
+                {p.number != null ? <span className="match-center-dim">{p.number}. </span> : null}
+                <span>{p.name}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -7629,35 +7710,12 @@ function App() {
                     <div className="card match-center-card">
                       <div className="match-center-card-title">Составы</div>
                       {matchCenterData.lineups ? (
-                        <div className="match-center-lineups">
-                          {Object.entries(matchCenterData.lineups).map(([teamName, info]) => (
-                            <div className="match-center-lineup-col" key={teamName}>
-                              <div className="match-center-lineup-team">
-                                {teamName}
-                                {info.formation ? ` · ${info.formation}` : ''}
-                              </div>
-                              {(info.starters || []).map((p, i) => {
-                                const statParts = [
-                                  p.goals ? `${p.goals} г` : null,
-                                  p.assists ? `${p.assists} п` : null,
-                                  p.rating ? `★${p.rating}` : null,
-                                ].filter(Boolean)
-                                return (
-                                  <div className="match-center-lineup-player" key={i}>
-                                    <span className="match-center-lineup-player-name">
-                                      {p.number != null ? `${p.number}. ` : ''}
-                                      {p.name}
-                                    </span>
-                                    {statParts.length > 0 ? (
-                                      <span className="match-center-lineup-player-stat match-center-dim">
-                                        {statParts.join(' · ')}
-                                      </span>
-                                    ) : null}
-                                  </div>
-                                )
-                              })}
-                            </div>
-                          ))}
+                        <div className="lineup-pitches">
+                          {[matchCenterData.home_team, matchCenterData.away_team].map((teamName) => {
+                            const info = teamName ? matchCenterData.lineups?.[teamName] : null
+                            if (!teamName || !info) return null
+                            return <LineupPitch teamName={teamName} info={info} key={teamName} />
+                          })}
                         </div>
                       ) : (
                         <div className="match-center-dim match-center-empty">Появятся примерно за час до матча</div>

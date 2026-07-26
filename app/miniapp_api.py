@@ -5516,21 +5516,32 @@ async def match_center_current(request: web.Request) -> web.Response:
                     player_stats = (
                         await fetch_team_player_stats(int(team_id_val), league_id, season) if team_id_val else {}
                     )
-                    starters_out = []
-                    for p in info.get("starters") or []:
+
+                    def _enrich_player(p: dict[str, Any]) -> dict[str, Any]:
                         pid = p.get("id")
                         stat = player_stats.get(int(pid)) if pid else None
-                        starters_out.append(
-                            {
-                                "name": p.get("name"),
-                                "number": p.get("number"),
-                                "pos": p.get("pos"),
-                                "goals": (stat or {}).get("goals"),
-                                "assists": (stat or {}).get("assists"),
-                                "rating": (stat or {}).get("rating"),
-                            }
-                        )
-                    return display_team_name(name), {"formation": info.get("formation"), "starters": starters_out}
+                        return {
+                            "name": p.get("name"),
+                            "number": p.get("number"),
+                            "pos": p.get("pos"),
+                            "goals": (stat or {}).get("goals"),
+                            "assists": (stat or {}).get("assists"),
+                            "rating": (stat or {}).get("rating"),
+                        }
+
+                    starters_out = []
+                    for p in info.get("starters") or []:
+                        enriched_player = _enrich_player(p)
+                        # grid ("линия:позиция", см. fetch_lineups) — для расстановки
+                        # игрока на поле по схеме, а не просто списком.
+                        enriched_player["grid"] = p.get("grid")
+                        starters_out.append(enriched_player)
+                    substitutes_out = [_enrich_player(p) for p in info.get("substitutes") or []]
+                    return display_team_name(name), {
+                        "formation": info.get("formation"),
+                        "starters": starters_out,
+                        "substitutes": substitutes_out,
+                    }
 
                 enriched = await asyncio.gather(
                     *(_enrich_lineup(name, info) for name, info in raw_lineups.items())

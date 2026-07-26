@@ -5401,27 +5401,125 @@ select:focus-visible {
   margin-bottom: 6px;
 }
 
-.match-center-lineup-player {
+/* Составы на поле — по одному полю на команду, друг под другом. Игроки
+   расставлены по grid ("линия:позиция", см. app/match_center.py) — вратарь
+   внизу (своя линия ближе к CSS-низу поля), атака сверху. Кружок игрока —
+   всегда цвет команды (запрошено явно), номер внутри, фамилия под кружком. */
+.lineup-pitches {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--text-dim);
-  padding: 2px 0;
+  flex-direction: column;
+  gap: 18px;
 }
 
-.match-center-lineup-player-name {
+.lineup-pitch-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lineup-pitch-team-title {
+  font-size: 12px;
+  font-weight: 700;
   color: var(--text-main);
+}
+
+.lineup-pitch {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 12px;
+  background: linear-gradient(180deg, #0f3d22, #0c2e1a);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 14px 8px;
+  position: relative;
+}
+
+.lineup-pitch::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: 50%;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.lineup-pitch::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 54px;
+  height: 54px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.lineup-pitch-row {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: space-around;
+}
+
+.lineup-pitch-player {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
   min-width: 0;
+  max-width: 58px;
+}
+
+.lineup-pitch-player-dot {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+}
+
+.lineup-pitch-player-name {
+  font-size: 8px;
+  color: rgba(255, 255, 255, 0.82);
+  text-align: center;
+  line-height: 1.15;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  max-width: 58px;
 }
 
-.match-center-lineup-player-stat {
-  flex-shrink: 0;
+.lineup-pitch-subs {
+  margin-top: 2px;
+}
+
+.lineup-pitch-subs-title {
   font-size: 11px;
+  font-weight: 700;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+
+.lineup-pitch-subs-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 10px;
+}
+
+.lineup-pitch-sub-row {
+  font-size: 11.5px;
+  color: var(--text-main);
+  padding: 2px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
