@@ -5511,18 +5511,6 @@ select:focus-visible {
    Минута — маленькая плашка поверх линии, окрашена в цвет команды-виновника
    события (как и раньше цветная полоса), чтобы сторону было видно даже без
    текста. */
-.match-center-events-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 10px;
-  font-weight: 700;
-  color: var(--text-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
-  margin-bottom: 4px;
-}
-
 .match-center-events-timeline {
   position: relative;
   display: flex;
