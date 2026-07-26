@@ -469,6 +469,35 @@ async def fetch_fixture_events(fixture_id: int, ttl_seconds: int = 10 * 60) -> l
     return out
 
 
+async def fetch_fixture_live(fixture_id: int, ttl_seconds: int = 90) -> dict[str, Any] | None:
+    """Текущий счёт и минута матча по данным API-Football (для "живого" счёта
+    в шапке матч-центра). Дёргается только пока матч идёт вживую (см.
+    is_live_match в miniapp_api.py) — короткий TTL, но не постоянный опрос
+    в фоне, поэтому расход лимита остаётся под контролем.
+    """
+    data = await _api_get(
+        "/fixtures",
+        {"id": str(fixture_id)},
+        cache_key=f"live:{fixture_id}",
+        ttl_seconds=ttl_seconds,
+    )
+    if not data:
+        return None
+    response = data.get("response") or []
+    if not response:
+        return None
+    item = response[0] or {}
+    fixture = item.get("fixture") or {}
+    status = fixture.get("status") or {}
+    goals = item.get("goals") or {}
+    return {
+        "status_short": status.get("short"),
+        "elapsed": status.get("elapsed"),
+        "home_score": goals.get("home"),
+        "away_score": goals.get("away"),
+    }
+
+
 def _parse_league_coverage_entry(entry: dict[str, Any]) -> dict[str, Any]:
     league_info = entry.get("league") or {}
     country_info = entry.get("country") or {}

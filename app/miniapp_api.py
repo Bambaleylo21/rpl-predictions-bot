@@ -5413,6 +5413,7 @@ async def match_center_current(request: web.Request) -> web.Response:
 
         from app.match_center import (
             fetch_fixture_events,
+            fetch_fixture_live,
             fetch_fixture_statistics,
             fetch_h2h,
             fetch_injuries,
@@ -5499,13 +5500,24 @@ async def match_center_current(request: web.Request) -> web.Response:
         raw_injuries: list[dict[str, Any]] = []
         raw_events: list[dict[str, Any]] = []
         raw_stats: dict[str, dict[str, Any]] | None = None
+        raw_live: dict[str, Any] | None = None
         if api_fixture_id:
-            raw_lineups, raw_injuries, raw_events, raw_stats = await asyncio.gather(
+            gather_tasks: list[Any] = [
                 fetch_lineups(int(api_fixture_id)),
                 fetch_injuries(int(api_fixture_id)),
                 fetch_fixture_events(int(api_fixture_id), ttl_seconds=live_ttl),
                 fetch_fixture_statistics(int(api_fixture_id), ttl_seconds=live_ttl),
-            )
+            ]
+            # Живой счёт/минута дёргаются отдельным лёгким запросом только пока
+            # матч реально идёт (см. is_live_match выше) — не тратим лимит на
+            # матчи, которые ещё не начались или уже завершены (там счёт/дата
+            # берутся из своей БД без обращения к API).
+            if is_live_match:
+                gather_tasks.append(fetch_fixture_live(int(api_fixture_id), ttl_seconds=live_ttl))
+            gather_results = await asyncio.gather(*gather_tasks)
+            raw_lineups, raw_injuries, raw_events, raw_stats = gather_results[:4]
+            if is_live_match:
+                raw_live = gather_results[4]
             if raw_lineups:
                 # Сезонная статистика игроков (голы/передачи/рейтинг) подтягивается
                 # разом на весь состав (см. fetch_team_player_stats), а не по
@@ -5625,6 +5637,15 @@ async def match_center_current(request: web.Request) -> web.Response:
             key=lambda r: (r.get("rank") if r.get("rank") is not None else 999),
         )
 
+        live_out: dict[str, Any] | None = None
+        if raw_live and raw_live.get("status_short") in ("1H", "2H", "HT", "ET", "BT", "P", "SUSP", "INT"):
+            live_out = {
+                "status_short": raw_live.get("status_short"),
+                "elapsed": raw_live.get("elapsed"),
+                "home_score": raw_live.get("home_score") if raw_live.get("home_score") is not None else home_score,
+                "away_score": raw_live.get("away_score") if raw_live.get("away_score") is not None else away_score,
+            }
+
         async with SessionLocal() as goal_alert_session:
             goal_alert_subscribed = (
                 await goal_alert_session.execute(
@@ -5646,6 +5667,7 @@ async def match_center_current(request: web.Request) -> web.Response:
                 "kickoff": kickoff_str,
                 "home_score": home_score,
                 "away_score": away_score,
+                "live": live_out,
                 "standings": {
                     "home": _find_standing(home_raw),
                     "away": _find_standing(away_raw),

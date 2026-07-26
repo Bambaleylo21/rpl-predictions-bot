@@ -321,6 +321,12 @@ type MatchCenterResponse = {
   kickoff?: string
   home_score?: number | null
   away_score?: number | null
+  live?: {
+    status_short?: string | null
+    elapsed?: number | null
+    home_score?: number | null
+    away_score?: number | null
+  } | null
   standings?: {
     home?: MatchCenterStanding | null
     away?: MatchCenterStanding | null
@@ -7492,11 +7498,22 @@ function App() {
                             <TeamFormDots items={matchCenterData.form?.home} />
                           </div>
                           <div className="match-center-mid">
-                            <span className="match-center-kickoff">{matchCenterData.kickoff} МСК</span>
+                            {matchCenterData.live ? (
+                              <span className="match-center-live-badge">
+                                <span className="match-center-live-dot" />
+                                {matchCenterData.live.status_short === 'HT'
+                                  ? 'Перерыв'
+                                  : `${matchCenterData.live.elapsed ?? ''}'`}
+                              </span>
+                            ) : (
+                              <span className="match-center-kickoff">{matchCenterData.kickoff} МСК</span>
+                            )}
                             <span className="match-center-score">
-                              {matchCenterData.home_score != null && matchCenterData.away_score != null
-                                ? `${matchCenterData.home_score} : ${matchCenterData.away_score}`
-                                : '— : —'}
+                              {(() => {
+                                const hs = matchCenterData.live?.home_score ?? matchCenterData.home_score
+                                const as = matchCenterData.live?.away_score ?? matchCenterData.away_score
+                                return hs != null && as != null ? `${hs} : ${as}` : '— : —'
+                              })()}
                             </span>
                           </div>
                           <div className="match-center-team">
@@ -7560,23 +7577,30 @@ function App() {
                               const eventType = String(item.type || '').toLowerCase()
                               const isSubst = eventType === 'subst'
                               const isTerse = ['card', 'subst'].includes(eventType)
-                              const eventText = (
+                              // Для типа "subst" API-Football кладёт в player_name игрока,
+                              // которого заменяют (уходит), а в assist_name — того, кто
+                              // выходит на замену (входит). Показываем входящего первым
+                              // обычным текстом, уходящего — тусклым после стрелки.
+                              const eventText = isSubst ? (
+                                <span className="match-center-event-text-tl">
+                                  {matchEventLabel(item)} {item.assist_name || item.player_name}
+                                  {item.assist_name && item.player_name ? (
+                                    <>
+                                      {' → '}
+                                      <span className="match-center-event-dim">{item.player_name}</span>
+                                    </>
+                                  ) : null}
+                                </span>
+                              ) : (
                                 <span className="match-center-event-text-tl">
                                   {matchEventLabel(item)}
                                   {isTerse ? ' ' : ' — '}
                                   {item.player_name}
                                   {item.assist_name ? (
-                                    isSubst ? (
-                                      <>
-                                        {' → '}
-                                        <span className="match-center-event-dim">{item.assist_name}</span>
-                                      </>
-                                    ) : (
-                                      <>
-                                        {' '}
-                                        <span className="match-center-event-dim">({item.assist_name})</span>
-                                      </>
-                                    )
+                                    <>
+                                      {' '}
+                                      <span className="match-center-event-dim">({item.assist_name})</span>
+                                    </>
                                   ) : null}
                                 </span>
                               )
