@@ -51,6 +51,13 @@ logger = logging.getLogger(__name__)
 MSK_TZ = timezone(timedelta(hours=3))
 DEFAULT_TOURNAMENT_CODE = "RPL"
 WC_TOURNAMENT_CODE = "WC2026"
+
+# Временно отключено (по просьбе пользователя, ачивки ещё не готовы для
+# текущего сезона РПЛ, а сама механика была тургамент-агностичной и
+# ошибочно отправляла пуши и по РПЛ). Ничего не удаляется — вся логика и
+# данные остаются на месте, флаг просто гасит показ и рассылку. Чтобы
+# вернуть ачивки обратно, достаточно поставить True.
+ACHIEVEMENTS_ENABLED = False
 TOURNAMENT_SELECTED_KEY_PREFIX = "TOURNAMENT_SELECTED_U"
 LONGTERM_TYPES = ("winner", "scorer")
 LONGTERM_ACTUAL_WINNER_KEY_PREFIX = "LONGTERM_ACTUAL_WINNER_T"
@@ -3006,6 +3013,8 @@ async def send_new_achievement_pushes(
     tournament_id: int,
     tg_user_ids: list[int] | None = None,
 ) -> int:
+    if not ACHIEVEMENTS_ENABLED:
+        return 0
     if tournament_id <= 0:
         return 0
 
@@ -3415,7 +3424,7 @@ async def profile(request: web.Request) -> web.Response:
             progress_candidates: list[dict[str, Any]] = []
             next_achievement = None
 
-            if tournament_code_upper == WC_TOURNAMENT_CODE:
+            if ACHIEVEMENTS_ENABLED and tournament_code_upper == WC_TOURNAMENT_CODE:
                 achievements, ach_meta = await _build_profile_achievements(
                     session=session,
                     tournament_id=int(tournament.id),

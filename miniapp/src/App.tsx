@@ -6196,6 +6196,7 @@ function App() {
                     </div>
                   ) : null}
 
+                  {(profileData.achievements_total ?? 0) > 0 ? (
                   <div className="profile-achievements">
                     <div className="profile-achievements-head-row">
                       <div className="profile-achievements-head">
@@ -6249,6 +6250,7 @@ function App() {
                       <div className="card-text">Пока нет доступных ачивок.</div>
                     )}
                   </div>
+                  ) : null}
 
                   <div className="profile-history">
                     <div className="profile-history-head-row">
