@@ -15,6 +15,14 @@ GLOBAL_ELO_TOURNAMENT_CODE = "ELO_GLOBAL"
 DUEL_ACCEPT_WINDOW = timedelta(hours=3)
 
 
+def _now_msk_naive() -> datetime:
+    """Match.kickoff_time хранится в наивном МСК-времени (UTC+3, см.
+    app/football_api.py::_utc_to_msk_naive), поэтому сравнивать её с "сейчас"
+    нужно в том же представлении — иначе матч ещё 3 часа после реального
+    кикоффа считается "не начавшимся" (сравнение шло с чистым datetime.utcnow())."""
+    return datetime.utcnow() + timedelta(hours=3)
+
+
 async def _ensure_global_elo_tournament_id(session) -> int:
     row = (
         await session.execute(
@@ -295,7 +303,7 @@ async def _display_name_map(session, tournament_id: int) -> dict[int, str]:
 
 
 async def list_duel_match_options(session, tournament_id: int, tg_user_id: int, limit: int = 200) -> list[dict[str, Any]]:
-    now = datetime.utcnow()
+    now = _now_msk_naive()
     matches = (
         await session.execute(
             select(Match)
@@ -374,7 +382,7 @@ async def create_duel(
         raise ValueError("match_not_found")
     if match.home_score is not None or match.away_score is not None:
         raise ValueError("match_already_finished")
-    if match.kickoff_time <= datetime.utcnow():
+    if match.kickoff_time <= _now_msk_naive():
         raise ValueError("match_locked")
 
     # User can't have 2 active duels on one match
@@ -432,7 +440,7 @@ async def respond_duel(
     match = (await session.execute(select(Match).where(Match.id == int(duel.match_id)))).scalar_one_or_none()
     if match is None:
         raise ValueError("match_not_found")
-    if match.home_score is not None or match.away_score is not None or match.kickoff_time <= datetime.utcnow():
+    if match.home_score is not None or match.away_score is not None or match.kickoff_time <= _now_msk_naive():
         duel.status = "expired"
         duel.resolved_at = datetime.utcnow()
         duel.responded_at = duel.responded_at or datetime.utcnow()
@@ -514,7 +522,7 @@ async def cancel_duel(
         raise ValueError("match_not_found")
 
     now = datetime.utcnow()
-    if match.home_score is not None or match.away_score is not None or match.kickoff_time <= now:
+    if match.home_score is not None or match.away_score is not None or match.kickoff_time <= _now_msk_naive():
         duel.status = "expired"
         duel.resolved_at = now
         duel.responded_at = duel.responded_at or now
@@ -774,6 +782,7 @@ def _elo_delta(rating_self: int, rating_other: int, score_self: float, multiplie
 
 async def expire_stale_duels(session, tournament_id: int) -> list[dict[str, Any]]:
     now = datetime.utcnow()
+    now_msk = _now_msk_naive()
     rows = (
         await session.execute(
             select(Duel, Match)
@@ -788,7 +797,7 @@ async def expire_stale_duels(session, tournament_id: int) -> list[dict[str, Any]
     events: list[dict[str, Any]] = []
     for duel, match in rows:
         match_started_or_finished = (
-            match.kickoff_time <= now
+            match.kickoff_time <= now_msk
             or match.home_score is not None
             or match.away_score is not None
         )
