@@ -327,6 +327,11 @@ type MatchCenterResponse = {
     home_score?: number | null
     away_score?: number | null
   } | null
+  odds?: {
+    home_odd?: string | number | null
+    draw_odd?: string | number | null
+    away_odd?: string | number | null
+  } | null
   standings?: {
     home?: MatchCenterStanding | null
     away?: MatchCenterStanding | null
@@ -7517,6 +7522,13 @@ function App() {
                                 return hs != null && as != null ? `${hs} : ${as}` : '— : —'
                               })()}
                             </span>
+                            {matchCenterData.odds &&
+                            (matchCenterData.odds.home_odd || matchCenterData.odds.draw_odd || matchCenterData.odds.away_odd) ? (
+                              <span className="match-center-odds">
+                                П1 {matchCenterData.odds.home_odd ?? '—'} · Х {matchCenterData.odds.draw_odd ?? '—'} · П2{' '}
+                                {matchCenterData.odds.away_odd ?? '—'}
+                              </span>
+                            ) : null}
                           </div>
                           <div className="match-center-team">
                             <TeamCrest name={matchCenterData.away_team || ''} alt />

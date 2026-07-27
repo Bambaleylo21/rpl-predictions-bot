@@ -5427,6 +5427,7 @@ async def match_center_current(request: web.Request) -> web.Response:
             fetch_h2h,
             fetch_injuries,
             fetch_lineups,
+            fetch_odds,
             fetch_standings,
             fetch_team_form,
             fetch_team_id_map,
@@ -5510,23 +5511,25 @@ async def match_center_current(request: web.Request) -> web.Response:
         raw_events: list[dict[str, Any]] = []
         raw_stats: dict[str, dict[str, Any]] | None = None
         raw_live: dict[str, Any] | None = None
+        raw_odds: dict[str, Any] | None = None
         if api_fixture_id:
-            gather_tasks: list[Any] = [
+            raw_lineups, raw_injuries, raw_events, raw_stats = await asyncio.gather(
                 fetch_lineups(int(api_fixture_id)),
                 fetch_injuries(int(api_fixture_id)),
                 fetch_fixture_events(int(api_fixture_id), ttl_seconds=live_ttl),
                 fetch_fixture_statistics(int(api_fixture_id), ttl_seconds=live_ttl),
-            ]
+            )
             # Живой счёт/минута дёргаются отдельным лёгким запросом только пока
             # матч реально идёт (см. is_live_match выше) — не тратим лимит на
             # матчи, которые ещё не начались или уже завершены (там счёт/дата
             # берутся из своей БД без обращения к API).
             if is_live_match:
-                gather_tasks.append(fetch_fixture_live(int(api_fixture_id), ttl_seconds=live_ttl))
-            gather_results = await asyncio.gather(*gather_tasks)
-            raw_lineups, raw_injuries, raw_events, raw_stats = gather_results[:4]
-            if is_live_match:
-                raw_live = gather_results[4]
+                raw_live = await fetch_fixture_live(int(api_fixture_id), ttl_seconds=live_ttl)
+            # Коэффициенты — только пока у матча ещё нет своего финального счёта
+            # в нашей БД (до/во время игры): для уже сыгранных матчей из истории
+            # смысла тянуть их каждый раз нет, а кэш всё равно 1 час.
+            if home_score is None and away_score is None:
+                raw_odds = await fetch_odds(int(api_fixture_id))
             if raw_lineups:
                 # Сезонная статистика игроков (голы/передачи/рейтинг) подтягивается
                 # разом на весь состав (см. fetch_team_player_stats), а не по
@@ -5630,6 +5633,14 @@ async def match_center_current(request: web.Request) -> web.Response:
             if home_stats or away_stats:
                 statistics_out = {"home": home_stats, "away": away_stats}
 
+        odds_out = None
+        if raw_odds:
+            odds_out = {
+                "home_odd": raw_odds.get("home_odd"),
+                "draw_odd": raw_odds.get("draw_odd"),
+                "away_odd": raw_odds.get("away_odd"),
+            }
+
         # Полная официальная таблица РПЛ (все 16 команд) для вкладки "Таблица"
         # в Матч-центре — те же данные, что уже пришли из fetch_standings выше
         # для _find_standing, просто без отбрасывания остальных строк.
@@ -5677,6 +5688,7 @@ async def match_center_current(request: web.Request) -> web.Response:
                 "home_score": home_score,
                 "away_score": away_score,
                 "live": live_out,
+                "odds": odds_out,
                 "standings": {
                     "home": _find_standing(home_raw),
                     "away": _find_standing(away_raw),

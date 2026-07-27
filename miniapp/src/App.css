@@ -5202,6 +5202,13 @@ select:focus-visible {
   font-weight: 700;
 }
 
+.match-center-odds {
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+
 .match-center-card {
   padding: 12px 14px;
 }
