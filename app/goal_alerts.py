@@ -17,7 +17,7 @@ from app.display import display_round_name, display_team_name
 from app.models import GoalAlertSubscription, Match, Tournament
 from app.notify_prefs import should_send_notification
 
-GoalSignature = tuple[str, int, int, str]
+GoalSignature = tuple[str, int]
 
 logger = logging.getLogger(__name__)
 
@@ -103,11 +103,20 @@ def confirmed_goal_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _goal_signature(goal: dict[str, Any]) -> GoalSignature:
+    # Специально НЕ включаем сюда extra/player_name: на практике API-Football
+    # иногда дозаполняет/поправляет эти поля для уже отданного события гола
+    # (например, автора гола) уже после того, как мы его увидели в первый
+    # раз — из-за этого точная 4-элементная сигнатура "переставала совпадать
+    # сама с собой" между двумя опросами: старая версия события выглядела
+    # как будто пропала из ленты (мы принимали это за отмену ВАРом), а
+    # "новая" версия того же гола выглядела как будто это другой, новый гол.
+    # На проде это привело к тому, что один и тот же гол объявлялся заново
+    # (с неверно завышенным счётом) и тут же ложно отменялся. Команда+минута
+    # — устойчивая пара: два разных гола одной команды в одну и ту же минуту
+    # матча практически невозможны, а вот дрейф остальных полей — нет.
     return (
         str(goal.get("team_name") or ""),
         int(goal.get("minute") or 0),
-        int(goal.get("extra") or 0),
-        str(goal.get("player_name") or ""),
     )
 
 
@@ -117,8 +126,13 @@ def _load_goal_state(match: Match) -> tuple[list[GoalSignature], set[GoalSignatu
         return [], set()
     try:
         data = json.loads(raw)
-        announced = [tuple(x) for x in (data.get("announced") or [])]
-        cancelled = {tuple(x) for x in (data.get("cancelled") or [])}
+        # tuple(x[:2]) — на случай, если состояние ещё сохранено в старом
+        # 4-элементном формате (team, minute, extra, player_name) до фикса
+        # сигнатуры выше: обрезаем до (team, minute), чтобы уже накопленные
+        # для текущих живых матчей данные не считались "новыми" целиком
+        # заново после деплоя этого фикса.
+        announced = [tuple(x[:2]) for x in (data.get("announced") or [])]
+        cancelled = {tuple(x[:2]) for x in (data.get("cancelled") or [])}
         return announced, cancelled
     except Exception:
         logger.warning("[goal_alerts] failed to parse goal_alert_state for match_id=%s", match.id)
@@ -230,10 +244,33 @@ async def process_live_match_goals(bot: Bot, session, match: Match) -> int:
     from app.match_center import fetch_fixture_events
 
     events = await fetch_fixture_events(int(match.api_fixture_id), ttl_seconds=LIVE_TTL_SECONDS)
-    confirmed_sigs = [_goal_signature(g) for g in confirmed_goal_events(events)]
+    # goal_by_sig хранит последнюю (самую свежую) версию события гола по
+    # сигнатуре — нужна только для отображения actual extra-времени в тексте
+    # пуша, на саму дедупликацию/сопоставление уже не влияет (см. комментарий
+    # в _goal_signature).
+    goal_by_sig: dict[GoalSignature, dict[str, Any]] = {}
+    for g in confirmed_goal_events(events):
+        goal_by_sig[_goal_signature(g)] = g
+    confirmed_sigs = list(goal_by_sig.keys())
     confirmed_set = set(confirmed_sigs)
 
     announced, cancelled = _load_goal_state(match)
+
+    # Самоисцеление: если сигнатура раньше была ошибочно помечена отменённой
+    # (например, из-за дрейфа старой 4-элементной сигнатуры до этого фикса),
+    # а сейчас снова входит в подтверждённый список — снимаем отметку об
+    # отмене. Настоящая VAR-отмена так себя никогда не ведёт: событие "Var" в
+    # ленте API-Football не исчезает, поэтому по-настоящему отменённый гол не
+    # может повторно попасть в confirmed_set на следующем опросе.
+    resurrected = cancelled & confirmed_set
+    if resurrected:
+        cancelled -= resurrected
+        logger.warning(
+            "[goal_alerts] un-cancelled resurrected goal signatures for match_id=%s: %s",
+            match.id,
+            resurrected,
+        )
+
     announced_set = set(announced)
 
     # Новые голы — сигнатуры из текущего подтверждённого списка, которых
@@ -275,9 +312,10 @@ async def process_live_match_goals(bot: Bot, session, match: Match) -> int:
     for sig in new_sigs:
         position = announced.index(sig)
         home_score, away_score = _running_score(sig, exclude=cancelled)
+        goal = goal_by_sig.get(sig) or {}
         text = _build_goal_alert_text(
             minute=sig[1],
-            extra=sig[2],
+            extra=goal.get("extra"),
             scoring_team_display=display_team_name(sig[0]),
             home_display=home_display,
             away_display=away_display,
