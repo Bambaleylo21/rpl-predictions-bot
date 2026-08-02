@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 RPL_LEAGUE_ID = int(os.getenv("FOOTBALL_RPL_LEAGUE_ID", "235"))
 RPL_SEASON = int(os.getenv("FOOTBALL_RPL_SEASON", "2026"))
-SYNC_INTERVAL_SEC = int(os.getenv("FOOTBALL_SYNC_INTERVAL_SEC", "600"))
+SYNC_INTERVAL_SEC = int(os.getenv("FOOTBALL_SYNC_INTERVAL_SEC", "120"))
 
 
 async def _get_rpl_tournament(session) -> Tournament | None:
