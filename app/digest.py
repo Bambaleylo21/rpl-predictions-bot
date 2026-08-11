@@ -15,6 +15,46 @@ from app.season_setup import get_active_season, get_active_stage
 
 logger = logging.getLogger(__name__)
 
+
+def _join_names(names: list[str]) -> str:
+    return ", ".join(names)
+
+
+class _InsightCollector:
+    """Копит строки для блока "Инсайты:" и группирует те, что по сути один
+    и тот же факт у нескольких участников (например, "серия 3 тура подряд"
+    сразу у двух человек) — вместо двух почти одинаковых строк с
+    повторяющимся текстом выводим одну строку с двумя именами через запятую.
+    Группировка идёт по ключу факта (тип + конкретные цифры); если у людей
+    разные цифры (например разная длина серии), это разные ключи — строки
+    не объединяются, чтобы не потерять точность."""
+
+    def __init__(self) -> None:
+        self._groups: dict[Any, list[str]] = {}
+        self._renderers: dict[Any, Any] = {}
+        self._order: list[Any] = []
+        self._auto = 0
+
+    def add_grouped(self, key: tuple, name: str, render) -> None:
+        if key not in self._groups:
+            self._groups[key] = []
+            self._renderers[key] = render
+            self._order.append(key)
+        self._groups[key].append(name)
+
+    def add_line(self, text: str) -> None:
+        self._auto += 1
+        key = ("_line", self._auto)
+        self._groups[key] = []
+        self._renderers[key] = lambda _names, t=text: t
+        self._order.append(key)
+
+    def render(self) -> list[str]:
+        return [self._renderers[key](self._groups[key]) for key in self._order]
+
+    def __bool__(self) -> bool:
+        return bool(self._order)
+
 # Порядок и подписи лиг РПЛ — используются везде в дайджестах.
 LEAGUE_ORDER: tuple[tuple[str, str], ...] = (("HIGH", "Высшая лига"), ("LOW", "Низшая лига"))
 
@@ -196,19 +236,22 @@ def _delta_arrow(before: int | None, after: int | None) -> str:
     return " (•)"
 
 
-def _detect_current_streaks(snapshots: list[RoundSnapshot], as_of_round: int) -> list[str]:
+def _detect_current_streaks(
+    snapshots: list[RoundSnapshot], as_of_round: int
+) -> list[tuple[tuple, str, Any]]:
     """Ищет серии (>= MIN_STREAK_LENGTH туров подряд, заканчивающиеся именно
     на as_of_round), которые ещё продолжаются на момент as_of_round: 1-е
-    место в туре, последнее место в туре, "стабильно 7+ очков"."""
+    место в туре, последнее место в туре, "стабильно 7+ очков", серия точных
+    счётов. Возвращает не готовые строки, а (ключ_факта, имя, рендер) — так
+    вызывающий код может сгруппировать людей с одинаковой серией одной
+    строкой через _InsightCollector, вместо повторения текста на каждого."""
     by_user: dict[int, list[tuple[int, str, dict[str, Any], int]]] = {}
-    league_sizes: dict[tuple[int, str], int] = {}
     for snap in snapshots:
-        league_sizes[(snap.round_number, snap.league_code)] = len(snap.rows)
         for row in snap.rows:
             uid = int(row["tg_user_id"])
             by_user.setdefault(uid, []).append((snap.round_number, snap.league_code, row, len(snap.rows)))
 
-    insights: list[str] = []
+    out: list[tuple[tuple, str, Any]] = []
     for uid, entries in by_user.items():
         entries.sort(key=lambda e: e[0])
         if not entries or entries[-1][0] != as_of_round:
@@ -229,14 +272,38 @@ def _detect_current_streaks(snapshots: list[RoundSnapshot], as_of_round: int) ->
         exact_len = _walk_back(lambda row, _size: int(row.get("exact", 0)) >= 1)
 
         if first_len >= MIN_STREAK_LENGTH:
-            insights.append(f"🔥 {name} занимает 1-е место в туре уже {first_len} тура(ов) подряд.")
+            out.append((
+                ("leader_streak", first_len), name,
+                lambda names, n=first_len: (
+                    f"🔥 {_join_names(names)} {'занимают' if len(names) > 1 else 'занимает'} "
+                    f"1-е место в туре уже {n} тура(ов) подряд."
+                ),
+            ))
         if last_len >= MIN_STREAK_LENGTH:
-            insights.append(f"🥶 {name} финиширует последним в туре {last_len} тура(ов) подряд.")
+            out.append((
+                ("last_streak", last_len), name,
+                lambda names, n=last_len: (
+                    f"🥶 {_join_names(names)} {'финишируют' if len(names) > 1 else 'финиширует'} "
+                    f"последним в туре {n} тура(ов) подряд."
+                ),
+            ))
         if strong_len >= MIN_STREAK_LENGTH:
-            insights.append(f"📈 {name} стабильно набирает {STRONG_ROUND_POINTS}+ очков — уже {strong_len} тура(ов) подряд.")
+            out.append((
+                ("strong_streak", strong_len), name,
+                lambda names, n=strong_len: (
+                    f"📈 {_join_names(names)} стабильно {'набирают' if len(names) > 1 else 'набирает'} "
+                    f"{STRONG_ROUND_POINTS}+ очков — уже {n} тура(ов) подряд."
+                ),
+            ))
         if exact_len >= MIN_STREAK_LENGTH:
-            insights.append(f"🎯 {name} угадывает точный счёт уже {exact_len} тура(ов) подряд.")
-    return insights
+            out.append((
+                ("exact_streak", exact_len), name,
+                lambda names, n=exact_len: (
+                    f"🎯 {_join_names(names)} {'угадывают' if len(names) > 1 else 'угадывает'} "
+                    f"точный счёт уже {n} тура(ов) подряд."
+                ),
+            ))
+    return out
 
 
 async def _match_level_round_insights(
@@ -329,7 +396,7 @@ async def build_round_digest_text(round_number: int) -> str | None:
 
         best_overall: tuple[str, str, int] | None = None  # (league_name, участник, points)
         weak_results: list[str] = []
-        insight_lines: list[str] = []
+        insight_collector = _InsightCollector()
         biggest_rise: tuple[int, str, str, int, int] | None = None  # (delta, name, league_label, before, after)
 
         # История прошлых туров этого этапа — нужна для статистических
@@ -376,12 +443,12 @@ async def build_round_digest_text(round_number: int) -> str | None:
                     round_avg_now = statistics.mean(int(r["total"]) for r in round_rows)
                     z = (round_avg_now - hist_mean) / hist_stdev
                     if z <= -ANOMALY_Z_THRESHOLD:
-                        insight_lines.append(
+                        insight_collector.add_line(
                             f"🌀 Тур получился аномально тяжёлым для всех в «{label.lower()}»: "
                             f"средний результат {round_avg_now:.1f} очк. против обычных {hist_mean:.1f}."
                         )
                     elif z >= ANOMALY_Z_THRESHOLD:
-                        insight_lines.append(
+                        insight_collector.add_line(
                             f"🌀 Тур получился аномально лёгким для всех в «{label.lower()}»: "
                             f"средний результат {round_avg_now:.1f} очк. против обычных {hist_mean:.1f}."
                         )
@@ -397,21 +464,47 @@ async def build_round_digest_text(round_number: int) -> str | None:
                     weak_results.append(f"{r['name']} ({label.lower()}) — {total} очк.")
 
                 if total_round_matches > 0 and pred_total >= total_round_matches and exact >= total_round_matches:
-                    insight_lines.append(f"💯 Идеальный тур: {r['name']} угадал все {total_round_matches} матчей тура точно.")
+                    insight_collector.add_grouped(
+                        ("perfect_round", total_round_matches), r["name"],
+                        lambda names, n=total_round_matches: (
+                            f"💯 Идеальный тур: {_join_names(names)} "
+                            f"{'угадали' if len(names) > 1 else 'угадал'} все {n} матчей тура точно."
+                        ),
+                    )
                 elif pred_total > 0 and total == 0:
-                    insight_lines.append(f"🥶 Нулевой тур: {r['name']} не набрал ни одного очка в этом туре.")
+                    insight_collector.add_grouped(
+                        ("zero_round",), r["name"],
+                        lambda names: (
+                            f"🥶 Нулевой тур: {_join_names(names)} "
+                            f"не {'набрали' if len(names) > 1 else 'набрал'} ни одного очка в этом туре."
+                        ),
+                    )
 
                 if exact > ROUND_EXACT_HIGHLIGHT_THRESHOLD:
-                    insight_lines.append(f"🎯 {r['name']} угадал {exact} точных счёта в туре — впечатляющий результат.")
+                    insight_collector.add_grouped(
+                        ("exact_highlight", exact), r["name"],
+                        lambda names, n=exact: (
+                            f"🎯 {_join_names(names)} {'угадали' if len(names) > 1 else 'угадал'} "
+                            f"{n} точных счёта в туре — впечатляющий результат."
+                        ),
+                    )
 
                 if total_round_matches >= MIN_ROUND_SIZE_FOR_ACCURACY_INSIGHTS:
                     if hits >= total_round_matches - 1:
-                        insight_lines.append(
-                            f"✅ {r['name']} угадал исход в {hits} из {total_round_matches} матчей тура — отличная точность."
+                        insight_collector.add_grouped(
+                            ("hit_rate_high", hits, total_round_matches), r["name"],
+                            lambda names, h=hits, t=total_round_matches: (
+                                f"✅ {_join_names(names)} {'угадали' if len(names) > 1 else 'угадал'} "
+                                f"исход в {h} из {t} матчей тура — отличная точность."
+                            ),
                         )
                     elif hits <= 1:
-                        insight_lines.append(
-                            f"📉 {r['name']} угадал исход всего в {hits} из {total_round_matches} матчей тура."
+                        insight_collector.add_grouped(
+                            ("hit_rate_low", hits, total_round_matches), r["name"],
+                            lambda names, h=hits, t=total_round_matches: (
+                                f"📉 {_join_names(names)} {'угадали' if len(names) > 1 else 'угадал'} "
+                                f"исход всего в {h} из {t} матчей тура."
+                            ),
                         )
 
                 # Личная аномалия: результат тура сильно отличается от
@@ -424,12 +517,12 @@ async def build_round_digest_text(round_number: int) -> str | None:
                     if own_stdev > 0:
                         pz = (total - own_mean) / own_stdev
                         if pz <= -ANOMALY_Z_THRESHOLD:
-                            insight_lines.append(
+                            insight_collector.add_line(
                                 f"🔻 {r['name']} сыграл тур намного слабее своего обычного уровня — "
                                 f"{total} очк. против обычных {own_mean:.1f}."
                             )
                         elif pz >= ANOMALY_Z_THRESHOLD:
-                            insight_lines.append(
+                            insight_collector.add_line(
                                 f"⚡ {r['name']} выдал тур намного сильнее своего обычного уровня — "
                                 f"{total} очк. против обычных {own_mean:.1f}."
                             )
@@ -442,14 +535,15 @@ async def build_round_digest_text(round_number: int) -> str | None:
 
         if biggest_rise:
             rise, name, league_label, before_p, after_p = biggest_rise
-            insight_lines.append(
+            insight_collector.add_line(
                 f"🚀 Самый большой рывок тура: {name} поднялся на {rise} мест "
                 f"(с {before_p}-го на {after_p}-е, {league_label.lower()})."
             )
 
-        insight_lines.extend(
-            await _match_level_round_insights(session, int(rpl.id), int(season.id), round_number, finished_match_ids)
-        )
+        for match_line in await _match_level_round_insights(
+            session, int(rpl.id), int(season.id), round_number, finished_match_ids
+        ):
+            insight_collector.add_line(match_line)
 
         if best_overall:
             league_label, name, pts = best_overall
@@ -471,12 +565,13 @@ async def build_round_digest_text(round_number: int) -> str | None:
         # точных счётов) считаем для любого запрошенного тура, не только для
         # последнего сыгранного — при просмотре истории это тоже интересно.
         # all_snapshots уже посчитан выше (использовался для аномалий).
-        insight_lines.extend(_detect_current_streaks(all_snapshots, round_number))
+        for key, name, render in _detect_current_streaks(all_snapshots, round_number):
+            insight_collector.add_grouped(key, name, render)
 
-        if insight_lines:
+        if insight_collector:
             lines.append("")
             lines.append("Инсайты:")
-            lines.extend(insight_lines)
+            lines.extend(insight_collector.render())
 
         return "\n".join(lines).strip() + "\n"
 
@@ -513,7 +608,7 @@ async def build_tournament_digest_text() -> str | None:
 
         league_totals: dict[str, tuple[int, int]] = {}  # league_code -> (sum_points, participants)
         best_hit_rate: tuple[str, float, int] | None = None  # (name, hit_rate, pred_total)
-        insights: list[str] = []
+        insight_collector = _InsightCollector()
 
         for code, label in LEAGUE_ORDER:
             league = leagues.get(code)
@@ -524,10 +619,7 @@ async def build_tournament_digest_text() -> str | None:
                 continue
             lines.append(f"{label}:")
             for r in rows:
-                lines.append(
-                    f"{_medal(int(r['place']))} {r['name']} — {int(r['total'])} очк. "
-                    f"(🎯{int(r['exact'])} 📏{int(r['diff'])} ✅{int(r['outcome'])})"
-                )
+                lines.append(f"{_medal(int(r['place']))} {r['name']} — {int(r['total'])} очк.")
             lines.append("")
 
             total_sum = sum(int(r["total"]) for r in rows)
@@ -556,7 +648,7 @@ async def build_tournament_digest_text() -> str | None:
                             continue
                         z = (missed - mm_mean) / mm_stdev
                         if z >= ANOMALY_Z_THRESHOLD:
-                            insights.append(
+                            insight_collector.add_line(
                                 f"⛔ {r['name']} пропустил заметно больше матчей, чем остальные в «{label.lower()}», "
                                 f"— {missed} против среднего {mm_mean:.1f}."
                             )
@@ -601,10 +693,12 @@ async def build_tournament_digest_text() -> str | None:
                 rn, league_name, name, pts = worst_round
                 lines.append(f"Худший тур: {name} ({league_name.lower()}) — {pts} очк. в туре {rn}")
 
-        insights.extend(_detect_current_streaks(snapshots, last_round))
-        if insights:
+        for key, name, render in _detect_current_streaks(snapshots, last_round):
+            insight_collector.add_grouped(key, name, render)
+
+        if insight_collector:
             lines.append("")
             lines.append("Инсайты:")
-            lines.extend(insights)
+            lines.extend(insight_collector.render())
 
         return "\n".join(lines).strip() + "\n"
