@@ -4919,6 +4919,59 @@ select:focus-visible {
   background: rgba(0, 92, 169, 0.1);
 }
 
+.digest-open-btn {
+  width: 100%;
+  margin-top: 8px;
+  height: 36px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-control);
+  background: rgba(230, 230, 230, 0.06);
+  color: var(--text-main);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.digest-open-btn:active {
+  transform: translateY(1px);
+}
+
+.digest-modal-card {
+  width: min(480px, calc(100vw - 24px));
+}
+
+.digest-textarea {
+  width: 100%;
+  min-height: 320px;
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: rgba(230, 230, 230, 0.04);
+  color: var(--text-main);
+  font-size: 13px;
+  line-height: 1.45;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.digest-copy-btn {
+  width: 100%;
+  margin-top: 10px;
+  height: 40px;
+  border: none;
+  border-radius: var(--radius-control);
+  background: var(--accent, #2f7bf0);
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.digest-copy-btn:active {
+  transform: translateY(1px);
+}
+
 .round-picker-overlay {
   position: fixed;
   inset: 0;

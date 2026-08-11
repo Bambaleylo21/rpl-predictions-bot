@@ -6374,6 +6374,68 @@ async def duels_cancel(request: web.Request) -> web.Response:
         )
 
 
+async def digest_round(request: web.Request) -> web.Response:
+    """Текстовый дайджест одного тура РПЛ (таблица тура с изменением мест,
+    точные прогнозы, лучший результат, рекорды/антирекорды, инсайты) —
+    генерируется по запросу из Mini App, чтобы пользователь мог скопировать
+    готовый текст и опубликовать его сам в любом чате."""
+    try:
+        auth_result = _extract_verified_admin_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = user.get("id") if isinstance(user, dict) else None
+        if not tg_user_id:
+            return web.json_response({"ok": False, "error": "user_not_found_in_init_data"}, status=400)
+
+        round_raw = (request.query.get("round") or "").strip()
+        if not round_raw.isdigit():
+            return web.json_response({"ok": False, "error": "invalid_round"}, status=400)
+        round_number = int(round_raw)
+
+        from app.digest import build_round_digest_text
+
+        text = await build_round_digest_text(round_number)
+        if text is None:
+            return web.json_response({"ok": False, "error": "digest_not_available"}, status=404)
+
+        return web.json_response({"ok": True, "trusted": True, "text": text})
+    except Exception as e:
+        logger.exception("miniapp digest_round error")
+        return web.json_response(
+            {"ok": False, "error": "digest_round_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
+async def digest_tournament(request: web.Request) -> web.Response:
+    """Текстовый дайджест по турниру РПЛ в целом на текущий момент (не
+    обязательно конец сезона) — таблицы обеих лиг, сравнение лиг, точность
+    прогнозов, рекорды сезона, инсайты."""
+    try:
+        auth_result = _extract_verified_admin_user(request)
+        if auth_result[0] is None:
+            return auth_result[1]
+        _payload, user = auth_result
+        tg_user_id = user.get("id") if isinstance(user, dict) else None
+        if not tg_user_id:
+            return web.json_response({"ok": False, "error": "user_not_found_in_init_data"}, status=400)
+
+        from app.digest import build_tournament_digest_text
+
+        text = await build_tournament_digest_text()
+        if text is None:
+            return web.json_response({"ok": False, "error": "digest_not_available"}, status=404)
+
+        return web.json_response({"ok": True, "trusted": True, "text": text})
+    except Exception as e:
+        logger.exception("miniapp digest_tournament error")
+        return web.json_response(
+            {"ok": False, "error": "digest_tournament_failed", "reason": str(e), "signature_checked": True},
+            status=500,
+        )
+
+
 async def notifications_current(request: web.Request) -> web.Response:
     try:
         auth_result = _extract_verified_user(request)
@@ -7352,6 +7414,8 @@ def build_app() -> web.Application:
     app.router.add_get("/api/miniapp/longterm/current", longterm_current)
     app.router.add_post("/api/miniapp/longterm/set", longterm_set)
     app.router.add_get("/api/miniapp/duels/current", duels_current)
+    app.router.add_get("/api/miniapp/digest/round", digest_round)
+    app.router.add_get("/api/miniapp/digest/tournament", digest_tournament)
     app.router.add_post("/api/miniapp/duels/challenge", duels_challenge)
     app.router.add_post("/api/miniapp/duels/respond", duels_respond)
     app.router.add_post("/api/miniapp/duels/cancel", duels_cancel)

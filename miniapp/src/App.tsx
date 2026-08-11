@@ -1548,6 +1548,11 @@ function App() {
   const [historyExpanded, setHistoryExpanded] = useState<boolean>(false)
   const [notifModalOpen, setNotifModalOpen] = useState<boolean>(false)
   const [rulesModalOpen, setRulesModalOpen] = useState<boolean>(false)
+  const [digestModalOpen, setDigestModalOpen] = useState<boolean>(false)
+  const [digestText, setDigestText] = useState<string>('')
+  const [digestLoading, setDigestLoading] = useState<boolean>(false)
+  const [digestError, setDigestError] = useState<string>('')
+  const [digestCopied, setDigestCopied] = useState<boolean>(false)
   const [notifPrefs, setNotifPrefs] = useState<{ all: boolean; reminders: boolean; duels: boolean; achievements: boolean }>({
     all: true,
     reminders: true,
@@ -1932,6 +1937,45 @@ function App() {
       } else if (inFinished) {
         setDuelsFilter('finished')
       }
+    }
+  }
+
+  const openDigest = async (kind: 'round' | 'tournament', roundNumber?: number) => {
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8081'
+    const initData = getInitData()
+    const headers = { 'X-Telegram-Init-Data': initData }
+    setDigestModalOpen(true)
+    setDigestLoading(true)
+    setDigestError('')
+    setDigestCopied(false)
+    setDigestText('')
+    try {
+      const url =
+        kind === 'round'
+          ? `${apiBase}/api/miniapp/digest/round?round=${encodeURIComponent(String(roundNumber || 0))}`
+          : `${apiBase}/api/miniapp/digest/tournament`
+      const res = await fetch(url, { headers })
+      const data = (await res.json()) as { ok: boolean; text?: string; error?: string; reason?: string }
+      if (!res.ok || !data.ok) {
+        throw new Error(data.reason || data.error || `HTTP ${res.status}`)
+      }
+      setDigestText(data.text || '')
+    } catch (err) {
+      setDigestError(String((err as Error)?.message || err))
+    } finally {
+      setDigestLoading(false)
+    }
+  }
+
+  const copyDigestText = async () => {
+    try {
+      await navigator.clipboard.writeText(digestText)
+      setDigestCopied(true)
+      setTimeout(() => setDigestCopied(false), 2000)
+    } catch {
+      // Clipboard API может быть недоступен в некоторых WebView — текст всё
+      // равно виден и выделяем его вручную (textarea ниже), просто не
+      // показываем "Скопировано".
     }
   }
 
@@ -6801,6 +6845,21 @@ function App() {
                       ›
                     </button>
                   </div>
+                  {meData?.is_admin ? (
+                    <button
+                      type="button"
+                      className="digest-open-btn"
+                      onClick={() =>
+                        rplTableRoundOverride == null
+                          ? openDigest('tournament')
+                          : openDigest('round', rplTableRoundOverride)
+                      }
+                    >
+                      {rplTableRoundOverride == null
+                        ? '📋 Дайджест турнира'
+                        : `📋 Дайджест тура ${rplTableRoundOverride}`}
+                    </button>
+                  ) : null}
                 </div>
               </section>
             ) : null}
@@ -7238,6 +7297,34 @@ function App() {
               ) : !achievementPreviewIsLockedHint ? (
                 <div className="achievement-modal-meta">{achievementPreview.earned ? 'Получена' : 'Не получена'}</div>
               ) : null}
+            </div>
+          </div>
+        ) : null}
+
+        {digestModalOpen ? (
+          <div className="notif-modal-overlay" onClick={() => setDigestModalOpen(false)}>
+            <div className="notif-modal-card rules-modal-card digest-modal-card" onClick={(ev) => ev.stopPropagation()}>
+              <button
+                type="button"
+                className="notif-modal-close"
+                onClick={() => setDigestModalOpen(false)}
+                aria-label="Закрыть"
+              >
+                ✕
+              </button>
+              <div className="notif-modal-title">Дайджест</div>
+              {digestLoading ? (
+                <div className="card-text">Формирую дайджест…</div>
+              ) : digestError ? (
+                <div className="card-text">Не удалось сформировать дайджест. {digestError}</div>
+              ) : (
+                <>
+                  <textarea className="digest-textarea" readOnly value={digestText} onClick={(ev) => (ev.target as HTMLTextAreaElement).select()} />
+                  <button type="button" className="digest-copy-btn" onClick={copyDigestText}>
+                    {digestCopied ? 'Скопировано ✓' : 'Скопировать'}
+                  </button>
+                </>
+              )}
             </div>
           </div>
         ) : null}
