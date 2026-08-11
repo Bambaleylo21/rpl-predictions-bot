@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import statistics
 from dataclasses import dataclass
 from typing import Any
 
@@ -36,6 +37,17 @@ MIN_ROUND_SIZE_FOR_ACCURACY_INSIGHTS = 4
 # Минимальное число сделанных прогнозов на конкретный матч, чтобы вообще
 # имело смысл говорить "все угадали" / "никто не угадал" по этому матчу.
 MIN_PREDICTORS_FOR_MATCH_INSIGHT = 3
+
+# Статистические аномалии (тур целиком, личный результат тура, пропущенные
+# матчи) считаем через отклонение от среднего в стандартных отклонениях —
+# калибровка на реальных данных сезона (см. обсуждение с пользователем):
+# 2 стандартных отклонения — редкое, действительно заметное отклонение.
+ANOMALY_Z_THRESHOLD = 2.0
+# Минимальный размер выборки (прошлых туров для истории игрока/лиги, или
+# участников в лиге для сравнения между ними), прежде чем считать
+# среднее/стдев статистически осмысленными — на 1-2 значениях любое число
+# будет "аномалией".
+MIN_SAMPLE_SIZE_FOR_ANOMALY = 5
 
 
 @dataclass
@@ -315,10 +327,26 @@ async def build_round_digest_text(round_number: int) -> str | None:
         # (идеальный/провальный тур по попаданиям), не выводится напрямую.
         total_round_matches = len(finished_match_ids)
 
-        best_overall: tuple[str, str, int] | None = None  # (league_name, participant_name, points)
+        best_overall: tuple[str, str, int] | None = None  # (league_name, участник, points)
         weak_results: list[str] = []
         insight_lines: list[str] = []
         biggest_rise: tuple[int, str, str, int, int] | None = None  # (delta, name, league_label, before, after)
+
+        # История прошлых туров этого этапа — нужна для статистических
+        # аномалий (личный результат сильно отличается от собственной нормы
+        # игрока, либо тур целиком аномален для всей лиги). Считаем один раз
+        # заранее и переиспользуем: тот же снапшот нужен и для серий ниже.
+        all_snapshots = await _round_snapshots(int(stage.round_min), round_number, leagues)
+        player_round_history: dict[int, list[int]] = {}
+        league_round_avg_history: dict[str, list[float]] = {code: [] for code, _ in LEAGUE_ORDER}
+        for snap in all_snapshots:
+            if snap.round_number >= round_number or not snap.rows:
+                continue
+            league_round_avg_history.setdefault(snap.league_code, []).append(
+                statistics.mean(int(r["total"]) for r in snap.rows)
+            )
+            for r in snap.rows:
+                player_round_history.setdefault(int(r["tg_user_id"]), []).append(int(r["total"]))
 
         for code, label in LEAGUE_ORDER:
             league = leagues.get(code)
@@ -336,6 +364,27 @@ async def build_round_digest_text(round_number: int) -> str | None:
             top = round_rows[0]
             if int(top["total"]) > 0 and (best_overall is None or int(top["total"]) > best_overall[2]):
                 best_overall = (label, top["name"], int(top["total"]))
+
+            # Тур целиком аномален для всей лиги (не для одного игрока) —
+            # сравниваем средний балл ЭТОГО тура с историей средних баллов
+            # прошлых туров той же лиги.
+            hist = league_round_avg_history.get(code, [])
+            if len(hist) >= MIN_SAMPLE_SIZE_FOR_ANOMALY:
+                hist_mean = statistics.mean(hist)
+                hist_stdev = statistics.pstdev(hist)
+                if hist_stdev > 0:
+                    round_avg_now = statistics.mean(int(r["total"]) for r in round_rows)
+                    z = (round_avg_now - hist_mean) / hist_stdev
+                    if z <= -ANOMALY_Z_THRESHOLD:
+                        insight_lines.append(
+                            f"🌀 Тур получился аномально тяжёлым для всех в «{label.lower()}»: "
+                            f"средний результат {round_avg_now:.1f} очк. против обычных {hist_mean:.1f}."
+                        )
+                    elif z >= ANOMALY_Z_THRESHOLD:
+                        insight_lines.append(
+                            f"🌀 Тур получился аномально лёгким для всех в «{label.lower()}»: "
+                            f"средний результат {round_avg_now:.1f} очк. против обычных {hist_mean:.1f}."
+                        )
 
             for r in round_rows:
                 uid = int(r["tg_user_id"])
@@ -364,6 +413,26 @@ async def build_round_digest_text(round_number: int) -> str | None:
                         insight_lines.append(
                             f"📉 {r['name']} угадал исход всего в {hits} из {total_round_matches} матчей тура."
                         )
+
+                # Личная аномалия: результат тура сильно отличается от
+                # СОБСТВЕННОЙ нормы игрока (а не от группы) — нужна история
+                # хотя бы за несколько прошлых туров, иначе среднее шумит.
+                own_history = player_round_history.get(uid, [])
+                if len(own_history) >= MIN_SAMPLE_SIZE_FOR_ANOMALY:
+                    own_mean = statistics.mean(own_history)
+                    own_stdev = statistics.pstdev(own_history)
+                    if own_stdev > 0:
+                        pz = (total - own_mean) / own_stdev
+                        if pz <= -ANOMALY_Z_THRESHOLD:
+                            insight_lines.append(
+                                f"🔻 {r['name']} сыграл тур намного слабее своего обычного уровня — "
+                                f"{total} очк. против обычных {own_mean:.1f}."
+                            )
+                        elif pz >= ANOMALY_Z_THRESHOLD:
+                            insight_lines.append(
+                                f"⚡ {r['name']} выдал тур намного сильнее своего обычного уровня — "
+                                f"{total} очк. против обычных {own_mean:.1f}."
+                            )
 
                 delta = before_place.get(uid), after_place.get(uid)
                 if delta[0] is not None and delta[1] is not None:
@@ -401,7 +470,7 @@ async def build_round_digest_text(round_number: int) -> str | None:
         # Серии (лидерство, последнее место, стабильно высокие очки, серии
         # точных счётов) считаем для любого запрошенного тура, не только для
         # последнего сыгранного — при просмотре истории это тоже интересно.
-        all_snapshots = await _round_snapshots(int(stage.round_min), round_number, leagues)
+        # all_snapshots уже посчитан выше (использовался для аномалий).
         insight_lines.extend(_detect_current_streaks(all_snapshots, round_number))
 
         if insight_lines:
@@ -444,6 +513,7 @@ async def build_tournament_digest_text() -> str | None:
 
         league_totals: dict[str, tuple[int, int]] = {}  # league_code -> (sum_points, participants)
         best_hit_rate: tuple[str, float, int] | None = None  # (name, hit_rate, pred_total)
+        insights: list[str] = []
 
         for code, label in LEAGUE_ORDER:
             league = leagues.get(code)
@@ -470,6 +540,26 @@ async def build_tournament_digest_text() -> str | None:
                 hit_rate = float(r.get("hit_rate", 0.0))
                 if best_hit_rate is None or hit_rate > best_hit_rate[1]:
                     best_hit_rate = (r["name"], hit_rate, pred_total)
+
+            # Аномалия пропущенных матчей: участник, у которого пропущенных
+            # матчей за сезон заметно больше, чем у остальных в его лиге —
+            # это и статистический выброс, и реальный сигнал, что человек
+            # давно не заходит делать прогнозы.
+            missed_vals = [int(r.get("missed_matches", 0)) for r in rows]
+            if len(missed_vals) >= MIN_SAMPLE_SIZE_FOR_ANOMALY:
+                mm_mean = statistics.mean(missed_vals)
+                mm_stdev = statistics.pstdev(missed_vals)
+                if mm_stdev > 0:
+                    for r in rows:
+                        missed = int(r.get("missed_matches", 0))
+                        if missed < 3:
+                            continue
+                        z = (missed - mm_mean) / mm_stdev
+                        if z >= ANOMALY_Z_THRESHOLD:
+                            insights.append(
+                                f"⛔ {r['name']} пропустил заметно больше матчей, чем остальные в «{label.lower()}», "
+                                f"— {missed} против среднего {mm_mean:.1f}."
+                            )
 
         if len(league_totals) == 2 and "HIGH" in league_totals and "LOW" in league_totals:
             high_sum, high_n = league_totals["HIGH"]
@@ -511,7 +601,7 @@ async def build_tournament_digest_text() -> str | None:
                 rn, league_name, name, pts = worst_round
                 lines.append(f"Худший тур: {name} ({league_name.lower()}) — {pts} очк. в туре {rn}")
 
-        insights = _detect_current_streaks(snapshots, last_round)
+        insights.extend(_detect_current_streaks(snapshots, last_round))
         if insights:
             lines.append("")
             lines.append("Инсайты:")
