@@ -4919,45 +4919,52 @@ select:focus-visible {
   background: rgba(0, 92, 169, 0.1);
 }
 
+.digest-card {
+  padding: 10px 14px;
+}
+
 .digest-open-btn {
   width: 100%;
-  margin-top: 8px;
   height: 36px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-control);
-  background: rgba(230, 230, 230, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border: none;
+  background: transparent;
   color: var(--text-main);
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
+  padding: 0;
 }
 
 .digest-open-btn:active {
   transform: translateY(1px);
 }
 
-.digest-modal-card {
-  width: min(480px, calc(100vw - 24px));
+.digest-open-btn-caret {
+  color: var(--text-dim);
+  font-size: 13px;
 }
 
-.digest-textarea {
-  width: 100%;
-  min-height: 320px;
-  margin-top: 8px;
-  padding: 10px;
-  border: 1px solid var(--line-2);
-  border-radius: 10px;
-  background: rgba(230, 230, 230, 0.04);
-  color: var(--text-main);
+/* Карточка-раскрывашка прямо на странице (не модальное окно): текст
+   дайджеста читается в общем потоке экрана, без вложенного скролла. */
+.digest-panel {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-2);
+}
+
+.digest-panel-text {
+  white-space: pre-wrap;
   font-size: 13px;
-  line-height: 1.45;
-  font-family: inherit;
-  resize: vertical;
+  line-height: 1.55;
+  color: var(--text-main);
 }
 
 .digest-copy-btn {
   width: 100%;
-  margin-top: 10px;
+  margin-top: 12px;
   height: 40px;
   border: none;
   border-radius: var(--radius-control);

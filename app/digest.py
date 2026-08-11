@@ -24,6 +24,18 @@ MIN_STREAK_LENGTH = 3
 STRONG_ROUND_POINTS = 7
 # Порог очков за тур, который считаем "антирекордным"/провальным туром.
 WEAK_ROUND_POINTS = 1
+# Сколько точных счётов в одном туре считаем поводом для отдельного инсайта
+# (срабатывает при exact > этого значения, т.е. 4 и больше).
+ROUND_EXACT_HIGHLIGHT_THRESHOLD = 3
+# Минимальное число мест, на которое нужно подняться за тур, чтобы это
+# считалось "самым большим рывком тура" (а не рядовым колебанием).
+MIN_RISE_FOR_INSIGHT = 2
+# Ниже этого числа сыгранных матчей в туре точностные инсайты (идеальный /
+# провальный тур по попаданиям) не считаем — на 1-2 матчах это шум.
+MIN_ROUND_SIZE_FOR_ACCURACY_INSIGHTS = 4
+# Минимальное число сделанных прогнозов на конкретный матч, чтобы вообще
+# имело смысл говорить "все угадали" / "никто не угадал" по этому матчу.
+MIN_PREDICTORS_FOR_MATCH_INSIGHT = 3
 
 
 @dataclass
@@ -202,6 +214,7 @@ def _detect_current_streaks(snapshots: list[RoundSnapshot], as_of_round: int) ->
         first_len = _walk_back(lambda row, _size: int(row["place"]) == 1)
         last_len = _walk_back(lambda row, size: int(row["place"]) == size and size > 1)
         strong_len = _walk_back(lambda row, _size: int(row["total"]) >= STRONG_ROUND_POINTS)
+        exact_len = _walk_back(lambda row, _size: int(row.get("exact", 0)) >= 1)
 
         if first_len >= MIN_STREAK_LENGTH:
             insights.append(f"🔥 {name} занимает 1-е место в туре уже {first_len} тура(ов) подряд.")
@@ -209,61 +222,54 @@ def _detect_current_streaks(snapshots: list[RoundSnapshot], as_of_round: int) ->
             insights.append(f"🥶 {name} финиширует последним в туре {last_len} тура(ов) подряд.")
         if strong_len >= MIN_STREAK_LENGTH:
             insights.append(f"📈 {name} стабильно набирает {STRONG_ROUND_POINTS}+ очков — уже {strong_len} тура(ов) подряд.")
+        if exact_len >= MIN_STREAK_LENGTH:
+            insights.append(f"🎯 {name} угадывает точный счёт уже {exact_len} тура(ов) подряд.")
     return insights
 
 
-async def _exact_predictions_for_round(
-    session, rpl_tournament_id: int, season_id: int, round_number: int
+async def _match_level_round_insights(
+    session, rpl_tournament_id: int, season_id: int, round_number: int, finished_match_ids: list[int]
 ) -> list[str]:
+    """Инсайты по конкретным матчам тура: матч, который угадали абсолютно
+    все участники (по исходу и точнее), и матч, который не угадал никто —
+    оба варианта интересны сами по себе, независимо от результатов туров
+    участников. Считаем только по уже сыгранным матчам тура и только если
+    прогнозов на матч набралось достаточно, чтобы не ловить шум на 1-2
+    прогнозах."""
+    if not finished_match_ids:
+        return []
+
     rows = (
         await session.execute(
             select(
-                Prediction.tg_user_id,
-                Prediction.pred_home,
-                Prediction.pred_away,
+                Prediction.match_id,
                 Match.home_team,
                 Match.away_team,
+                func.count(Prediction.id).label("total_preds"),
+                func.coalesce(func.sum(case((Point.points > 0, 1), else_=0)), 0).label("hits"),
             )
-            .select_from(Point)
-            .join(Match, Match.id == Point.match_id)
-            .join(
-                Prediction,
-                (Prediction.match_id == Point.match_id) & (Prediction.tg_user_id == Point.tg_user_id),
+            .select_from(Prediction)
+            .join(Match, Match.id == Prediction.match_id)
+            .outerjoin(
+                Point,
+                (Point.match_id == Prediction.match_id) & (Point.tg_user_id == Prediction.tg_user_id),
             )
-            .where(
-                Point.category == "exact",
-                Match.tournament_id == int(rpl_tournament_id),
-                Match.season_id == int(season_id),
-                Match.round_number == int(round_number),
-            )
-            .order_by(Match.kickoff_time.asc())
+            .where(Prediction.match_id.in_(finished_match_ids))
+            .group_by(Prediction.match_id, Match.home_team, Match.away_team)
         )
     ).all()
-    if not rows:
-        return []
-
-    # Имена участников подтягиваем отдельно, чтобы не плодить сложный join —
-    # точных прогнозов в туре обычно немного (единицы), это дешёво.
-    tg_ids = sorted({int(r[0]) for r in rows})
-    name_rows = (
-        await session.execute(
-            select(User.tg_user_id, User.display_name, User.username, User.full_name).where(
-                User.tg_user_id.in_(tg_ids)
-            )
-        )
-    ).all()
-    name_map = {
-        int(uid): (display_name or (f"@{username}" if username else None) or full_name or str(uid))
-        for uid, display_name, username, full_name in name_rows
-    }
 
     out: list[str] = []
-    for uid, pred_home, pred_away, home_team, away_team in rows:
-        name = name_map.get(int(uid), str(uid))
-        out.append(
-            f"🎯 {name} — {int(pred_home)}:{int(pred_away)} "
-            f"({display_team_name(home_team)} — {display_team_name(away_team)})"
-        )
+    for match_id, home_team, away_team, total_preds, hits in rows:
+        total_preds = int(total_preds or 0)
+        hits = int(hits or 0)
+        if total_preds < MIN_PREDICTORS_FOR_MATCH_INSIGHT:
+            continue
+        label = f"{display_team_name(home_team)} — {display_team_name(away_team)}"
+        if hits == total_preds:
+            out.append(f"✅ Матч {label} угадали все участники (по исходу).")
+        elif hits == 0:
+            out.append(f"🎲 Матч {label} не угадал ни один участник — полная неожиданность.")
     return out
 
 
@@ -295,25 +301,24 @@ async def build_round_digest_text(round_number: int) -> str | None:
 
         match_rows = (
             await session.execute(
-                select(Match.home_team, Match.away_team, Match.home_score, Match.away_score)
+                select(Match.id, Match.home_score, Match.away_score)
                 .where(
                     Match.tournament_id == rpl.id,
                     Match.season_id == season.id,
                     Match.round_number == round_number,
                     Match.is_placeholder == 0,
                 )
-                .order_by(Match.kickoff_time.asc())
             )
         ).all()
-        finished = [(h, a, hs, aws) for h, a, hs, aws in match_rows if hs is not None and aws is not None]
-        if finished:
-            lines.append("⚽ Результаты матчей:")
-            for h, a, hs, aws in finished:
-                lines.append(f"{display_team_name(h)} {int(hs)}:{int(aws)} {display_team_name(a)}")
-            lines.append("")
+        finished_match_ids = [int(mid) for mid, hs, aws in match_rows if hs is not None and aws is not None]
+        # Число сыгранных матчей тура — знаменатель для инсайтов про точность
+        # (идеальный/провальный тур по попаданиям), не выводится напрямую.
+        total_round_matches = len(finished_match_ids)
 
         best_overall: tuple[str, str, int] | None = None  # (league_name, participant_name, points)
         weak_results: list[str] = []
+        insight_lines: list[str] = []
+        biggest_rise: tuple[int, str, str, int, int] | None = None  # (delta, name, league_label, before, after)
 
         for code, label in LEAGUE_ORDER:
             league = leagues.get(code)
@@ -328,25 +333,54 @@ async def build_round_digest_text(round_number: int) -> str | None:
             before_place = {r["tg_user_id"]: r["place"] for r in before_rows}
             after_place = {r["tg_user_id"]: r["place"] for r in after_rows}
 
-            lines.append(f"🏆 {label}:")
-            for r in round_rows:
-                uid = int(r["tg_user_id"])
-                arrow = _delta_arrow(before_place.get(uid), after_place.get(uid))
-                lines.append(f"{_medal(int(r['place']))} {r['name']} — {int(r['total'])} очк.{arrow}")
-            lines.append("")
-
             top = round_rows[0]
             if int(top["total"]) > 0 and (best_overall is None or int(top["total"]) > best_overall[2]):
                 best_overall = (label, top["name"], int(top["total"]))
-            for r in round_rows:
-                if int(r["total"]) <= WEAK_ROUND_POINTS:
-                    weak_results.append(f"{r['name']} ({label.lower()}) — {int(r['total'])} очк.")
 
-        exact_lines = await _exact_predictions_for_round(session, rpl.id, season.id, round_number)
-        if exact_lines:
-            lines.append("Точные прогнозы тура:")
-            lines.extend(exact_lines)
-            lines.append("")
+            for r in round_rows:
+                uid = int(r["tg_user_id"])
+                total = int(r["total"])
+                exact = int(r.get("exact", 0))
+                hits = int(r.get("hits", 0))
+                pred_total = int(r.get("pred_total", 0))
+
+                if total <= WEAK_ROUND_POINTS:
+                    weak_results.append(f"{r['name']} ({label.lower()}) — {total} очк.")
+
+                if total_round_matches > 0 and pred_total >= total_round_matches and exact >= total_round_matches:
+                    insight_lines.append(f"💯 Идеальный тур: {r['name']} угадал все {total_round_matches} матчей тура точно.")
+                elif pred_total > 0 and total == 0:
+                    insight_lines.append(f"🥶 Нулевой тур: {r['name']} не набрал ни одного очка в этом туре.")
+
+                if exact > ROUND_EXACT_HIGHLIGHT_THRESHOLD:
+                    insight_lines.append(f"🎯 {r['name']} угадал {exact} точных счёта в туре — впечатляющий результат.")
+
+                if total_round_matches >= MIN_ROUND_SIZE_FOR_ACCURACY_INSIGHTS:
+                    if hits >= total_round_matches - 1:
+                        insight_lines.append(
+                            f"✅ {r['name']} угадал исход в {hits} из {total_round_matches} матчей тура — отличная точность."
+                        )
+                    elif hits <= 1:
+                        insight_lines.append(
+                            f"📉 {r['name']} угадал исход всего в {hits} из {total_round_matches} матчей тура."
+                        )
+
+                delta = before_place.get(uid), after_place.get(uid)
+                if delta[0] is not None and delta[1] is not None:
+                    rise = int(delta[0]) - int(delta[1])
+                    if rise >= MIN_RISE_FOR_INSIGHT and (biggest_rise is None or rise > biggest_rise[0]):
+                        biggest_rise = (rise, r["name"], label, int(delta[0]), int(delta[1]))
+
+        if biggest_rise:
+            rise, name, league_label, before_p, after_p = biggest_rise
+            insight_lines.append(
+                f"🚀 Самый большой рывок тура: {name} поднялся на {rise} мест "
+                f"(с {before_p}-го на {after_p}-е, {league_label.lower()})."
+            )
+
+        insight_lines.extend(
+            await _match_level_round_insights(session, int(rpl.id), int(season.id), round_number, finished_match_ids)
+        )
 
         if best_overall:
             league_label, name, pts = best_overall
@@ -364,14 +398,16 @@ async def build_round_digest_text(round_number: int) -> str | None:
         if weak_results:
             lines.append("😬 Провал тура: " + "; ".join(weak_results))
 
-        last_round = await _last_played_round(session, int(rpl.id), int(stage.round_min), int(stage.round_max))
-        if last_round == round_number:
-            all_snapshots = await _round_snapshots(int(stage.round_min), round_number, leagues)
-            streak_insights = _detect_current_streaks(all_snapshots, round_number)
-            if streak_insights:
-                lines.append("")
-                lines.append("Инсайты:")
-                lines.extend(streak_insights)
+        # Серии (лидерство, последнее место, стабильно высокие очки, серии
+        # точных счётов) считаем для любого запрошенного тура, не только для
+        # последнего сыгранного — при просмотре истории это тоже интересно.
+        all_snapshots = await _round_snapshots(int(stage.round_min), round_number, leagues)
+        insight_lines.extend(_detect_current_streaks(all_snapshots, round_number))
+
+        if insight_lines:
+            lines.append("")
+            lines.append("Инсайты:")
+            lines.extend(insight_lines)
 
         return "\n".join(lines).strip() + "\n"
 

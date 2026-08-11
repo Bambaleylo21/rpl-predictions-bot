@@ -6845,21 +6845,6 @@ function App() {
                       ›
                     </button>
                   </div>
-                  {meData?.is_admin ? (
-                    <button
-                      type="button"
-                      className="digest-open-btn"
-                      onClick={() =>
-                        rplTableRoundOverride == null
-                          ? openDigest('tournament')
-                          : openDigest('round', rplTableRoundOverride)
-                      }
-                    >
-                      {rplTableRoundOverride == null
-                        ? '📋 Дайджест турнира'
-                        : `📋 Дайджест тура ${rplTableRoundOverride}`}
-                    </button>
-                  ) : null}
                 </div>
               </section>
             ) : null}
@@ -7037,6 +7022,49 @@ function App() {
                     >
                       📖 Правила турнира
                     </button>
+                  ) : null}
+                </div>
+              </section>
+            ) : null}
+
+            {selectedTournamentCode === 'RPL' && meData?.is_admin ? (
+              <section className="cards space-top">
+                <div className="card card-static digest-card">
+                  <button
+                    type="button"
+                    className="digest-open-btn"
+                    onClick={() => {
+                      if (digestModalOpen) {
+                        setDigestModalOpen(false)
+                        return
+                      }
+                      if (rplTableRoundOverride == null) {
+                        openDigest('tournament')
+                      } else {
+                        openDigest('round', rplTableRoundOverride)
+                      }
+                    }}
+                  >
+                    <span>
+                      {rplTableRoundOverride == null ? '📋 Дайджест турнира' : `📋 Дайджест тура ${rplTableRoundOverride}`}
+                    </span>
+                    <span className="digest-open-btn-caret">{digestModalOpen ? '⌃' : '⌄'}</span>
+                  </button>
+                  {digestModalOpen ? (
+                    <div className="digest-panel">
+                      {digestLoading ? (
+                        <div className="card-text">Формирую дайджест…</div>
+                      ) : digestError ? (
+                        <div className="card-text">Не удалось сформировать дайджест. {digestError}</div>
+                      ) : (
+                        <>
+                          <div className="digest-panel-text">{digestText}</div>
+                          <button type="button" className="digest-copy-btn" onClick={copyDigestText}>
+                            {digestCopied ? 'Скопировано ✓' : 'Скопировать'}
+                          </button>
+                        </>
+                      )}
+                    </div>
                   ) : null}
                 </div>
               </section>
@@ -7297,34 +7325,6 @@ function App() {
               ) : !achievementPreviewIsLockedHint ? (
                 <div className="achievement-modal-meta">{achievementPreview.earned ? 'Получена' : 'Не получена'}</div>
               ) : null}
-            </div>
-          </div>
-        ) : null}
-
-        {digestModalOpen ? (
-          <div className="notif-modal-overlay" onClick={() => setDigestModalOpen(false)}>
-            <div className="notif-modal-card rules-modal-card digest-modal-card" onClick={(ev) => ev.stopPropagation()}>
-              <button
-                type="button"
-                className="notif-modal-close"
-                onClick={() => setDigestModalOpen(false)}
-                aria-label="Закрыть"
-              >
-                ✕
-              </button>
-              <div className="notif-modal-title">Дайджест</div>
-              {digestLoading ? (
-                <div className="card-text">Формирую дайджест…</div>
-              ) : digestError ? (
-                <div className="card-text">Не удалось сформировать дайджест. {digestError}</div>
-              ) : (
-                <>
-                  <textarea className="digest-textarea" readOnly value={digestText} onClick={(ev) => (ev.target as HTMLTextAreaElement).select()} />
-                  <button type="button" className="digest-copy-btn" onClick={copyDigestText}>
-                    {digestCopied ? 'Скопировано ✓' : 'Скопировать'}
-                  </button>
-                </>
-              )}
             </div>
           </div>
         ) : null}
